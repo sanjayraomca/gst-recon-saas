@@ -1,0 +1,109 @@
+{
+  "realm": "gst-recon",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  
+  "clients": [
+    {
+      "clientId": "gst-backend",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "backend-secret",
+      "redirectUris": [],
+      "webOrigins": [],
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "gst-web-app",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "webapp-secret",
+      "redirectUris": [
+        "http://localhost:8088/*",
+        "http://backend.gst.local:8088/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8088",
+        "http://backend.gst.local:8088"
+      ],
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true
+    }
+  ],
+  
+  "roles": {
+    "realm": [
+      {
+        "name": "super_admin",
+        "description": "Full system access"
+      },
+      {
+        "name": "tenant_admin",
+        "description": "Tenant administrator"
+      },
+      {
+        "name": "workspace_admin",
+        "description": "Workspace administrator"
+      },
+      {
+        "name": "accountant",
+        "description": "Accounting professional"
+      },
+      {
+        "name": "auditor",
+        "description": "Auditor role"
+      },
+      {
+        "name": "viewer",
+        "description": "Read-only access"
+      }
+    ]
+  },
+  
+  "users": [
+    {
+      "username": "superadmin",
+      "enabled": true,
+      "email": "superadmin@gst-recon.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "super_admin"
+      ]
+    },
+    {
+      "username": "demo.accountant",
+      "enabled": true,
+      "email": "accountant@demo.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Accountant@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "accountant"
+      ]
+    }
+  ],
+  
+  "defaultRoles": [
+    "viewer"
+  ]
+}

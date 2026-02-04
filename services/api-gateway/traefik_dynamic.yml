@@ -1,0 +1,22 @@
+http:
+  routers:
+    kong-router:
+      rule: "Host(`api.gsttool.com`)"
+      service: "kong-service"
+      entryPoints:
+        - "web"
+    workspace-service:
+      rule: "Host(`api.gsttool.com`) && (PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`))"
+      service: workspace-service
+      middlewares:
+        - auth-forward
+
+  services:
+    kong-service:
+      loadBalancer:
+        servers:
+          - url: "http://kong:8000"
+    workspace-service:
+      loadBalancer:
+        servers:
+          - url: "http://workspace-service:3002"

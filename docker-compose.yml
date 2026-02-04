@@ -1,0 +1,401 @@
+version: '3.8'
+
+services:
+  # ==================== NETWORK & PROXY ====================
+  
+  traefik:
+    image: traefik:v3.0
+    container_name: gst-traefik
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:8088"
+    environment:
+      - DOCKER_API_VERSION=1.44
+    ports:
+      - "8088:8088"      # Web traffic
+      - "8085:8080"      # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - gst-network
+
+  # ==================== DATABASES ====================
+  
+  # Main PostgreSQL for GST Recon
+  postgres-main:
+    image: postgres:15-alpine
+    container_name: gst-postgres-main
+    environment:
+      POSTGRES_DB: gst_recon
+      POSTGRES_USER: gstadmin
+      POSTGRES_PASSWORD: GstAdmin123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_main_data:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    networks:
+      - gst-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gstadmin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for Keycloak
+  postgres-keycloak:
+    image: postgres:15-alpine
+    container_name: gst-postgres-keycloak
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: Keycloak123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_keycloak_data:/var/lib/postgresql/data
+    networks:
+      - gst-network
+
+  # PostgreSQL for Kong
+  postgres-kong:
+    image: postgres:15-alpine
+    container_name: gst-postgres-kong
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: Kong123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_kong_data:/var/lib/postgresql/data
+    networks:
+      - gst-network
+
+  # ==================== AUTHENTICATION ====================
+  
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: gst-keycloak
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin123
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: Keycloak123
+      KC_HOSTNAME: keycloak.gst.local
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/gsttool-realm.json:/opt/keycloak/data/import/gsttool-realm.json:ro
+    depends_on:
+      - postgres-keycloak
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.keycloak.rule=Host(`keycloak.gst.local`)"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+
+  # ==================== API GATEWAY ====================
+  
+  kong-migrations:
+    image: kong:3.3
+    container_name: gst-kong-migrations
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: postgres-kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: Kong123
+      KONG_PG_DATABASE: kong
+    depends_on:
+      - postgres-kong
+    networks:
+      - gst-network
+    restart: on-failure
+
+  kong:
+    image: kong:3.3
+    container_name: gst-kong
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: postgres-kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: Kong123
+      KONG_PG_DATABASE: kong
+      KONG_PROXY_LISTEN: 0.0.0.0:8002      # Changed from 8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8003      # Changed from 8001
+      KONG_PLUGINS: bundled,jwt
+      KONG_LOG_LEVEL: info
+    ports:
+      - "8002:8002"  # Proxy (changed from 8000)
+      - "8003:8003"  # Admin API (changed from 8001)
+    depends_on:
+      - kong-migrations
+      - postgres-kong
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kong.rule=Host(`api.gst.local`)"
+      - "traefik.http.services.kong.loadbalancer.server.port=8002"
+
+  # ==================== STORAGE & CACHE ====================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: gst-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gst-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: gst-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: MinioAdmin123
+      MINIO_DEFAULT_BUCKETS: "gst-documents,gst-exports,gst-temp"
+    command: server /data --console-address ":9001"
+    ports:
+      - "9090:9000"  # S3 API (changed to avoid Portainer conflict)
+      - "9091:9001"  # Console UI
+    volumes:
+      - minio_data:/data
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=Host(`minio.gst.local`)"
+      - "traefik.http.services.minio.loadbalancer.server.port=9001"
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: gst-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbitadmin
+      RABBITMQ_DEFAULT_PASS: RabbitAdmin123
+    ports:
+      - "5672:5672"    # AMQP
+      - "15673:15672"  # Management UI (changed port)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.gst.local`)"
+      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+
+  nats:
+    image: nats:2.10
+    container_name: gst-nats
+    command: -js -m 8222
+    ports:
+      - "4222:4222"  # NATS client
+      - "8222:8222"  # Monitoring
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nats.rule=Host(`nats.gst.local`)"
+      - "traefik.http.services.nats.loadbalancer.server.port=8222"
+
+  # ==================== EMAIL TESTING ====================
+  
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: gst-mailhog
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailhog.rule=Host(`mailhog.gst.local`)"
+      - "traefik.http.services.mailhog.loadbalancer.server.port=8025"
+
+  # ==================== MICROSERVICES ====================
+  
+  tenant-service:
+    build:
+      context: .
+      dockerfile: services/tenant-services/Dockerfile
+    container_name: gst-tenant-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    ports:
+      - "3001:3001"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=gsttool
+      - KEYCLOAK_CLIENT_ID=admin-api
+      - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
+      - JWT_SECRET=change-this-secret-in-production
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tenant-service.rule=PathPrefix(`/auth`) || PathPrefix(`/tenants`)"
+      - "traefik.http.services.tenant-service.loadbalancer.server.port=3001"
+    networks:
+      - gst-network
+ 
+  workspace-service:
+    build:
+      context: .
+      dockerfile: services/workspace-service/Dockerfile
+    container_name: gst-workspace-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "3002:3002"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - PORT=3002
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`)"
+      - "traefik.http.services.workspace-service.loadbalancer.server.port=3002"
+    networks:
+      - gst-network
+ 
+  gstn-service:
+    build:
+      context: .
+      dockerfile: services/gstn-service/Dockerfile
+    container_name: gst-gstn-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "3003:3003"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - PORT=3003
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gstn-service.rule=PathPrefix(`/gstins`) || PathPrefix(`/suppliers`)"
+      - "traefik.http.services.gstn-service.loadbalancer.server.port=3003"
+    networks:
+      - gst-network
+ 
+  upload-service:
+    build:
+      context: .
+      dockerfile: services/upload-service/Dockerfile
+    container_name: gst-upload-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "3004:3004"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - PORT=3004
+    volumes:
+      - ./uploads:/app/uploads
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`)"
+      - "traefik.http.services.upload-service.loadbalancer.server.port=3004"
+    networks:
+      - gst-network
+ 
+  report-service:
+    build:
+      context: .
+      dockerfile: services/report-services/Dockerfile
+    container_name: gst-report-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "3005:3005"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - PORT=3005
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.report-service.rule=PathPrefix(`/reports`) || PathPrefix(`/analytics`)"
+      - "traefik.http.services.report-service.loadbalancer.server.port=3005"
+    networks:
+      - gst-network
+
+  # ==================== TOOLS ====================
+  
+  adminer:
+    image: adminer:4
+    container_name: gst-adminer
+    ports:
+      - "8082:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres-main
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=Host(`adminer.gst.local`)"
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+
+volumes:
+  postgres_main_data:
+  postgres_keycloak_data:
+  postgres_kong_data:
+  redis_data:
+  minio_data:
+  rabbitmq_data:
+
+networks:
+  gst-network:
+    driver: bridge

@@ -1,0 +1,60 @@
+_format_version: "3.0"
+
+services:
+  - name: tenant-service
+    url: http://tenant-service:3001
+    routes:
+      - name: auth-routes
+        paths:
+          - /auth
+        strip_path: false
+      - name: tenant-routes
+        paths:
+          - /tenants
+        strip_path: false
+  - name: workspace-service
+    url: http://workspace-service:3002
+    routes:
+      - name: workspace-routes
+        paths:
+          - /workspaces
+          - /purchase-invoices
+          - /gstr2b-invoices
+          - /reconciliation
+          - /itc-decisions
+          - /itc-reversals
+          - /rcm-liabilities
+          - /notices
+          - /vendor-communications
+        strip_path: false
+  - name: gstin-service
+    url: http://gstn-service:3003
+    routes:
+      - name: gstins
+        paths:
+          - /gstins
+        strip_path: false
+      - name: suppliers
+        paths:
+          - /suppliers
+        strip_path: false
+          
+  - name: upload-service
+    url: http://upload-service:3004
+    routes:
+      - name: uploads
+        paths:
+          - /uploads
+        strip_path: false
+  - name: report-service
+    url: http://report-service:3005
+    routes:
+      - name: reports
+        paths:
+          - /reports
+        strip_path: false
+      - name: analytics
+        paths:
+          - /analytics
+        strip_path: false
+
