@@ -68,18 +68,20 @@ const createWorkspace = async (req, res) => {
         // 3. Link User to Workspace (if user info is available)
         // Ensure we have a valid user ID from the token (sub or id)
         const userId = req.user ? (req.user.sub || req.user.id) : null;
+        const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
 
-        if (userId) {
+        if (userId || userEmail) {
             // We need to check if this user exists in our local DB first.
-            // If the user came from Keycloak but isn't in 'users' table (rare but possible during dev), sync it?
-            // Ideally, 'authMiddleware' ensures the user exists. 
-            // Let's assume the ID in req.user matches a local user ID or auth_provider_id.
 
-            // NOTE: The 'users' table ID might differ from Keycloak ID depending on how we sync.
-            // If req.user.id is the local DB ID, use it.
-            // If req.user.sub is Keycloak ID, we need to find the local ID.
+            let query = trx('users');
+            if (userId) {
+                query = query.where('auth_provider_id', userId).orWhere('id', userId);
+            }
+            if (userEmail) {
+                query = query.orWhere('email', userEmail);
+            }
 
-            let localUser = await trx('users').where('auth_provider_id', userId).orWhere('id', userId).first();
+            let localUser = await query.first();
 
             if (localUser) {
                 await trx('workspace_users').insert({
@@ -98,7 +100,7 @@ const createWorkspace = async (req, res) => {
                     invitation_status: 'ACTIVE'
                 });
             } else {
-                console.warn(`User ${userId} not found in local DB. Skipping workspace_users link.`);
+                console.warn(`User ${userId || userEmail} not found in local DB. Skipping workspace_users link.`);
             }
         } else {
             console.warn("No user context found. Skipping workspace_users link.");
@@ -114,8 +116,42 @@ const createWorkspace = async (req, res) => {
 
 const listWorkspaces = async (req, res) => {
     try {
-        // filter by tenant if implicit
-        const workspaces = await Workspace.findAll();
+        const userId = req.user ? (req.user.sub || req.user.id) : null;
+        const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+
+        if (!userId && !userEmail) {
+            return successResponse(res, [], 'No user context found');
+        }
+
+        // Find local user
+        let query = knex('users');
+        if (userId) {
+            query = query.where('auth_provider_id', userId).orWhere('id', userId);
+        }
+        if (userEmail) {
+            query = query.orWhere('email', userEmail);
+        }
+
+        const localUser = await query.first();
+
+        if (!localUser) {
+            // Log for debugging
+            console.warn('listWorkspaces: User not found locally', { userId, userEmail });
+            return successResponse(res, [], 'User not found locally');
+        }
+
+        // Find workspaces linked to this user
+        const userWorkspaces = await knex('workspace_users')
+            .where('user_id', localUser.id)
+            .select('workspace_id');
+
+        const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
+
+        if (workspaceIds.length === 0) {
+            return successResponse(res, [], 'No workspaces found');
+        }
+
+        const workspaces = await knex('workspaces').whereIn('id', workspaceIds);
         return successResponse(res, workspaces, 'Workspaces fetched');
     } catch (error) {
         return errorResponse(res, error);
