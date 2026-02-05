@@ -388,20 +388,6 @@ services:
       - "traefik.http.routers.adminer.rule=Host(`adminer.gst.local`)"
       - "traefik.http.services.adminer.loadbalancer.server.port=8080"
 
-  recon-react:
-    build:
-      context: ../recon_frontend
-      dockerfile: Dockerfile
-    container_name: gst-recon-react
-    restart: unless-stopped
-    ports:
-      - "5174:80"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.recon-react.rule=Host(`recon.gst.local`)"
-      - "traefik.http.services.recon-react.loadbalancer.server.port=80"
-    networks:
-      - gst-network
 
 volumes:
   postgres_main_data:

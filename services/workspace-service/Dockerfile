@@ -2,7 +2,13 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy shared modules first
+# Copy and install shared module dependencies first
+COPY services/shared/package*.json /app/services/shared/
+WORKDIR /app/services/shared
+RUN npm install
+
+# Copy shared module code
+WORKDIR /app
 COPY services/shared /app/services/shared
 
 # Set working directory to service

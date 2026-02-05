@@ -24,6 +24,7 @@ const createWorkspace = async (req, res) => {
             id: workspaceId,
             workspace_code: code,
             name,
+            gstn: code, // Assuming code/gstin is the GSTN
             workspace_type: type || 'COMPANY',
             compliance_level: compliance_level || 'STANDARD',
             settings: settings || {},

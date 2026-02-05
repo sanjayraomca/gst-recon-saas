@@ -40,8 +40,17 @@ CREATE TABLE tenants (
 
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
+    gstn VARCHAR(20) NOT NULL,
+    legal_name VARCHAR(20),
+    pan VARCHAR(20),
+    email VARCHAR(20),
+    filing_type VARCHAR(10) CHECK (filing_type IN ('m', 'q')),
+    state VARCHAR(20),
+    city VARCHAR(20),
+    address TEXT,
     description TEXT,
     workspace_type VARCHAR(20) NOT NULL DEFAULT 'COMPANY'
         CHECK (workspace_type IN ('COMPANY', 'CA_FIRM', 'CONSULTANT', 'ENTERPRISE')),
