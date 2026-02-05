@@ -314,6 +314,21 @@
     ],
     "users": [
         {
+            "username": "service-account-admin-api",
+            "enabled": true,
+            "emailVerified": true,
+            "serviceAccountClientId": "admin-api",
+            "clientRoles": {
+                "realm-management": [
+                    "manage-users",
+                    "view-users",
+                    "query-users",
+                    "query-groups",
+                    "manage-groups"
+                ]
+            }
+        },
+        {
             "username": "admin",
             "enabled": true,
             "emailVerified": true,
