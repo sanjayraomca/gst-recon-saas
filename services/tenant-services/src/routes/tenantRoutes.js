@@ -3,7 +3,10 @@ const router = express.Router();
 const tenantController = require('../controllers/tenantController');
 const { verifyToken } = require('../../../shared/src/middleware/authMiddleware');
 
-// All tenant routes require authentication
+// Public route for tenant registration
+router.post('/signup', tenantController.registerTenant);
+
+// All other tenant routes require authentication
 router.use(verifyToken);
 
 router.post('/', tenantController.createTenant);

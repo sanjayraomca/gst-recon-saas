@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const { connectNats } = require('../../shared/src/nats/client'); // Relative path to shared
 const authRoutes = require('./routes/authRoutes');
 const tenantRoutes = require('./routes/tenantRoutes');
@@ -7,6 +8,7 @@ const tenantRoutes = require('./routes/tenantRoutes');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+app.use(cors());
 app.use(express.json());
 
 // Routes

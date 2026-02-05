@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Copy shared module first (as it's a dependency)
 COPY services/shared /app/services/shared
+WORKDIR /app/services/shared
+RUN npm install
 
 # Setup Tenant Service
 WORKDIR /app/services/tenant-services

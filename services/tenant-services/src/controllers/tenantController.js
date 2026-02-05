@@ -48,7 +48,7 @@ const createTenant = async (req, res) => {
 
         // Create Keycloak group for tenant using tenant UUID
         let keycloakGroupId = null;
-        const groupName = `tenant_${tenantId}`;
+        const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid
 
         try {
             const group = await keycloakService.createGroup(groupName, {
@@ -56,6 +56,11 @@ const createTenant = async (req, res) => {
                 tenant_code: tenant_code
             });
             keycloakGroupId = group.id;
+
+            // Optional: If there's a user associated with the request (e.g. from token), add them to group
+            if (req.user && req.user.sub) {
+                await keycloakService.addUserToGroup(req.user.sub, keycloakGroupId);
+            }
 
             // Store Keycloak group ID in metadata
             tenantData.metadata = {
@@ -206,10 +211,166 @@ const deleteTenant = async (req, res) => {
     }
 };
 
+const registerTenant = async (req, res) => {
+    try {
+        const { email, password, full_name, phone } = req.body;
+        const User = require('../models/userModel');
+
+        if (!email || !password || !full_name) {
+            return errorResponse(res, 'Email, password and full name required', 400);
+        }
+
+        // 1. Create User in Keycloak
+        let keycloakId;
+        const nameParts = full_name.split(' ');
+        const firstName = nameParts[0];
+        const lastName = nameParts.slice(1).join(' ') || 'User';
+
+        try {
+            keycloakId = await keycloakService.createUser({
+                email,
+                password,
+                firstName,
+                lastName
+            });
+        } catch (kcError) {
+            if (kcError.message === 'User already exists in Keycloak') {
+                const kcUser = await keycloakService.getUserByEmail(email);
+                if (kcUser) keycloakId = kcUser.id;
+            } else {
+                throw kcError;
+            }
+        }
+
+        if (!keycloakId) {
+            throw new Error('Failed to retrieve Keycloak ID');
+        }
+
+        // 2. Check Local User
+        let user = await User.findByEmail(email);
+        if (user) {
+            return errorResponse(res, 'User already exists', 409);
+        }
+
+        // Start Transaction for DB operations
+        const knex = require('../../../shared/src/db/connection');
+        const trx = await knex.transaction();
+
+        try {
+            // Create Local User
+            const [newUser] = await trx('users').insert({
+                id: crypto.randomUUID(),
+                email,
+                full_name,
+                phone,
+                auth_provider_id: keycloakId,
+                auth_provider_type: 'KEYCLOAK',
+                created_at: new Date(),
+                updated_at: new Date()
+            }).returning('*');
+
+            user = newUser;
+
+            // 3. Create Tenant
+            const tenantId = crypto.randomUUID();
+            const tenantCode = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').substring(0, 10) + '_' + Math.floor(Math.random() * 1000);
+
+            let [tenant] = await trx('tenants').insert({
+                id: tenantId,
+                tenant_code: tenantCode,
+                legal_name: full_name + "'s Org",
+                subscription_plan: 'STARTER',
+                subscription_status: 'ACTIVE',
+                created_at: new Date(),
+                updated_at: new Date()
+            }).returning('*');
+
+            // Create Keycloak group for tenant
+            const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid
+            try {
+                const group = await keycloakService.createGroup(groupName, {
+                    tenant_id: tenantId,
+                    tenant_code: tenantCode
+                });
+                if (group) {
+                    // Link user to the new group
+                    await keycloakService.addUserToGroup(keycloakId, group.id);
+
+                    const [updatedTenant] = await trx('tenants').where({ id: tenantId }).update({
+                        metadata: JSON.stringify({
+                            keycloak_groups: {
+                                tenant_group_id: group.id,
+                                tenant_group_name: groupName,
+                                gstin_groups: {}
+                            }
+                        })
+                    }).returning('*');
+
+                    if (updatedTenant) {
+                        tenant = updatedTenant;
+                        console.log(`Successfully updated metadata for tenant ${tenantId}`);
+                    }
+                } else {
+                    console.warn(`Keycloak group creation returned null for tenant ${tenantId}`);
+                }
+            } catch (kcGroupError) {
+                console.error(`Failed to create Keycloak group during registration for tenant ${tenantId}:`, kcGroupError.message);
+            }
+
+            // 4. Create Default Workspace
+            const workspaceId = crypto.randomUUID();
+            await trx('workspaces').insert({
+                id: workspaceId,
+                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
+                name: 'Default Workspace',
+                workspace_type: 'COMPANY',
+                compliance_level: 'STANDARD',
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // 5. Link Tenant to Workspace
+            await trx('tenant_workspaces').insert({
+                id: crypto.randomUUID(),
+                tenant_id: tenantId,
+                workspace_id: workspaceId,
+                access_type: 'OWNER'
+            });
+
+            // 6. Link User to Workspace (as Admin)
+            await trx('workspace_users').insert({
+                id: crypto.randomUUID(),
+                workspace_id: workspaceId,
+                user_id: user.id,
+                role: 'SUPER_ADMIN',
+                permissions: JSON.stringify({
+                    can_upload: true,
+                    can_reconcile: true,
+                    can_override: true,
+                    can_export: true,
+                    can_invite: true,
+                    can_configure: true
+                }),
+                invitation_status: 'ACTIVE'
+            });
+
+            await trx.commit();
+            return successResponse(res, { user, tenant }, 'Tenant and user registered successfully', 201);
+        } catch (dbError) {
+            await trx.rollback();
+            throw dbError;
+        }
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
     listTenants,
     updateTenant,
-    deleteTenant
+    deleteTenant,
+    registerTenant
 };

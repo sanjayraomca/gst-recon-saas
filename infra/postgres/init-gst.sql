@@ -1,8 +1,4 @@
--- ============================================
--- GST RECONCILIATION SAAS - COMPLETE DATABASE
--- PostgreSQL 14+ Compatible
--- Total: 51 Tables
--- ============================================
+-- Total: 52 Tables
 
 -- Enable essential extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -267,6 +263,57 @@ CREATE TABLE workspace_period_locks (
     metadata JSONB DEFAULT '{}',
     UNIQUE (workspace_id, period_id)
 );
+
+-- ============================================
+-- DOMAIN 2.1: SIMPLIFIED STATE MASTER
+-- ============================================
+
+CREATE TABLE state_code_master (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    state VARCHAR(100) UNIQUE NOT NULL,
+    code CHAR(2) UNIQUE NOT NULL
+);
+
+-- Insert accurate GST State/UT codes
+INSERT INTO state_code_master (state, code) VALUES
+('Jammu and Kashmir', '01'),
+('Himachal Pradesh', '02'),
+('Punjab', '03'),
+('Chandigarh', '04'),
+('Uttarakhand', '05'),
+('Haryana', '06'),
+('Delhi', '07'),
+('Rajasthan', '08'),
+('Uttar Pradesh', '09'),
+('Bihar', '10'),
+('Sikkim', '11'),
+('Arunachal Pradesh', '12'),
+('Nagaland', '13'),
+('Manipur', '14'),
+('Mizoram', '15'),
+('Tripura', '16'),
+('Meghalaya', '17'),
+('Assam', '18'),
+('West Bengal', '19'),
+('Jharkhand', '20'),
+('Odisha', '21'),
+('Chhattisgarh', '22'),
+('Madhya Pradesh', '23'),
+('Gujarat', '24'),
+('Dadra and Nagar Haveli and Daman and Diu', '26'),
+('Maharashtra', '27'),
+('Andhra Pradesh', '28'),
+('Karnataka', '29'),
+('Goa', '30'),
+('Lakshadweep', '31'),
+('Kerala', '32'),
+('Tamil Nadu', '33'),
+('Puducherry', '34'),
+('Andaman and Nicobar Islands', '35'),
+('Telangana', '36'),
+('Andhra Pradesh (New)', '37'),
+('Ladakh', '38')
+ON CONFLICT (state) DO NOTHING;
 
 -- ============================================
 -- DOMAIN 3: DATA INGESTION (2 tables)
@@ -1555,7 +1602,7 @@ TO COMPLETE SETUP:
 -- DATABASE SUMMARY
 -- ============================================
 
--- COMMENT ON DATABASE gst_recon IS 'GST Reconciliation SaaS Platform - Complete Database Schema (51 Tables)';
+-- COMMENT ON DATABASE gst_recon IS 'GST Reconciliation SaaS Platform - Complete Database Schema (52 Tables)';
 
 -- Table Count Verification
 DO $$
@@ -1567,11 +1614,11 @@ BEGIN
     WHERE table_schema = 'public' 
     AND table_type = 'BASE TABLE';
     
-    RAISE NOTICE 'Total tables created: % (Expected: 51)', table_count;
+    RAISE NOTICE 'Total tables created: % (Expected: 52)', table_count;
     
-    IF table_count = 51 THEN
-        RAISE NOTICE '✅ Database schema created successfully with all 51 tables';
+    IF table_count = 52 THEN
+        RAISE NOTICE '✅ Database schema created successfully with all 52 tables';
     ELSE
-        RAISE WARNING '⚠️ Table count mismatch. Expected 51, found %', table_count;
+        RAISE WARNING '⚠️ Table count mismatch. Expected 52, found %', table_count;
     END IF;
 END $$;
