@@ -240,6 +240,71 @@ class KeycloakService {
         }
     }
 
+    async createSubgroup(parentId, groupName, attributes = {}) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/groups/${parentId}/children`;
+
+            const formattedAttributes = {};
+            for (const [key, value] of Object.entries(attributes)) {
+                formattedAttributes[key] = Array.isArray(value) ? value : [String(value)];
+            }
+
+            const groupData = {
+                name: groupName,
+                attributes: formattedAttributes
+            };
+
+            const response = await axios.post(url, groupData, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.status === 201 && response.headers.location) {
+                const locationParts = response.headers.location.split('/');
+                const groupId = locationParts[locationParts.length - 1];
+                console.log(`Created Keycloak subgroup: ${groupName} under ${parentId} with ID: ${groupId}`);
+                return { id: groupId, name: groupName };
+            }
+
+            return null;
+
+        } catch (error) {
+            console.error('Keycloak Create Subgroup Error:', error.response?.data || error.message);
+            if (error.response?.status === 409) {
+                console.log(`Subgroup ${groupName} likely already exists under ${parentId}`);
+                return null;
+            }
+            throw new Error('Failed to create subgroup in Keycloak');
+        }
+    }
+
+
+
+    async getSubgroupByName(parentId, subgroupName) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/groups/${parentId}/children`;
+
+            const response = await axios.get(url, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`
+                }
+            });
+
+            if (response.data && Array.isArray(response.data)) {
+                return response.data.find(g => g.name === subgroupName) || null;
+            }
+            return null;
+
+        } catch (error) {
+            console.error(`Keycloak Get Subgroup Error (${subgroupName}):`, error.message);
+            return null;
+        }
+    }
+
     async getGroupByName(groupName) {
         try {
             const adminToken = await this.getAdminToken();

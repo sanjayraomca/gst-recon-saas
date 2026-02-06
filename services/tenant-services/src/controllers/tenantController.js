@@ -63,11 +63,26 @@ const createTenant = async (req, res) => {
                 await keycloakService.addUserToGroup(req.user.sub, keycloakGroupId);
             }
 
+            // Create "users" subgroup under tenant group
+            let usersSubgroupId = null;
+            try {
+                const usersSubgroup = await keycloakService.createSubgroup(keycloakGroupId, 'users', {
+                    description: 'All users of this tenant'
+                });
+                if (usersSubgroup) {
+                    usersSubgroupId = usersSubgroup.id;
+                    console.log(`Created 'users' subgroup under tenant ${groupName}`);
+                }
+            } catch (subgroupError) {
+                console.warn('Failed to create users subgroup:', subgroupError.message);
+            }
+
             // Store Keycloak group ID in metadata
             tenantData.metadata = {
                 keycloak_groups: {
                     tenant_group_id: keycloakGroupId,
                     tenant_group_name: groupName,
+                    users_subgroup_id: usersSubgroupId,
                     gstin_groups: {}
                 }
             };
@@ -380,11 +395,11 @@ const registerTenant = async (req, res) => {
 const provisionUser = async (req, res) => {
     try {
         const { id: tenantId } = req.params;
-        const { email, full_name, phone, role } = req.body;
+        const { email, full_name, phone_number, role, organization_ids } = req.body;
         const User = require('../models/userModel');
 
-        if (!email || !full_name || !role) {
-            return errorResponse(res, 'Email, full name, and role are required', 400);
+        if (!email || !full_name || !role || !organization_ids || organization_ids.length === 0) {
+            return errorResponse(res, 'Email, full name, role, and at least one organization are required', 400);
         }
 
         // 1. Check Tenant
@@ -420,25 +435,50 @@ const provisionUser = async (req, res) => {
             throw new Error('Failed to retrieve Keycloak ID');
         }
 
-        // 3. Add User to Tenant Group in Keycloak
-        if (tenant.metadata && tenant.metadata.keycloak_groups && tenant.metadata.keycloak_groups.tenant_group_id) {
-            await keycloakService.addUserToGroup(keycloakId, tenant.metadata.keycloak_groups.tenant_group_id);
-        } else {
-            console.warn(`Tenant ${tenantId} does not have a Keycloak group ID in metadata.`);
-            // Fallback: Try to find group by name (UUID)
-            const group = await keycloakService.getGroupByName(tenantId);
-            if (group) {
-                await keycloakService.addUserToGroup(keycloakId, group.id);
+        // 3. Add User to Tenant's 'users' Subgroup in Keycloak
+        let usersSubgroupId = tenant.metadata?.keycloak_groups?.users_subgroup_id;
+        const tenantGroupId = tenant.metadata?.keycloak_groups?.tenant_group_id;
+
+        if (!usersSubgroupId && tenantGroupId) {
+            // Try to find the 'users' subgroup if ID is missing in metadata
+            try {
+                const existingUsersGroup = await keycloakService.getSubgroupByName(tenantGroupId, 'users');
+                if (existingUsersGroup) {
+                    usersSubgroupId = existingUsersGroup.id;
+                } else {
+                    // Create if not exists
+                    const newUsersGroup = await keycloakService.createSubgroup(tenantGroupId, 'users', {
+                        description: 'All users of this tenant'
+                    });
+                    if (newUsersGroup) {
+                        usersSubgroupId = newUsersGroup.id;
+                    }
+                }
+            } catch (findCreateError) {
+                console.warn('Failed to find/create users subgroup dynamically:', findCreateError.message);
             }
         }
 
+        if (usersSubgroupId) {
+            try {
+                await keycloakService.addUserToGroup(keycloakId, usersSubgroupId);
+                console.log(`Added user ${email} to tenant users subgroup`);
+            } catch (groupError) {
+                console.warn('Failed to add user to tenant users subgroup:', groupError.message);
+            }
+        } else {
+            console.warn(`Could not resolve 'users' subgroup for tenant ${tenantId}`);
+        }
+
         // 4. Create/Update User in Local DB
+        const knex = require('../../../shared/src/db/connection');
         let user = await User.findByEmail(email);
         const userData = {
             full_name,
-            phone,
+            phone: phone_number,
             designation: role, // Mapping 'role' from frontend to 'designation'
             auth_provider_id: keycloakId,
+            is_active: true,
             updated_at: new Date()
         };
 
@@ -452,23 +492,25 @@ const provisionUser = async (req, res) => {
             user = await User.create(userData);
         }
 
-        // 5. Link to all tenant workspaces
-        const knex = require('../../../shared/src/db/connection');
-        const workspaces = await knex('workspaces').where({ tenant_id: tenantId });
-
+        // 5. Link to Selected Organizations
         // Map frontend role to workspace role
-        // Frontend: super_admin, tenant_admin, org_admin, accountant, viewer
-        // Backend Enum: SUPER_ADMIN, WORKSPACE_ADMIN, ACCOUNTANT, AUDITOR, VIEWER, GST_PRACTITIONER
         let workspaceRole = 'VIEWER';
-        const roleUpper = role.toUpperCase();
-
         switch (role) {
-            case 'super_admin': workspaceRole = 'SUPER_ADMIN'; break;
-            case 'tenant_admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
-            case 'org_admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
-            case 'accountant': workspaceRole = 'ACCOUNTANT'; break;
-            case 'viewer': workspaceRole = 'VIEWER'; break;
+            case 'Super Admin': workspaceRole = 'SUPER_ADMIN'; break;
+            case 'Tenant Admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
+            case 'Organization Admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
+            case 'Accountant': workspaceRole = 'ACCOUNTANT'; break;
+            case 'Viewer': workspaceRole = 'VIEWER'; break;
             default: workspaceRole = 'VIEWER';
+        }
+
+        // Fetch workspace details for the selected organizations
+        const workspaces = await knex('workspaces')
+            .whereIn('id', organization_ids)
+            .andWhere({ tenant_id: tenantId });
+
+        if (workspaces.length !== organization_ids.length) {
+            return errorResponse(res, 'Some organizations do not belong to this tenant', 400);
         }
 
         if (workspaces.length > 0) {
@@ -481,11 +523,75 @@ const provisionUser = async (req, res) => {
                 joined_at: new Date()
             }));
 
-            // Use DO NOTHING on conflict to avoid errors if user already exists
             await knex('workspace_users')
                 .insert(workspaceUsers)
                 .onConflict(['workspace_id', 'user_id'])
-                .merge(); // Updates role if exists, or ignore() if we don't want to update
+                .merge();
+
+            // 6. Add User to Each Organization's Role Subgroup in Keycloak
+            for (const workspace of workspaces) {
+                try {
+                    // Get workspace GSTINs to find the org group
+                    const gstinMaster = await knex('gstin_master')
+                        .where({ workspace_id: workspace.id })
+                        .first();
+
+                    if (!gstinMaster) {
+                        console.warn(`No GSTIN found for workspace ${workspace.id}`);
+                        continue;
+                    }
+
+                    // Find the organization group by GSTIN name
+                    const tenantGroupId = tenant.metadata?.keycloak_groups?.tenant_group_id;
+                    if (!tenantGroupId) {
+                        console.warn('Tenant group ID not found in metadata');
+                        continue;
+                    }
+
+                    // Get organization subgroup (named by GSTIN)
+                    let orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstinMaster.gstin);
+
+                    // If org group doesn't exist, create it
+                    if (!orgGroup) {
+                        try {
+                            orgGroup = await keycloakService.createSubgroup(tenantGroupId, gstinMaster.gstin, {
+                                tenant_id: tenantId,
+                                gstin: gstinMaster.gstin
+                            });
+                            console.log(`Created new organization subgroup '${gstinMaster.gstin}'`);
+                        } catch (createOrgError) {
+                            console.error(`Failed to create org subgroup '${gstinMaster.gstin}':`, createOrgError.message);
+                        }
+                    }
+
+                    if (!orgGroup || !orgGroup.id) {
+                        console.warn(`Organization group not found/created for GSTIN ${gstinMaster.gstin}`);
+                        continue;
+                    }
+
+                    // Get role subgroup under organization (e.g., "Accountant")
+                    let roleGroup = await keycloakService.getSubgroupByName(orgGroup.id, role);
+
+                    // If role subgroup doesn't exist, create it
+                    if (!roleGroup) {
+                        try {
+                            roleGroup = await keycloakService.createSubgroup(orgGroup.id, role, {
+                                description: `Users with ${role} role for ${gstinMaster.gstin}`
+                            });
+                            console.log(`Created new role subgroup '${role}' under org ${gstinMaster.gstin}`);
+                        } catch (createError) {
+                            console.error(`Failed to create role subgroup '${role}':`, createError.message);
+                        }
+                    }
+
+                    if (roleGroup && roleGroup.id) {
+                        await keycloakService.addUserToGroup(keycloakId, roleGroup.id);
+                        console.log(`Added user ${email} to role '${role}' in org ${gstinMaster.gstin}`);
+                    }
+                } catch (orgGroupError) {
+                    console.error(`Failed to add user to org role subgroup:`, orgGroupError.message);
+                }
+            }
         }
 
         return successResponse(res, { user, temp_password: password }, 'User provisioned successfully', 201);
@@ -507,44 +613,28 @@ const listTenantUsers = async (req, res) => {
         }
 
         let users = [];
-        // 2. Get Users from Keycloak Group
-        if (tenant.metadata && tenant.metadata.keycloak_groups && tenant.metadata.keycloak_groups.tenant_group_id) {
-            const kcUsers = await keycloakService.getGroupMembers(tenant.metadata.keycloak_groups.tenant_group_id);
+        // 2. Fetch users directly from DB for this tenant using Join
+        const knex = require('../../../shared/src/db/connection');
 
-            // 3. Enrich with Local DB Data (including designation)
-            // This is efficient only for small numbers. For large numbers, we should query DB directly.
-            // Since we don't have a direct link in DB (yet), we iterate.
-            // OPTIMIZATION: In future, add tenant_id to users table or create tenant_users table.
+        users = await knex('users')
+            .select(
+                'users.id',
+                'users.full_name',
+                'users.email',
+                'users.phone',
+                'users.designation',
+                'users.is_active',
+                'users.last_login_at',
+                knex.raw('COUNT(DISTINCT workspace_users.workspace_id) as organization_count')
+            )
+            .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
+            .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspaces.tenant_id', tenantId)
+            .groupBy('users.id');
 
-            const emails = kcUsers.map(u => u.email).filter(e => e);
-            if (emails.length > 0) {
-                // We need a bulk find method, but for now we'll do promise.all or find one by one (inefficient but works for now)
-                // Or better: modify userModel to support `whereIn('email', emails)`?
-                // Let's stick to simplest: just query all users and filter? No, too heavy.
-                // Let's assume we can fetch by email.
-
-                // Actually, let's just assume local DB users is NOT the primary source for "list of tenant users" if we don't link them.
-                // But we DO create them in local 'users' table.
-                // Let's fetch local user details for each keycloak user.
-
-                users = await Promise.all(kcUsers.map(async (kcu) => {
-                    const localUser = await User.findByEmail(kcu.email);
-                    return {
-                        id: localUser ? localUser.id : kcu.id, // Prefer local ID
-                        keycloak_id: kcu.id,
-                        email: kcu.email,
-                        full_name: localUser ? localUser.full_name : `${kcu.firstName} ${kcu.lastName}`,
-                        phone: localUser ? localUser.phone : null,
-                        designation: localUser ? localUser.designation : null, // The role/authority vector
-                        status: kcu.enabled ? 'active' : 'inactive',
-                        created_at: localUser ? localUser.created_at : kcu.createdTimestamp
-                    };
-                }));
-            }
-        } else {
-            // Fallback if no group ID
-            return successResponse(res, [], 'No associated group found for tenant');
-        }
+        // Note: This only lists users assigned to at least one workspace in this tenant.
+        // Users created but not assigned (if any) won't show up. 
+        // With new UI, users must have 1+ orgs, so this is valid.
 
         return successResponse(res, users, 'Tenant users retrieved successfully');
 

@@ -151,11 +151,37 @@ const createWorkspace = async (req, res) => {
 
         if (tenantGroupId) {
             try {
-                // Name will be GSTIN
-                await keycloakService.createSubgroup(tenantGroupId, gstin, {
-                    workspace_id: gstin, // Attribute to link back if needed
-                    type: 'GSTIN'
+                // Create organization (GSTIN) subgroup under tenant group
+                const orgSubgroup = await keycloakService.createSubgroup(tenantGroupId, gstin, {
+                    workspace_id: workspaceId,
+                    gstin: gstin,
+                    type: 'ORGANIZATION'
                 });
+
+                if (orgSubgroup && orgSubgroup.id) {
+                    console.log(`Created organization subgroup ${gstin} under tenant group`);
+
+                    // Create role subgroups under the organization group
+                    const roles = [
+                        'Super Admin',
+                        'Tenant Admin',
+                        'Organization Admin',
+                        'Accountant',
+                        'Viewer'
+                    ];
+
+                    for (const roleName of roles) {
+                        try {
+                            await keycloakService.createSubgroup(orgSubgroup.id, roleName, {
+                                type: 'ROLE',
+                                organization: gstin
+                            });
+                            console.log(`Created role subgroup '${roleName}' under organization ${gstin}`);
+                        } catch (roleError) {
+                            console.warn(`Failed to create role subgroup '${roleName}':`, roleError.message);
+                        }
+                    }
+                }
             } catch (kcError) {
                 console.warn(`Failed to create Keycloak subgroup for GSTIN ${gstin}:`, kcError.message);
             }

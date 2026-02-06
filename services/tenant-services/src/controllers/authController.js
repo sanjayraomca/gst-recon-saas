@@ -36,7 +36,24 @@ const login = async (req, res) => {
             login_count: knex.raw('COALESCE(login_count, 0) + 1')
         });
 
-        return successResponse(res, tokenData, 'Login successful');
+        // Infer Tenant ID from Workspaces
+        const userTenant = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .select('workspaces.tenant_id')
+            .where('workspace_users.user_id', user.id)
+            .first();
+
+        const responsePayload = {
+            ...tokenData,
+            tenant_id: userTenant ? userTenant.tenant_id : null,
+            user: {
+                id: user.id,
+                full_name: user.full_name,
+                email: user.email
+            }
+        };
+
+        return successResponse(res, responsePayload, 'Login successful');
     } catch (error) {
         return errorResponse(res, error, 401);
     }
