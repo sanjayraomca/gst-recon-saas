@@ -29,6 +29,30 @@ const startServer = async () => {
             }
         });
 
+        subscribeToSubject('ORGANIZATION_CREATED', async (data) => {
+            console.log('Received ORGANIZATION_CREATED event:', data);
+            try {
+                // data: { user_email, full_name, org_name, total_count }
+                const { sendOrganizationCreatedEmail } = require('./services/emailService');
+                await sendOrganizationCreatedEmail(data.user_email, data.full_name, data.org_name, data.total_count);
+                console.log(`Organization created email sent to ${data.user_email}`);
+            } catch (error) {
+                console.error('Failed to send organization created email:', error);
+            }
+        });
+
+        subscribeToSubject('USER_INVITED', async (data) => {
+            console.log('Received USER_INVITED event:', data);
+            try {
+                // data: { email, inviter_name, org_name, role, invite_link }
+                const { sendUserInviteEmail } = require('./services/emailService');
+                await sendUserInviteEmail(data.email, data.inviter_name, data.org_name, data.role, data.invite_link);
+                console.log(`Invitation email sent to ${data.email}`);
+            } catch (error) {
+                console.error('Failed to send invitation email:', error);
+            }
+        });
+
         app.listen(PORT, () => {
             console.log(`Notification Service running on port ${PORT}`);
         });

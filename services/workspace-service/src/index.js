@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { connectNATS } = require('./config/nats'); // Will create this next
+const { connectNats } = require('../../shared/src/nats/client');
 const db = require('../../shared/src/db/connection'); // Use shared DB connection
 
 const app = express();
@@ -27,7 +27,7 @@ app.get('/health', (req, res) => {
 
 const startServer = async () => {
     try {
-        await connectNATS();
+        await connectNats();
         app.listen(PORT, () => {
             console.log(`Workspace Service running on port ${PORT}`);
         });

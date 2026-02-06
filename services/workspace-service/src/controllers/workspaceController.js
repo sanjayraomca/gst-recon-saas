@@ -5,6 +5,7 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
 const knex = require('../../../shared/src/db/connection');
 
 const keycloakService = require('../services/keycloakService');
+const { publishMessage } = require('../../../shared/src/nats/client');
 
 const createWorkspace = async (req, res) => {
     const trx = await knex.transaction();
@@ -201,6 +202,7 @@ const createWorkspace = async (req, res) => {
         // 7. Link User
         const userId = req.user ? (req.user.sub || req.user.id) : null;
         const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        const userFullName = req.user ? (req.user.name || req.user.full_name) : 'User';
 
         if (userId || userEmail) {
             let query = trx('users');
@@ -221,6 +223,27 @@ const createWorkspace = async (req, res) => {
         }
 
         await trx.commit();
+
+        // NATS: Publish Event
+        try {
+            // Count total organizations for this tenant
+            const orgCount = await knex('workspaces').where('tenant_id', targetTenantId).count('id as count').first();
+            const totalOrgs = orgCount ? orgCount.count : 1;
+
+            publishMessage('ORGANIZATION_CREATED', {
+                user_email: userEmail || 'unknown@example.com', // Fallback
+                full_name: userFullName,
+                org_name: name,
+                total_count: totalOrgs,
+                tenant_id: targetTenantId,
+                workspace_id: workspaceId
+            });
+            console.log(`Published ORGANIZATION_CREATED event for ${name}`);
+        } catch (natsError) {
+            console.warn('Failed to publish NATS event:', natsError.message);
+            // Don't fail the request if notification fails
+        }
+
         return successResponse(res, workspace, 'Workspace created successfully');
     } catch (error) {
         await trx.rollback();
@@ -233,6 +256,9 @@ const createWorkspace = async (req, res) => {
 
 const listWorkspaces = async (req, res) => {
     try {
+        console.log('listWorkspaces: Request received');
+        const { tenant_id } = req.query; // Support explicit tenant filtering
+
         const userId = req.user ? (req.user.sub || req.user.id) : null;
         const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
 
@@ -242,35 +268,41 @@ const listWorkspaces = async (req, res) => {
 
         // Find local user
         let query = knex('users');
-        if (userId) {
-            query = query.where('auth_provider_id', userId).orWhere('id', userId);
-        }
-        if (userEmail) {
-            query = query.orWhere('email', userEmail);
-        }
+        if (userId) query = query.where('auth_provider_id', userId).orWhere('id', userId);
+        if (userEmail) query = query.orWhere('email', userEmail);
 
         const localUser = await query.first();
 
         if (!localUser) {
-            // Log for debugging
-            console.warn('listWorkspaces: User not found locally', { userId, userEmail });
             return successResponse(res, [], 'User not found locally');
         }
 
-        // Find workspaces linked to this user
-        const userWorkspaces = await knex('workspace_users')
-            .where('user_id', localUser.id)
-            .select('workspace_id');
+        let workspaces = [];
 
-        const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
+        // If tenant_id is provided, permit fetching all workspaces for that tenant
+        // TODO: Add stricter permission check (e.g., is user Tenant Admin?)
+        if (tenant_id) {
+            workspaces = await knex('workspaces')
+                .where('tenant_id', tenant_id)
+                .orderBy('created_at', 'desc');
+        } else {
+            // Default behavior: Fetch workspaces explicitly assigned to the user
+            const userWorkspaces = await knex('workspace_users')
+                .where('user_id', localUser.id)
+                .select('workspace_id');
 
-        if (workspaceIds.length === 0) {
-            return successResponse(res, [], 'No workspaces found');
+            const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
+
+            if (workspaceIds.length > 0) {
+                workspaces = await knex('workspaces')
+                    .whereIn('id', workspaceIds)
+                    .orderBy('created_at', 'desc');
+            }
         }
 
-        const workspaces = await knex('workspaces').whereIn('id', workspaceIds);
         return successResponse(res, workspaces, 'Workspaces fetched');
     } catch (error) {
+        console.error('listWorkspaces Error:', error);
         return errorResponse(res, error);
     }
 };

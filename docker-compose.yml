@@ -256,6 +256,7 @@ services:
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - JWT_SECRET=change-this-secret-in-production
       - RECAPTCHA_SECRET_KEY=6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe
+      - FRONTEND_URL=http://localhost:3000
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tenant-service.rule=PathPrefix(`/auth`) || PathPrefix(`/tenants`)"

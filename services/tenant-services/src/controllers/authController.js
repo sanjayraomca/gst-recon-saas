@@ -36,25 +36,44 @@ const login = async (req, res) => {
             login_count: knex.raw('COALESCE(login_count, 0) + 1')
         });
 
-        // Infer Tenant ID from Workspaces
-        const userTenant = await knex('workspace_users')
+        // Infer Tenant(s) from Workspaces
+        const userTenants = await knex('workspace_users')
             .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .select('workspaces.tenant_id')
+            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+            .select(
+                'tenants.id',
+                'tenants.tenant_code',
+                'tenants.legal_name',
+                'workspace_users.role'
+            )
             .where('workspace_users.user_id', user.id)
-            .first();
+            .distinct('tenants.id');
+
+        // Extract primary tenant
+        // Priority:
+        // 1. Tenant name matches User name (Owner/Self scenario)
+        // 2. First available tenant
+        let primaryTenant = null;
+        if (userTenants.length > 0) {
+            const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
+            primaryTenant = nameMatch || userTenants[0];
+        }
 
         const responsePayload = {
             ...tokenData,
-            tenant_id: userTenant ? userTenant.tenant_id : null,
+            tenant_id: primaryTenant ? primaryTenant.id : null,
+            tenants: userTenants, // List of all accessible tenants
             user: {
                 id: user.id,
                 full_name: user.full_name,
-                email: user.email
+                email: user.email,
+                roles: userTenants.map(t => ({ tenant_id: t.id, role: t.role }))
             }
         };
 
         return successResponse(res, responsePayload, 'Login successful');
     } catch (error) {
+        console.error('Login Error:', error);
         return errorResponse(res, error, 401);
     }
 };
@@ -254,10 +273,104 @@ const register = async (req, res) => {
     }
 };
 
+const acceptInvite = async (req, res) => {
+    try {
+        const { token, password, full_name } = req.body;
+        const User = require('../models/userModel');
+        const knex = require('../../../shared/src/db/connection');
+
+        if (!token || !password) {
+            return errorResponse(res, 'Token and password are required', 400);
+        }
+
+        // 1. Find User by Token
+        const user = await User.findByInvitationToken(token);
+        if (!user) {
+            return errorResponse(res, 'Invalid or expired invitation token', 400);
+        }
+
+        // Check expiration
+        if (new Date() > new Date(user.invitation_expires_at)) {
+            return errorResponse(res, 'Invitation token has expired', 400);
+        }
+
+        // 2. Update Keycloak Password
+        try {
+            await keycloakService.resetPassword(user.auth_provider_id, password);
+        } catch (kcError) {
+            console.error('Failed to set password in Keycloak:', kcError);
+            return errorResponse(res, 'Failed to set password. Please try again.', 500);
+        }
+
+        // 3. Activate User in DB
+        const updateData = {
+            is_active: true,
+            invitation_token: null,
+            invitation_expires_at: null,
+            updated_at: new Date()
+        };
+
+        if (full_name) {
+            updateData.full_name = full_name;
+            // Update Keycloak name too
+            try {
+                await keycloakService.updateUser(user.auth_provider_id, { full_name });
+            } catch (e) { console.warn('Failed to update name in Keycloak', e); }
+        }
+
+        await User.update(user.id, updateData);
+
+        // 4. Activate Workspace Links
+        await knex('workspace_users')
+            .where('user_id', user.id)
+            .update({ invitation_status: 'ACTIVE' });
+
+        // 5. Login User (Generate Token)
+        try {
+            const tokenData = await keycloakService.login(user.email, password);
+
+            // Fetch Tenants for this user
+            const userTenants = await knex('tenants')
+                .join('workspaces', 'tenants.id', 'workspaces.tenant_id')
+                .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                .where('workspace_users.user_id', user.id)
+                .distinct('tenants.id', 'tenants.legal_name', 'tenants.tenant_code');
+
+            // Prioritize tenant matching user name (using the logic we added earlier)
+            let primaryTenant = null;
+            if (userTenants.length > 0) {
+                const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
+                primaryTenant = nameMatch || userTenants[0];
+            }
+
+            const responsePayload = {
+                ...tokenData,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    full_name: full_name || user.full_name,
+                    tenant_id: primaryTenant ? primaryTenant.id : null,
+                    tenant_name: primaryTenant ? primaryTenant.legal_name : null
+                }
+            };
+
+            return successResponse(res, responsePayload, 'Invitation accepted and logged in successfully');
+
+        } catch (loginError) {
+            console.error('Auto-login failed after accept invite:', loginError);
+            return successResponse(res, { message: 'Invitation accepted. Please login.' }, 'Invitation accepted successfully');
+        }
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     login,
     register,
     refresh,
     getProfile,
-    updateProfile
+    updateProfile,
+    acceptInvite
 };

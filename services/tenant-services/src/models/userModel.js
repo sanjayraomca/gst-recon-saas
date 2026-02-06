@@ -22,6 +22,10 @@ const User = {
 
     async findById(id) {
         return knex('users').where({ id }).first();
+    },
+
+    async findByInvitationToken(token) {
+        return knex('users').where({ invitation_token: token }).first();
     }
 };
 

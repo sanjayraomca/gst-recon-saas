@@ -8,5 +8,6 @@ router.post('/register', authController.register);
 router.post('/refresh', authController.refresh);
 router.get('/profile', verifyToken, authController.getProfile);
 router.put('/profile', verifyToken, authController.updateProfile);
+router.post('/accept-invite', authController.acceptInvite);
 
 module.exports = router;
