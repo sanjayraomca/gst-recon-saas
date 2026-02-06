@@ -1,7 +1,7 @@
 exports.up = function (knex) {
     return knex.schema
         // 1. gst_notices
-        .createTable('gst_notices', function (table) {
+        .createTableIfNotExists('gst_notices', function (table) {
             table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
             table.uuid('workspace_id').notNullable().index(); // FK will be checked by DB if workspaces exists
             table.uuid('gstin_id').notNullable();
@@ -38,7 +38,7 @@ exports.up = function (knex) {
             table.unique(['workspace_id', 'notice_number']);
         })
         // 2. notice_defense_packs
-        .createTable('notice_defense_packs', function (table) {
+        .createTableIfNotExists('notice_defense_packs', function (table) {
             table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
             table.uuid('notice_id').notNullable().references('id').inTable('gst_notices').onDelete('CASCADE');
             table.uuid('workspace_id').notNullable();
@@ -59,7 +59,7 @@ exports.up = function (knex) {
             table.timestamp('reviewed_at');
         })
         // 3. vendor_communications
-        .createTable('vendor_communications', function (table) {
+        .createTableIfNotExists('vendor_communications', function (table) {
             table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
             table.uuid('workspace_id').notNullable();
             table.string('supplier_gstin', 15);

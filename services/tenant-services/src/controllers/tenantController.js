@@ -2,6 +2,7 @@ const Tenant = require('../models/tenantModel');
 const keycloakService = require('../services/keycloakService');
 const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { publishMessage } = require('../../../shared/src/nats/client');
 
 const createTenant = async (req, res) => {
     try {
@@ -213,11 +214,34 @@ const deleteTenant = async (req, res) => {
 
 const registerTenant = async (req, res) => {
     try {
-        const { email, password, full_name, phone } = req.body;
+        const { email, password, full_name, phone, recaptcha_token } = req.body;
         const User = require('../models/userModel');
+        const axios = require('axios'); // Ensure axios is required
 
         if (!email || !password || !full_name) {
             return errorResponse(res, 'Email, password and full name required', 400);
+        }
+
+        // Verify reCAPTCHA
+        if (!process.env.RECAPTCHA_SECRET_KEY) {
+            console.warn("RECAPTCHA_SECRET_KEY is missing. Skipping verification.");
+        } else {
+            if (!recaptcha_token) {
+                return errorResponse(res, 'reCAPTCHA token is missing', 400);
+            }
+
+            try {
+                const verificationUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${recaptcha_token}`;
+                const recaptchaResponse = await axios.post(verificationUrl);
+
+                if (!recaptchaResponse.data.success) {
+                    console.error("reCAPTCHA Verification Failed:", recaptchaResponse.data);
+                    return errorResponse(res, 'reCAPTCHA verification failed', 400);
+                }
+            } catch (recaptchaError) {
+                console.error("reCAPTCHA Error:", recaptchaError.message);
+                return errorResponse(res, 'Failed to verify reCAPTCHA', 500);
+            }
         }
 
         // 1. Create User in Keycloak
@@ -273,12 +297,24 @@ const registerTenant = async (req, res) => {
 
             // 3. Create Tenant
             const tenantId = crypto.randomUUID();
-            const tenantCode = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').substring(0, 10) + '_' + Math.floor(Math.random() * 1000);
+
+            // Generate Tenant Code: First 3 chars of name + Sequential Number (001, 002...)
+            const prefix = full_name.substring(0, 3).toUpperCase();
+            const similarTenants = await trx('tenants')
+                .where('tenant_code', 'like', `${prefix}%`)
+                .count('id as count');
+
+            const nextNum = parseInt(similarTenants[0].count) + 1;
+            // Ensure unique loop just in case (optional but safer)
+            // For now, relying on count + 1 is 'okay' for low concurrency, 
+            // but unique constraint will catch collisions. 
+            // Let's rely on count for simplicity as per request.
+            const tenantCode = `${prefix}${String(nextNum).padStart(5, '0')}`;
 
             let [tenant] = await trx('tenants').insert({
                 id: tenantId,
                 tenant_code: tenantCode,
-                legal_name: full_name + "'s Org",
+                legal_name: full_name, // Use same name as signup full_name
                 subscription_plan: 'STARTER',
                 subscription_status: 'ACTIVE',
                 created_at: new Date(),
@@ -317,50 +353,201 @@ const registerTenant = async (req, res) => {
                 console.error(`Failed to create Keycloak group during registration for tenant ${tenantId}:`, kcGroupError.message);
             }
 
-            // 4. Create Default Workspace
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
-                name: 'Default Workspace',
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            });
-
-            // 5. Link Tenant to Workspace
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER'
-            });
-
-            // 6. Link User to Workspace (as Admin)
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'SUPER_ADMIN',
-                permissions: JSON.stringify({
-                    can_upload: true,
-                    can_reconcile: true,
-                    can_override: true,
-                    can_export: true,
-                    can_invite: true,
-                    can_configure: true
-                }),
-                invitation_status: 'ACTIVE'
-            });
+            // 4. Create Default Workspace - REMOVED
+            // 5. Link Tenant to Workspace - REMOVED
+            // 6. Link User to Workspace - REMOVED
 
             await trx.commit();
+
+            // Publish Event
+            publishMessage('TENANT_REGISTERED', {
+                email: user.email,
+                full_name: user.full_name,
+                tenant_code: tenant.tenant_code,
+                tenant_id: tenant.id
+            });
+
             return successResponse(res, { user, tenant }, 'Tenant and user registered successfully', 201);
         } catch (dbError) {
             await trx.rollback();
             throw dbError;
         }
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const provisionUser = async (req, res) => {
+    try {
+        const { id: tenantId } = req.params;
+        const { email, full_name, phone, role } = req.body;
+        const User = require('../models/userModel');
+
+        if (!email || !full_name || !role) {
+            return errorResponse(res, 'Email, full name, and role are required', 400);
+        }
+
+        // 1. Check Tenant
+        const tenant = await Tenant.findById(tenantId);
+        if (!tenant) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
+        // 2. Create/Get User in Keycloak
+        let keycloakId;
+        const password = crypto.randomUUID().slice(0, 12); // Generate temp password
+        const nameParts = full_name.split(' ');
+        const firstName = nameParts[0];
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        try {
+            keycloakId = await keycloakService.createUser({
+                email,
+                password,
+                firstName,
+                lastName
+            });
+        } catch (kcError) {
+            if (kcError.message === 'User already exists in Keycloak') {
+                const kcUser = await keycloakService.getUserByEmail(email);
+                if (kcUser) keycloakId = kcUser.id;
+            } else {
+                throw kcError;
+            }
+        }
+
+        if (!keycloakId) {
+            throw new Error('Failed to retrieve Keycloak ID');
+        }
+
+        // 3. Add User to Tenant Group in Keycloak
+        if (tenant.metadata && tenant.metadata.keycloak_groups && tenant.metadata.keycloak_groups.tenant_group_id) {
+            await keycloakService.addUserToGroup(keycloakId, tenant.metadata.keycloak_groups.tenant_group_id);
+        } else {
+            console.warn(`Tenant ${tenantId} does not have a Keycloak group ID in metadata.`);
+            // Fallback: Try to find group by name (UUID)
+            const group = await keycloakService.getGroupByName(tenantId);
+            if (group) {
+                await keycloakService.addUserToGroup(keycloakId, group.id);
+            }
+        }
+
+        // 4. Create/Update User in Local DB
+        let user = await User.findByEmail(email);
+        const userData = {
+            full_name,
+            phone,
+            designation: role, // Mapping 'role' from frontend to 'designation'
+            auth_provider_id: keycloakId,
+            updated_at: new Date()
+        };
+
+        if (user) {
+            user = await User.update(user.id, userData);
+        } else {
+            userData.id = crypto.randomUUID();
+            userData.email = email;
+            userData.auth_provider_type = 'KEYCLOAK';
+            userData.created_at = new Date();
+            user = await User.create(userData);
+        }
+
+        // 5. Link to all tenant workspaces
+        const knex = require('../../../shared/src/db/connection');
+        const workspaces = await knex('workspaces').where({ tenant_id: tenantId });
+
+        // Map frontend role to workspace role
+        // Frontend: super_admin, tenant_admin, org_admin, accountant, viewer
+        // Backend Enum: SUPER_ADMIN, WORKSPACE_ADMIN, ACCOUNTANT, AUDITOR, VIEWER, GST_PRACTITIONER
+        let workspaceRole = 'VIEWER';
+        const roleUpper = role.toUpperCase();
+
+        switch (role) {
+            case 'super_admin': workspaceRole = 'SUPER_ADMIN'; break;
+            case 'tenant_admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
+            case 'org_admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
+            case 'accountant': workspaceRole = 'ACCOUNTANT'; break;
+            case 'viewer': workspaceRole = 'VIEWER'; break;
+            default: workspaceRole = 'VIEWER';
+        }
+
+        if (workspaces.length > 0) {
+            const workspaceUsers = workspaces.map(ws => ({
+                id: crypto.randomUUID(),
+                workspace_id: ws.id,
+                user_id: user.id,
+                role: workspaceRole,
+                invitation_status: 'ACTIVE',
+                joined_at: new Date()
+            }));
+
+            // Use DO NOTHING on conflict to avoid errors if user already exists
+            await knex('workspace_users')
+                .insert(workspaceUsers)
+                .onConflict(['workspace_id', 'user_id'])
+                .merge(); // Updates role if exists, or ignore() if we don't want to update
+        }
+
+        return successResponse(res, { user, temp_password: password }, 'User provisioned successfully', 201);
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const listTenantUsers = async (req, res) => {
+    try {
+        const { id: tenantId } = req.params;
+        const User = require('../models/userModel');
+
+        // 1. Check Tenant
+        const tenant = await Tenant.findById(tenantId);
+        if (!tenant) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
+        let users = [];
+        // 2. Get Users from Keycloak Group
+        if (tenant.metadata && tenant.metadata.keycloak_groups && tenant.metadata.keycloak_groups.tenant_group_id) {
+            const kcUsers = await keycloakService.getGroupMembers(tenant.metadata.keycloak_groups.tenant_group_id);
+
+            // 3. Enrich with Local DB Data (including designation)
+            // This is efficient only for small numbers. For large numbers, we should query DB directly.
+            // Since we don't have a direct link in DB (yet), we iterate.
+            // OPTIMIZATION: In future, add tenant_id to users table or create tenant_users table.
+
+            const emails = kcUsers.map(u => u.email).filter(e => e);
+            if (emails.length > 0) {
+                // We need a bulk find method, but for now we'll do promise.all or find one by one (inefficient but works for now)
+                // Or better: modify userModel to support `whereIn('email', emails)`?
+                // Let's stick to simplest: just query all users and filter? No, too heavy.
+                // Let's assume we can fetch by email.
+
+                // Actually, let's just assume local DB users is NOT the primary source for "list of tenant users" if we don't link them.
+                // But we DO create them in local 'users' table.
+                // Let's fetch local user details for each keycloak user.
+
+                users = await Promise.all(kcUsers.map(async (kcu) => {
+                    const localUser = await User.findByEmail(kcu.email);
+                    return {
+                        id: localUser ? localUser.id : kcu.id, // Prefer local ID
+                        keycloak_id: kcu.id,
+                        email: kcu.email,
+                        full_name: localUser ? localUser.full_name : `${kcu.firstName} ${kcu.lastName}`,
+                        phone: localUser ? localUser.phone : null,
+                        designation: localUser ? localUser.designation : null, // The role/authority vector
+                        status: kcu.enabled ? 'active' : 'inactive',
+                        created_at: localUser ? localUser.created_at : kcu.createdTimestamp
+                    };
+                }));
+            }
+        } else {
+            // Fallback if no group ID
+            return successResponse(res, [], 'No associated group found for tenant');
+        }
+
+        return successResponse(res, users, 'Tenant users retrieved successfully');
+
     } catch (error) {
         return errorResponse(res, error);
     }
@@ -372,5 +559,7 @@ module.exports = {
     listTenants,
     updateTenant,
     deleteTenant,
-    registerTenant
+    registerTenant,
+    provisionUser,
+    listTenantUsers
 };

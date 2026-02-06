@@ -255,6 +255,7 @@ services:
       - KEYCLOAK_CLIENT_ID=admin-api
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - JWT_SECRET=change-this-secret-in-production
+      - RECAPTCHA_SECRET_KEY=6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tenant-service.rule=PathPrefix(`/auth`) || PathPrefix(`/tenants`)"
@@ -280,6 +281,10 @@ services:
       - DB_NAME=gst_recon
       - DB_USER=gstadmin
       - DB_PASSWORD=GstAdmin123
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=gsttool
+      - KEYCLOAK_CLIENT_ID=admin-api
+      - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - NATS_URL=nats://nats:4222
       - PORT=3002
     labels:
@@ -369,6 +374,31 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.report-service.rule=PathPrefix(`/reports`) || PathPrefix(`/analytics`)"
       - "traefik.http.services.report-service.loadbalancer.server.port=3005"
+    networks:
+      - gst-network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+    container_name: gst-notification-service
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    ports:
+      - "3006:3006"
+    environment:
+      - NATS_URL=nats://nats:4222
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - PORT=3006
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.notification-service.rule=PathPrefix(`/notifications`)"
+      - "traefik.http.services.notification-service.loadbalancer.server.port=3006"
     networks:
       - gst-network
 

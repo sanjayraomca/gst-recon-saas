@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Copy shared module first
 COPY services/shared /app/services/shared
+WORKDIR /app/services/shared
+RUN npm install
 
 # Setup Report Service
 WORKDIR /app/services/report-services

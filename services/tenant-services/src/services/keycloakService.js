@@ -170,6 +170,28 @@ class KeycloakService {
         }
     }
 
+    async resetPassword(userId, newPassword) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users/${userId}/reset-password`;
+
+            await axios.put(url, {
+                type: 'password',
+                value: newPassword,
+                temporary: false
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return true;
+        } catch (error) {
+            console.error('Keycloak Reset Password Error:', error.response?.data || error.message);
+            throw new Error('Failed to reset password in Keycloak');
+        }
+    }
+
     // ============================================
     // GROUP MANAGEMENT METHODS
     // ============================================
@@ -256,6 +278,24 @@ class KeycloakService {
         } catch (error) {
             console.error('Keycloak Get Group By ID Error:', error.message);
             return null;
+        }
+    }
+
+    async getGroupMembers(groupId) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/groups/${groupId}/members`;
+
+            const response = await axios.get(url, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`
+                }
+            });
+
+            return response.data; // Array of user objects
+        } catch (error) {
+            console.error('Keycloak Get Group Members Error:', error.message);
+            return [];
         }
     }
 

@@ -3,6 +3,7 @@ const User = require('../models/userModel');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const knex = require('../../../shared/src/db/connection');
 
 const login = async (req, res) => {
     try {
@@ -27,6 +28,13 @@ const login = async (req, res) => {
                 updated_at: new Date()
             });
         }
+
+        // Update Login Stats
+        await User.update(user.id, {
+            last_login_at: new Date(),
+            last_login_ip: req.ip || req.connection.remoteAddress,
+            login_count: knex.raw('COALESCE(login_count, 0) + 1')
+        });
 
         return successResponse(res, tokenData, 'Login successful');
     } catch (error) {
@@ -125,7 +133,11 @@ const register = async (req, res) => {
             // Handle existing user in Keycloak (e.g. from previous run), proceed to check local DB
             if (kcError.message === 'User already exists in Keycloak') {
                 const kcUser = await keycloakService.getUserByEmail(email);
-                if (kcUser) keycloakId = kcUser.id;
+                if (kcUser) {
+                    keycloakId = kcUser.id;
+                    // Sync password
+                    await keycloakService.resetPassword(keycloakId, password);
+                }
             } else {
                 throw kcError;
             }

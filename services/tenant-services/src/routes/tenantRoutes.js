@@ -15,4 +15,8 @@ router.get('/:id', tenantController.getTenant);
 router.put('/:id', tenantController.updateTenant);
 router.delete('/:id', tenantController.deleteTenant);
 
+// User Management Routes
+router.post('/:id/users', tenantController.provisionUser);
+router.get('/:id/users', tenantController.listTenantUsers);
+
 module.exports = router;
