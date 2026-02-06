@@ -402,6 +402,21 @@ services:
     networks:
       - gst-network
 
+  frontend:
+    build:
+      context: ../recon_frontend
+      dockerfile: Dockerfile
+    container_name: gst-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    networks:
+      - gst-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`app.gst.local`)"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
   # ==================== TOOLS ====================
   
   adminer:
