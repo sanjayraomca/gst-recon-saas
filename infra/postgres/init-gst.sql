@@ -106,6 +106,8 @@ CREATE TABLE users (
     login_count INTEGER DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
     metadata JSONB DEFAULT '{}',
+    reset_password_token VARCHAR(255),
+    reset_password_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
