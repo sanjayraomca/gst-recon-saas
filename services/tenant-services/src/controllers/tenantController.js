@@ -545,12 +545,14 @@ const provisionUser = async (req, res) => {
 
         // 7. Publish Invitation Event
         if (isNewUser) {
-            const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/accept-invite?token=${invitationToken}`;
+            const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/accept-invite?token=${invitationToken}`;
 
             publishMessage('USER_INVITED', {
                 email: user.email,
+                user_name: user.full_name,
                 inviter_name: req.user ? (req.user.name || 'Tenant Admin') : 'Tenant Admin',
-                org_name: workspaces.length > 0 ? workspaces[0].name : 'Organization', // Just show first one
+                tenant_name: tenant.legal_name,
+                org_names: workspaces.map(w => w.name),
                 role: role,
                 invite_link: inviteLink
             });

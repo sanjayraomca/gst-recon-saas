@@ -4,7 +4,7 @@ services:
   # ==================== NETWORK & PROXY ====================
   
   traefik:
-    image: traefik:v3.0
+    image: traefik:latest
     container_name: gst-traefik
     command:
       - "--api.dashboard=true"
@@ -12,6 +12,7 @@ services:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:8088"
+      - "--accesslog=true"
     environment:
       - DOCKER_API_VERSION=1.44
     ports:

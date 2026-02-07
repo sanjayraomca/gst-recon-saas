@@ -73,8 +73,9 @@ const login = async (req, res) => {
 
         return successResponse(res, responsePayload, 'Login successful');
     } catch (error) {
-        console.error('Login Error:', error);
-        return errorResponse(res, error, 401);
+        console.error('Login Error:', error.message);
+        const status = error.message === 'Invalid email or password' ? 401 : (error.message === 'Account is disabled' ? 403 : 500);
+        return errorResponse(res, error.message, status);
     }
 };
 
@@ -366,11 +367,95 @@ const acceptInvite = async (req, res) => {
     }
 };
 
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return errorResponse(res, 'Email is required', 400);
+        }
+
+        const user = await User.findByEmail(email);
+        if (!user) {
+            // Return success even if email not found for security
+            return successResponse(res, { message: 'If an account exists, an OTP has been sent.' }, 'OTP sent successfully');
+        }
+
+        // Generate 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+        // Save OTP to DB
+        await User.update(user.id, {
+            reset_password_token: otp,
+            reset_password_expires_at: otpExpiresAt,
+            updated_at: new Date()
+        });
+
+        // Publish Event
+        const { publishMessage } = require('../../../shared/src/nats/client');
+        publishMessage('PASSWORD_RESET_REQUESTED', {
+            email: user.email,
+            full_name: user.full_name,
+            otp: otp
+        });
+
+        return successResponse(res, { message: 'OTP sent successfully' }, 'OTP sent successfully');
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const resetPassword = async (req, res) => {
+    try {
+        const { email, otp, new_password } = req.body;
+        if (!email || !otp || !new_password) {
+            return errorResponse(res, 'Email, OTP and new password are required', 400);
+        }
+
+        // Find user by email and basic check (token lookup is better but email+otp works here)
+        // We will verify token in DB next
+        const user = await User.findByEmail(email);
+
+        if (!user || user.reset_password_token !== otp) {
+            return errorResponse(res, 'Invalid OTP', 400);
+        }
+
+        if (new Date() > new Date(user.reset_password_expires_at)) {
+            return errorResponse(res, 'OTP has expired', 400);
+        }
+
+        // Verify it isn't the invitation token flow (safety check)
+        // reset_password_token is specifically for this flow.
+
+        // Update Keycloak Password
+        try {
+            await keycloakService.resetPassword(user.auth_provider_id, new_password);
+        } catch (kcError) {
+            console.error('Failed to reset password in Keycloak:', kcError.message);
+            return errorResponse(res, kcError.message || 'Failed to update password. Please try again.', 400); // 400 as it might be policy violation
+        }
+
+        // Clear OTP
+        await User.update(user.id, {
+            reset_password_token: null,
+            reset_password_expires_at: null,
+            updated_at: new Date()
+        });
+
+        return successResponse(res, { message: 'Password reset successfully' }, 'Password reset successfully');
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     login,
     register,
     refresh,
     getProfile,
     updateProfile,
-    acceptInvite
+    acceptInvite,
+    forgotPassword,
+    resetPassword
 };

@@ -29,7 +29,13 @@ class KeycloakService {
             return response.data; // { access_token, refresh_token, ... }
         } catch (error) {
             console.error('Keycloak Login Error:', error.response?.data || error.message);
-            throw new Error('Authentication failed');
+            const errorDescription = error.response?.data?.error_description || error.message;
+            if (errorDescription === 'Invalid user credentials') {
+                throw new Error('Invalid email or password');
+            } else if (errorDescription === 'Account disabled') {
+                throw new Error('Account is disabled');
+            }
+            throw new Error(errorDescription || 'Authentication failed');
         }
     }
 
@@ -188,7 +194,8 @@ class KeycloakService {
             return true;
         } catch (error) {
             console.error('Keycloak Reset Password Error:', error.response?.data || error.message);
-            throw new Error('Failed to reset password in Keycloak');
+            const errorDescription = error.response?.data?.error_description || error.response?.data?.errorMessage || error.message;
+            throw new Error(errorDescription || 'Failed to reset password in Keycloak');
         }
     }
 

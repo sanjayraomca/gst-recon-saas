@@ -202,7 +202,7 @@ const createWorkspace = async (req, res) => {
         // 7. Link User
         const userId = req.user ? (req.user.sub || req.user.id) : null;
         const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
-        const userFullName = req.user ? (req.user.name || req.user.full_name) : 'User';
+        const userFullName = (req.user && (req.user.name || req.user.full_name)) || 'User';
 
         if (userId || userEmail) {
             let query = trx('users');
@@ -236,7 +236,8 @@ const createWorkspace = async (req, res) => {
                 org_name: name,
                 total_count: totalOrgs,
                 tenant_id: targetTenantId,
-                workspace_id: workspaceId
+                workspace_id: workspaceId,
+                gstin: gstin
             });
             console.log(`Published ORGANIZATION_CREATED event for ${name}`);
         } catch (natsError) {
