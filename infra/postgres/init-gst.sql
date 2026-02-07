@@ -108,6 +108,8 @@ CREATE TABLE users (
     metadata JSONB DEFAULT '{}',
     reset_password_token VARCHAR(255),
     reset_password_expires_at TIMESTAMPTZ,
+    invitation_token VARCHAR(255),
+    invitation_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
