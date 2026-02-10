@@ -45,6 +45,7 @@ services:
       - name: uploads
         paths:
           - /uploads
+          - /gst-import
         strip_path: false
   - name: report-service
     url: http://report-service:3005

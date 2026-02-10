@@ -428,7 +428,14 @@ const listWorkspaces = async (req, res) => {
 
         // If tenant_id is provided, permit fetching all workspaces for that tenant
         // TODO: Add stricter permission check (e.g., is user Tenant Admin?)
+        // If tenant_id is provided, permit fetching all workspaces for that tenant
+        // SECURITY: Verify user belongs to this tenant
         if (tenant_id) {
+            if (localUser.tenant_id !== tenant_id) {
+                console.warn(`User ${localUser.id} attempted to access tenant ${tenant_id} but belongs to ${localUser.tenant_id}`);
+                return res.status(403).json({ error: 'Access denied: You are not a member of this tenant' });
+            }
+
             workspaces = await knex('workspaces')
                 .where('tenant_id', tenant_id)
                 .orderBy('created_at', 'desc');

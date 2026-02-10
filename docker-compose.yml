@@ -347,7 +347,7 @@ services:
       - ./uploads:/app/uploads
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`)"
+      - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`) || PathPrefix(`/gst-import`)"
       - "traefik.http.services.upload-service.loadbalancer.server.port=3004"
     networks:
       - gst-network

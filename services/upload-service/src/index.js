@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const { connectNats } = require('./nats/natsClient');
 const uploadRoutes = require('./routes/uploadRoutes');
+const gstr2bRoutes = require('./routes/gstr2bRoutes');
 const { errorHandler } = require('../../shared/src/utils/responseHandler');
 
 dotenv.config();
@@ -15,6 +16,7 @@ app.use(express.json());
 
 // Routes
 app.use('/uploads', uploadRoutes);
+app.use('/gst-import/gstr2b', gstr2bRoutes);
 
 // Error Handler
 app.use(errorHandler);
