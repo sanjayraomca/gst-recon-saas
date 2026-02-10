@@ -20,3 +20,4 @@ router.post('/:id/users', tenantController.provisionUser);
 router.get('/:id/users', tenantController.listTenantUsers);
 
 module.exports = router;
+

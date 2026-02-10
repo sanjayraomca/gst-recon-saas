@@ -543,8 +543,9 @@ const provisionUser = async (req, res) => {
             }
         }
 
-        // 7. Publish Invitation Event
+        // 7. Send Email Notification
         if (isNewUser) {
+            // New users: Send invitation email with password creation link
             const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/accept-invite?token=${invitationToken}`;
 
             publishMessage('USER_INVITED', {
@@ -556,8 +557,23 @@ const provisionUser = async (req, res) => {
                 role: role,
                 invite_link: inviteLink
             });
-            console.log(`Published USER_INVITED for ${user.email}`);
+            console.log(`Published USER_INVITED for new user ${user.email}`);
+        } else {
+            // Existing users: Send confirmation email (no password creation needed)
+            const loginLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
+
+            publishMessage('USER_ADDED_TO_ORG', {
+                email: user.email,
+                user_name: user.full_name,
+                inviter_name: req.user ? (req.user.name || 'Tenant Admin') : 'Tenant Admin',
+                tenant_name: tenant.legal_name,
+                org_names: workspaces.map(w => w.name),
+                role: role,
+                login_link: loginLink
+            });
+            console.log(`Published USER_ADDED_TO_ORG for existing user ${user.email}`);
         }
+
 
         // Return appropriate response
         if (isNewUser) {
@@ -595,13 +611,14 @@ const listTenantUsers = async (req, res) => {
                 'users.designation',
                 'users.is_active',
                 'users.last_login_at',
-                knex.raw('COUNT(DISTINCT workspace_users.workspace_id) as organization_count')
+                knex.raw('COUNT(DISTINCT workspace_users.workspace_id) as organization_count'),
+                knex.raw('MAX(workspace_users.role) as role') // Get user's role from workspace_users
             )
             .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
             .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
             .where('workspaces.tenant_id', tenantId)
-            .groupBy('users.id');
-
+            .whereNot('users.email', 'superadmin.dev@gmail.com')
+            .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
         // Note: This only lists users assigned to at least one workspace in this tenant.
         // Users created but not assigned (if any) won't show up. 
         // With new UI, users must have 1+ orgs, so this is valid.

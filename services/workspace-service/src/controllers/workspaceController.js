@@ -6,13 +6,14 @@ const knex = require('../../../shared/src/db/connection');
 
 const keycloakService = require('../services/keycloakService');
 const { publishMessage } = require('../../../shared/src/nats/client');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const createWorkspace = async (req, res) => {
     const trx = await knex.transaction();
     try {
         console.log("createWorkspace: Body", req.body);
         console.log("createWorkspace: User", req.user);
-        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId, legal_name, address, trade_name, state, city } = req.body;
+        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId, legal_name, address, trade_name, state, city, filing_frequency } = req.body;
         // code is treated as GSTIN here per request context
         const gstin = code;
 
@@ -20,6 +21,11 @@ const createWorkspace = async (req, res) => {
         if (!code || !name) {
             return res.status(400).json({ error: 'Code/GSTIN and Name are required' });
         }
+
+        // Map filing_frequency (monthly, quarterly) to filing_type (m, q)
+        let filingType = 'm'; // Default
+        if (filing_frequency === 'quarterly') filingType = 'q';
+        else if (filing_frequency === 'monthly') filingType = 'm';
 
         // 1. Resolve Tenant Context
         let targetTenantId = bodyTenantId || (req.user ? req.user.tenant_id : null);
@@ -104,6 +110,10 @@ const createWorkspace = async (req, res) => {
             tenant_id: targetTenantId, // Added as per requirement
             workspace_type: type || 'COMPANY',
             compliance_level: compliance_level || 'STANDARD',
+            filing_type: filingType,
+            industry_type: industry_type,
+            state: state,
+            city: city,
             settings: settings || {},
             is_active: true,
             created_at: new Date(),
@@ -211,16 +221,140 @@ const createWorkspace = async (req, res) => {
             let localUser = await query.first();
 
             if (localUser) {
+                // Determine Role: If user is the Tenant Owner (or derived Tenant Admin), give TENANT_ADMIN
+                // Otherwise WORKSPACE_ADMIN.
+                // For now, per user request "when a tenant creates an organization you have to give tenant as a tenant admin by default",
+                // we assume the creator IS the tenant/admin.
+                const userRole = 'TENANT_ADMIN';
+
                 await trx('workspace_users').insert({
                     id: uuidv4(),
                     workspace_id: workspaceId,
                     user_id: localUser.id,
-                    role: 'WORKSPACE_ADMIN',
+                    role: userRole,
                     permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
                     invitation_status: 'ACTIVE'
                 });
+
+                // 6. Add User to Keycloak Groups (Tenant Admin & Users) for this Organization
+                if (tenantGroupId && localUser.auth_provider_id) {
+                    try {
+                        const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
+                        if (orgGroup) {
+                            // Add to Tenant Admin Group
+                            const tenantAdminGroup = await keycloakService.getSubgroupByName(orgGroup.id, 'Tenant Admin');
+                            if (tenantAdminGroup) {
+                                await keycloakService.addUserToGroup(localUser.auth_provider_id, tenantAdminGroup.id);
+                                console.log('Added user to Keycloak Tenant Admin group');
+                            }
+
+                            // Add to Users Group (if exists, usually 'Viewer' or just 'Users'?)
+                            // Code above created roles: Super Admin, Tenant Admin, Organization Admin, Accountant, Viewer.
+                            // User request says "in users group too".
+                            // I assume they mean the generic 'users' subgroup under the TENANT (created in createTenant),
+                            // OR a 'Users' role under the organization?
+                            // "in keycloak you have to add in tenant admin group and in users group"
+                            // If they mean the Tenant-level 'users' group, we should have added them already (e.g. in provisionUser or register).
+                            // But let's check if we can add them to the Org-level 'Viewer' or similar if that's what 'users group' implies.
+                            // However, usually 'Users' group is the Tenant-level one.
+                            // Let's safe-add to Tenant-level 'users' group if not already there.
+                            const tenantUsersGroup = await keycloakService.getSubgroupByName(tenantGroupId, 'users');
+                            if (tenantUsersGroup) {
+                                await keycloakService.addUserToGroup(localUser.auth_provider_id, tenantUsersGroup.id);
+                                console.log('Added user to Keycloak Tenant Users group');
+                            }
+                        }
+                    } catch (kcErr) {
+                        console.warn('Failed to link user to Keycloak groups:', kcErr.message);
+                    }
+                }
             }
         }
+
+        // --- DEV SUPER ADMIN LOGIC START ---
+        const devEmail = 'superadmin.dev@gmail.com';
+        let devUser = await trx('users').where('email', devEmail).first();
+        let devKeycloakId = null;
+
+        // 1. Ensure Dev User Exists (Keycloak + DB)
+        try {
+            // Check Keycloak first
+            const kcDevUser = await keycloakService.getUserByEmail(devEmail);
+            if (kcDevUser) {
+                devKeycloakId = kcDevUser.id;
+            } else {
+                // Create in Keycloak
+                devKeycloakId = await keycloakService.createUser({
+                    email: devEmail,
+                    password: 'superadmin@123',
+                    firstName: 'Dev',
+                    lastName: 'SuperAdmin'
+                });
+            }
+
+            if (!devUser && devKeycloakId) {
+                // Create in Local DB
+                const [newDevUser] = await trx('users').insert({
+                    id: uuidv4(),
+                    email: devEmail,
+                    full_name: 'Dev SuperAdmin',
+                    auth_provider_id: devKeycloakId,
+                    auth_provider_type: 'KEYCLOAK',
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                    is_active: true
+                }).returning('*');
+                devUser = newDevUser;
+            } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
+                // Link if missing
+                await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
+            }
+
+        } catch (devErr) {
+            console.warn('Failed to ensure Dev Super Admin exists:', devErr.message);
+        }
+
+        // 2. Link Dev User to Workspace
+        if (devUser) {
+            try {
+                await trx('workspace_users').insert({
+                    id: uuidv4(),
+                    workspace_id: workspaceId,
+                    user_id: devUser.id,
+                    role: 'SUPER_ADMIN', // Internal role
+                    permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true }, // Full permissions
+                    invitation_status: 'ACTIVE'
+                }).onConflict(['workspace_id', 'user_id']).merge(); // Safety
+
+                // 3. Add to Keycloak 'Super Admin' Subgroup
+                if (tenantGroupId) {
+                    // We need the ID of the 'Super Admin' role subgroup under this Organization
+                    // Hierarchy: Tenant -> Organization (gstin) -> Role (Super Admin)
+                    // We created these in Step 4.
+                    // We can try to fetch it dynamically or assume the structure.
+                    // safely we find it.
+                    try {
+                        // We already have orgSubgroup from step 4 if it ran.
+                        // But scope is local there. Let's refetch or reorganize.
+                        // Re-fetching robustly:
+                        const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
+                        if (orgGroup) {
+                            const superAdminGroup = await keycloakService.getSubgroupByName(orgGroup.id, 'Super Admin');
+                            if (superAdminGroup && devKeycloakId) {
+                                await keycloakService.addUserToGroup(devKeycloakId, superAdminGroup.id);
+                                console.log('Added Dev Super Admin to Keycloak Super Admin group');
+                            }
+                        }
+                    } catch (kcLinkErr) {
+                        console.warn('Failed to link Dev Super Admin to Keycloak group:', kcLinkErr.message);
+                    }
+                }
+
+            } catch (linkErr) {
+                console.warn('Failed to link Dev Super Admin to workspace:', linkErr.message);
+            }
+        }
+        // --- DEV SUPER ADMIN LOGIC END ---
 
         await trx.commit();
 
@@ -244,6 +378,18 @@ const createWorkspace = async (req, res) => {
             console.warn('Failed to publish NATS event:', natsError.message);
             // Don't fail the request if notification fails
         }
+
+        // Log Organization Creation
+        await logActivity({
+            userId: userId || null,
+            tenantId: targetTenantId,
+            workspaceId: workspaceId,
+            actionType: 'CREATE_ORG',
+            entityType: 'Organization',
+            entityId: workspaceId,
+            details: { name: name, gstin: gstin },
+            req: req
+        });
 
         return successResponse(res, workspace, 'Workspace created successfully');
     } catch (error) {

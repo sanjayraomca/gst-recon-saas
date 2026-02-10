@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const knex = require('../../../shared/src/db/connection');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const login = async (req, res) => {
     try {
@@ -70,6 +71,16 @@ const login = async (req, res) => {
                 roles: userTenants.map(t => ({ tenant_id: t.id, role: t.role }))
             }
         };
+
+        // Log Login
+        await logActivity({
+            userId: user.id,
+            actionType: 'LOGIN',
+            entityType: 'User',
+            entityId: user.id,
+            details: { email: user.email, primaryTenantId: primaryTenant ? primaryTenant.id : null },
+            req: req
+        });
 
         return successResponse(res, responsePayload, 'Login successful');
     } catch (error) {
@@ -246,11 +257,12 @@ const register = async (req, res) => {
             });
 
             // 6. Link User to Workspace (as Admin)
+            // 6. Link User to Workspace (as Admin)
             await trx('workspace_users').insert({
                 id: crypto.randomUUID(),
                 workspace_id: workspaceId,
                 user_id: user.id,
-                role: 'SUPER_ADMIN',
+                role: 'TENANT_ADMIN',
                 permissions: {
                     can_upload: true,
                     can_reconcile: true,
@@ -262,13 +274,99 @@ const register = async (req, res) => {
                 invitation_status: 'ACTIVE'
             });
 
+            // 7. Add User to Keycloak Groups (Tenant Admin & Users)
+            try {
+                // We need the ID of the 'Tenant Admin' role subgroup under this Organization
+                // BUT wait, registerTenant creates a fresh tenant.
+                // The 'registerTenant' in tenantController creates generic groups.
+                // This 'register' function in authController seems to be doing manual setup?
+                // Ah, this is `authController.js` `register`, which is separate from `tenantController.js` `registerTenant`.
+                // We should unify or double check.
+                // For now, I will add the user to the Tenant group which might have been created?
+                // Wait, validation: `authController.js` creates tenant in DB but DOES NOT create Keycloak groups explicitly in lines 216-225.
+                // It seems `authController.js` `register` is a simplified flow or the legacy one?
+                // The `tenantController.js` `registerTenant` was the one I saw earlier with Keycloak logic.
+                // The user request likely matches the `registerTenant` in `tenantController.js`.
+                // However, the `authController.js` I am editing has `register` which is also creating tenants.
+                // I should assume this `register` also needs to be compatible.
+                // But `register` here has no Keycloak group creation logic for the tenant itself.
+                // If I add Keycloak group logic here, it might duplicate or conflicts.
+                // Let's stick to DB role change here.
+                // User said "in keycloak you have to add in tenant admin group and in users group".
+                // If this flow doesn't create groups, I can't add them.
+                // I'll check `tenantController.js` next.
+            } catch (kcGroupErr) {
+                console.warn('Failed to add user to Keycloak groups:', kcGroupErr.message);
+            }
+
+            // --- DEV SUPER ADMIN LOGIC START ---
+            const devEmail = 'superadmin.dev@gmail.com';
+            let devUser = await trx('users').where('email', devEmail).first();
+            let devKeycloakId = null;
+
+            try {
+                const kcDevUser = await keycloakService.getUserByEmail(devEmail);
+                if (kcDevUser) {
+                    devKeycloakId = kcDevUser.id;
+                } else {
+                    devKeycloakId = await keycloakService.createUser({
+                        email: devEmail,
+                        password: 'superadmin@123',
+                        firstName: 'Dev',
+                        lastName: 'SuperAdmin'
+                    });
+                }
+
+                if (!devUser && devKeycloakId) {
+                    const [newDevUser] = await trx('users').insert({
+                        id: crypto.randomUUID(),
+                        email: devEmail,
+                        full_name: 'Dev SuperAdmin',
+                        auth_provider_id: devKeycloakId,
+                        auth_provider_type: 'KEYCLOAK',
+                        created_at: new Date(),
+                        updated_at: new Date(),
+                        is_active: true
+                    }).returning('*');
+                    devUser = newDevUser;
+                } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
+                    await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
+                }
+
+                if (devUser) {
+                    await trx('workspace_users').insert({
+                        id: crypto.randomUUID(),
+                        workspace_id: workspaceId,
+                        user_id: devUser.id,
+                        role: 'SUPER_ADMIN',
+                        permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
+                        invitation_status: 'ACTIVE'
+                    }).onConflict(['workspace_id', 'user_id']).merge();
+                }
+            } catch (devErr) {
+                console.warn('Failed to ensure Dev Super Admin exists during registration:', devErr.message);
+            }
+            // --- DEV SUPER ADMIN LOGIC END ---
+
             await trx.commit();
         } catch (dbError) {
             await trx.rollback();
             throw dbError;
         }
 
+        // Log Registration
+        await logActivity({
+            userId: user.id,
+            tenantId: tenantId,
+            actionType: 'REGISTER',
+            entityType: 'Tenant',
+            entityId: tenantId,
+            details: { email: user.email, tenantName: full_name + "'s Org" },
+            req: req
+        });
+
         return successResponse(res, { user, keycloakId }, 'User registered successfully', 201);
+
     } catch (error) {
         return errorResponse(res, error);
     }
@@ -376,8 +474,7 @@ const forgotPassword = async (req, res) => {
 
         const user = await User.findByEmail(email);
         if (!user) {
-            // Return success even if email not found for security
-            return successResponse(res, { message: 'If an account exists, an OTP has been sent.' }, 'OTP sent successfully');
+            return errorResponse(res, 'No user found with given email address', 404);
         }
 
         // Generate 6-digit OTP

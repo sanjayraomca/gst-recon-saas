@@ -54,10 +54,8 @@ const createGSTIN = async (req, res) => {
                 legal_name: newGSTIN.legal_name,
                 created_at: newGSTIN.created_at
             });
-            console.log(`Published gstin.created event for GSTIN: ${newGSTIN.gstin}`);
         } catch (natsError) {
-            console.warn('Failed to publish GSTIN created event:', natsError.message);
-            // Continue even if event publishing fails
+            // Silently fail or use proper logger if available
         }
 
         return successResponse(res, newGSTIN, 'GSTIN registered successfully');
@@ -98,7 +96,6 @@ const updateGSTIN = async (req, res) => {
         updates.updated_at = new Date();
 
         // Ensure not updating immutable fields like id or workspace_id blindly if not intended
-        // For now, passing updates directly but ideally should be whitelist
 
         const updatedGSTIN = await GSTIN.update(id, updates);
         if (!updatedGSTIN) return res.status(404).json({ error: 'GSTIN not found' });
