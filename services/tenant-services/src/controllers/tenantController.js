@@ -368,9 +368,44 @@ const registerTenant = async (req, res) => {
                 console.error(`Failed to create Keycloak group during registration for tenant ${tenantId}:`, kcGroupError.message);
             }
 
-            // 4. Create Default Workspace - REMOVED
-            // 5. Link Tenant to Workspace - REMOVED
-            // 6. Link User to Workspace - REMOVED
+            // 4. Create Default Workspace
+            const workspaceId = crypto.randomUUID();
+            await trx('workspaces').insert({
+                id: workspaceId,
+                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
+                name: 'Default Workspace',
+                workspace_type: 'COMPANY',
+                compliance_level: 'STANDARD',
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // 5. Link Tenant to Workspace
+            await trx('tenant_workspaces').insert({
+                id: crypto.randomUUID(),
+                tenant_id: tenantId,
+                workspace_id: workspaceId,
+                access_type: 'OWNER'
+            });
+
+            // 6. Link User to Workspace (as Admin)
+            await trx('workspace_users').insert({
+                id: crypto.randomUUID(),
+                workspace_id: workspaceId,
+                user_id: user.id,
+                role: 'TENANT_ADMIN',
+                permissions: JSON.stringify({
+                    can_upload: true,
+                    can_reconcile: true,
+                    can_override: true,
+                    can_export: true,
+                    can_invite: true,
+                    can_configure: true
+                }),
+                invitation_status: 'ACTIVE',
+                joined_at: new Date()
+            });
 
             await trx.commit();
 
@@ -379,10 +414,11 @@ const registerTenant = async (req, res) => {
                 email: user.email,
                 full_name: user.full_name,
                 tenant_code: tenant.tenant_code,
-                tenant_id: tenant.id
+                tenant_id: tenant.id,
+                workspace_id: workspaceId
             });
 
-            return successResponse(res, { user, tenant }, 'Tenant and user registered successfully', 201);
+            return successResponse(res, { user, tenant, workspaceId }, 'Tenant and user registered successfully', 201);
         } catch (dbError) {
             await trx.rollback();
             throw dbError;
@@ -491,10 +527,12 @@ const provisionUser = async (req, res) => {
         let workspaceRole = 'VIEWER';
         switch (role) {
             case 'Super Admin': workspaceRole = 'SUPER_ADMIN'; break;
-            case 'Tenant Admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
+            case 'Tenant Admin': workspaceRole = 'TENANT_ADMIN'; break;
             case 'Organization Admin': workspaceRole = 'WORKSPACE_ADMIN'; break;
             case 'Accountant': workspaceRole = 'ACCOUNTANT'; break;
             case 'Viewer': workspaceRole = 'VIEWER'; break;
+            case 'Auditor': workspaceRole = 'AUDITOR'; break;
+            case 'GST Practitioner': workspaceRole = 'GST_PRACTITIONER'; break;
             default: workspaceRole = 'VIEWER';
         }
 
@@ -611,21 +649,109 @@ const listTenantUsers = async (req, res) => {
                 'users.designation',
                 'users.is_active',
                 'users.last_login_at',
-                knex.raw('COUNT(DISTINCT workspace_users.workspace_id) as organization_count'),
-                knex.raw('MAX(workspace_users.role) as role') // Get user's role from workspace_users
+                knex.raw('CAST(COUNT(DISTINCT workspace_users.workspace_id) AS INTEGER) as organization_count'),
+                knex.raw('MAX(workspace_users.role) as role')
             )
-            .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
-            .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .join('workspace_users', 'users.id', 'workspace_users.user_id')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
             .where('workspaces.tenant_id', tenantId)
             .whereNot('users.email', 'superadmin.dev@gmail.com')
+            .whereNull('workspaces.deleted_at')
             .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
-        // Note: This only lists users assigned to at least one workspace in this tenant.
-        // Users created but not assigned (if any) won't show up. 
-        // With new UI, users must have 1+ orgs, so this is valid.
 
         return successResponse(res, users, 'Tenant users retrieved successfully');
 
     } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const getTenantActivities = async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const { limit = 50, offset = 0 } = req.query;
+
+        if (!tenantId) {
+            return res.status(400).json({ error: 'Tenant ID is required' });
+        }
+
+        // Fetch activity logs for this tenant with user information
+        const database = require('../../../shared/src/db/connection');
+        const activities = await database('activity_logs')
+            .leftJoin('users', 'activity_logs.user_id', 'users.id')
+            .where('activity_logs.tenant_id', tenantId)
+            .select(
+                'activity_logs.id',
+                'activity_logs.user_id',
+                'activity_logs.tenant_id',
+                'activity_logs.workspace_id',
+                'activity_logs.action_type',
+                'activity_logs.entity_type',
+                'activity_logs.entity_id',
+                'activity_logs.details',
+                'activity_logs.ip_address',
+                'activity_logs.user_agent',
+                'activity_logs.created_at',
+                'users.full_name as user_name',
+                'users.email as user_email'
+            )
+            .orderBy('activity_logs.created_at', 'desc')
+            .limit(parseInt(limit))
+            .offset(parseInt(offset));
+
+        // Format the response to include action descriptions
+        const formattedActivities = activities.map(activity => {
+            let actionDescription = '';
+            let entityType = activity.entity_type || 'general';
+
+            // Generate human-readable descriptions based on action_type
+            switch (activity.action_type) {
+                case 'user_created':
+                    actionDescription = `Created new user: ${activity.details?.target_user_email || activity.user_name || activity.user_email}`;
+                    entityType = 'user management';
+                    break;
+                case 'user_login':
+                    actionDescription = `${activity.user_name || activity.user_email} logged in`;
+                    entityType = 'auth';
+                    break;
+                case 'settings_updated':
+                    actionDescription = `Updated ${activity.details?.setting_name || 'system'} settings`;
+                    entityType = 'settings';
+                    break;
+                case 'report_generated':
+                    actionDescription = `Generated ${activity.details?.report_name || 'compliance'} report`;
+                    entityType = 'reports';
+                    break;
+                case 'reconciliation_run':
+                    actionDescription = `Ran reconciliation for ${activity.details?.period || 'November 2024'}`;
+                    entityType = 'reconciliation';
+                    break;
+                case 'import_data':
+                    actionDescription = `Imported ${activity.details?.data_type || 'purchase'} data`;
+                    entityType = 'data import';
+                    break;
+                case 'data_viewed':
+                    actionDescription = `Viewed ${activity.details?.view_name || 'dashboard'}`;
+                    entityType = 'view';
+                    break;
+                case 'create_org':
+                    actionDescription = `Created new organization: ${activity.details?.org_name || 'TaxCorp Solutions'}`;
+                    entityType = 'org management';
+                    break;
+                default:
+                    actionDescription = activity.action_type.replace(/_/g, ' ');
+            }
+
+            return {
+                ...activity,
+                action_description: actionDescription,
+                entity_type: entityType
+            };
+        });
+
+        return successResponse(res, formattedActivities, 'Activities fetched successfully');
+    } catch (error) {
+        console.error('Error fetching tenant activities:', error);
         return errorResponse(res, error);
     }
 };
@@ -638,5 +764,6 @@ module.exports = {
     deleteTenant,
     registerTenant,
     provisionUser,
-    listTenantUsers
+    listTenantUsers,
+    getTenantActivities
 };

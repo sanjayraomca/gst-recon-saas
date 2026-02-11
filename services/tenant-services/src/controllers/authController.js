@@ -339,7 +339,14 @@ const register = async (req, res) => {
                         workspace_id: workspaceId,
                         user_id: devUser.id,
                         role: 'SUPER_ADMIN',
-                        permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
+                        permissions: JSON.stringify({
+                            can_upload: true,
+                            can_reconcile: true,
+                            can_override: true,
+                            can_export: true,
+                            can_invite: true,
+                            can_configure: true
+                        }),
                         invitation_status: 'ACTIVE'
                     }).onConflict(['workspace_id', 'user_id']).merge();
                 }
