@@ -1,13 +1,14 @@
 const GSTIN = require('../models/gstin');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { encrypt } = require('../../../shared/src/utils/encryption');
 
 const createGSTIN = async (req, res) => {
     try {
         const {
             gstin, legal_name, trade_name, state_code,
             registration_date, taxpayer_type, registration_type,
-            contact_person, contact_email, address
+            contact_person, contact_email, address, gstn_password
         } = req.body;
         // Workspace ID is passed via Header from Gateway or Client (X-Workspace-ID)
         const workspaceId = req.headers['x-workspace-id'];
@@ -27,6 +28,17 @@ const createGSTIN = async (req, res) => {
             return res.status(409).json({ error: 'GSTIN already registered' });
         }
 
+        // Encrypt GSTN password if provided
+        let encryptedPassword = null;
+        if (gstn_password) {
+            try {
+                encryptedPassword = encrypt(gstn_password);
+            } catch (encryptError) {
+                console.error('Password encryption failed:', encryptError);
+                return res.status(500).json({ error: 'Failed to secure password' });
+            }
+        }
+
         const newGSTIN = await GSTIN.create({
             id: uuidv4(),
             workspace_id: workspaceId,
@@ -39,6 +51,8 @@ const createGSTIN = async (req, res) => {
             contact_person,
             contact_email,
             address: address ? JSON.stringify(address) : null,
+            gstn_password_encrypted: encryptedPassword,
+            password_updated_at: encryptedPassword ? new Date() : null,
             is_active: true,
             created_at: new Date(),
             updated_at: new Date()

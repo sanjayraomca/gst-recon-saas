@@ -1,6 +1,8 @@
 const Tenant = require('../models/tenantModel');
 const keycloakService = require('../services/keycloakService');
 const crypto = require('crypto');
+const User = require('../models/userModel');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { publishMessage } = require('../../../shared/src/nats/client');
 
@@ -101,6 +103,22 @@ const createTenant = async (req, res) => {
 
         // Create tenant in database
         const tenant = await Tenant.create(tenantData);
+
+        // Log Activity
+        const performer = req.user ? await User.findByEmail(req.user.email) : null;
+        await logActivity({
+            userId: performer ? performer.id : null,
+            tenantId: tenant.id,
+            actionType: 'create_org',
+            entityType: 'Tenant',
+            entityId: tenant.id,
+            details: {
+                tenant_code: tenant.tenant_code,
+                legal_name: tenant.legal_name,
+                creator_email: req.user ? req.user.email : 'system'
+            },
+            req
+        });
 
         return successResponse(res, {
             tenant,
@@ -368,45 +386,6 @@ const registerTenant = async (req, res) => {
                 console.error(`Failed to create Keycloak group during registration for tenant ${tenantId}:`, kcGroupError.message);
             }
 
-            // 4. Create Default Workspace
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
-                name: 'Default Workspace',
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            });
-
-            // 5. Link Tenant to Workspace
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER'
-            });
-
-            // 6. Link User to Workspace (as Admin)
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'TENANT_ADMIN',
-                permissions: JSON.stringify({
-                    can_upload: true,
-                    can_reconcile: true,
-                    can_override: true,
-                    can_export: true,
-                    can_invite: true,
-                    can_configure: true
-                }),
-                invitation_status: 'ACTIVE',
-                joined_at: new Date()
-            });
-
             await trx.commit();
 
             // Publish Event
@@ -414,11 +393,21 @@ const registerTenant = async (req, res) => {
                 email: user.email,
                 full_name: user.full_name,
                 tenant_code: tenant.tenant_code,
-                tenant_id: tenant.id,
-                workspace_id: workspaceId
+                tenant_id: tenant.id
             });
 
-            return successResponse(res, { user, tenant, workspaceId }, 'Tenant and user registered successfully', 201);
+            // Log Activity
+            await logActivity({
+                userId: user.id,
+                tenantId: tenant.id,
+                actionType: 'tenant_registered',
+                entityType: 'Tenant',
+                entityId: tenant.id,
+                details: { email: user.email },
+                req
+            });
+
+            return successResponse(res, { user, tenant }, 'Tenant and user registered successfully', 201);
         } catch (dbError) {
             await trx.rollback();
             throw dbError;
@@ -432,7 +421,6 @@ const provisionUser = async (req, res) => {
     try {
         const { id: tenantId } = req.params;
         const { email, full_name, phone_number, role, organization_ids } = req.body;
-        const User = require('../models/userModel');
 
         if (!email || !full_name || !role || !organization_ids || organization_ids.length === 0) {
             return errorResponse(res, 'Email, full name, role, and at least one organization are required', 400);
@@ -613,6 +601,22 @@ const provisionUser = async (req, res) => {
         }
 
 
+        // Log Activity
+        const performer = req.user ? await User.findByEmail(req.user.email) : null;
+        await logActivity({
+            userId: performer ? performer.id : null,
+            tenantId: tenantId,
+            actionType: 'user_created',
+            entityType: 'User',
+            entityId: user.id,
+            details: {
+                target_user_email: email,
+                role: role,
+                org_count: organization_ids.length
+            },
+            req
+        });
+
         // Return appropriate response
         if (isNewUser) {
             return successResponse(res, { user, status: 'invited' }, 'User invited successfully. Email sent.');
@@ -628,7 +632,6 @@ const provisionUser = async (req, res) => {
 const listTenantUsers = async (req, res) => {
     try {
         const { id: tenantId } = req.params;
-        const User = require('../models/userModel');
 
         // 1. Check Tenant
         const tenant = await Tenant.findById(tenantId);

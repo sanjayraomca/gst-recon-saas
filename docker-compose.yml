@@ -396,6 +396,10 @@ services:
       - NATS_URL=nats://nats:4222
       - SMTP_HOST=mailhog
       - SMTP_PORT=1025
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
       - PORT=3006
     labels:
       - "traefik.enable=true"

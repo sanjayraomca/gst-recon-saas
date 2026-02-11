@@ -1,4 +1,4 @@
--- Total: 52 Tables
+-- Total: 65+ Tables consolidated from migrations
 
 -- Enable essential extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -41,15 +41,16 @@ CREATE TABLE tenants (
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    workspace_code VARCHAR(50) UNIQUE NOT NULL,
+    workspace_code VARCHAR(100) UNIQUE NOT NULL, -- Increased length for flexibility
     name VARCHAR(255) NOT NULL,
-    gstn VARCHAR(20) NOT NULL,
-    legal_name VARCHAR(20),
+    gstn VARCHAR(20), -- Made nullable to support decoupling
+    gstin_id UUID, -- Link to gstin_master
+    legal_name VARCHAR(255),
     pan VARCHAR(20),
-    email VARCHAR(20),
+    email VARCHAR(255),
     filing_type VARCHAR(10) CHECK (filing_type IN ('m', 'q')),
-    state VARCHAR(20),
-    city VARCHAR(20),
+    state VARCHAR(100),
+    city VARCHAR(100),
     address TEXT,
     description TEXT,
     workspace_type VARCHAR(20) NOT NULL DEFAULT 'COMPANY'
@@ -58,6 +59,8 @@ CREATE TABLE workspaces (
         CHECK (compliance_level IN ('STANDARD', 'HIGH', 'AUDIT_READY')),
     industry_type VARCHAR(100),
     turnover_band VARCHAR(50),
+    compliance_score INTEGER DEFAULT 85,
+    last_activity TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE,
     settings JSONB DEFAULT '{
         "auto_reconcile": true,
@@ -70,6 +73,8 @@ CREATE TABLE workspaces (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ
 );
+
+-- Note: FK for gstin_id added after gstin_master if needed or keeping it loose
 
 CREATE TABLE tenant_workspaces (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -120,7 +125,7 @@ CREATE TABLE workspace_users (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role VARCHAR(30) NOT NULL
         CHECK (role IN ('SUPER_ADMIN', 'WORKSPACE_ADMIN', 'ACCOUNTANT', 
-                       'AUDITOR', 'VIEWER', 'GST_PRACTITIONER')),
+                       'AUDITOR', 'VIEWER', 'GST_PRACTITIONER', 'TENANT_ADMIN')),
     permissions JSONB DEFAULT '{
         "can_upload": true,
         "can_reconcile": true,
@@ -130,12 +135,32 @@ CREATE TABLE workspace_users (
         "can_configure": false
     }',
     invitation_status VARCHAR(20) DEFAULT 'ACTIVE'
-        CHECK (invitation_status IN ('INVITED', 'ACTIVE', 'SUSPENDED', 'REMOVED')),
+        CHECK (invitation_status IN ('INVITED', 'ACTIVE', 'SUSPENDED', 'REMOVED', 'PENDING')),
     invited_by UUID REFERENCES users(id),
     joined_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     removed_at TIMESTAMPTZ,
     UNIQUE (workspace_id, user_id)
 );
+
+CREATE TABLE activity_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID,
+    tenant_id UUID,
+    workspace_id UUID,
+    action_type VARCHAR(50) NOT NULL, -- login, tenant_registered, create_org, etc.
+    entity_type VARCHAR(50) NOT NULL, -- User, Tenant, Organization, etc.
+    entity_id UUID,
+    details JSONB,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_activity_user ON activity_logs (user_id);
+CREATE INDEX idx_activity_tenant ON activity_logs (tenant_id);
+CREATE INDEX idx_activity_workspace ON activity_logs (workspace_id);
+CREATE INDEX idx_activity_action ON activity_logs (action_type);
+CREATE INDEX idx_activity_created ON activity_logs (created_at);
 
 -- ============================================
 -- DOMAIN 2: GST MASTER DATA (6 tables)
@@ -143,8 +168,7 @@ CREATE TABLE workspace_users (
 
 CREATE TABLE gstin_master (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin CHAR(15) NOT NULL,
+    gstin CHAR(15) UNIQUE NOT NULL,
     legal_name VARCHAR(500) NOT NULL,
     trade_name VARCHAR(500),
     registration_type VARCHAR(30) NOT NULL
@@ -159,15 +183,19 @@ CREATE TABLE gstin_master (
     contact_email VARCHAR(255),
     contact_phone VARCHAR(20),
     address JSONB,
+    gstin_pwd_encrypted TEXT,
+    password_updated_at TIMESTAMPTZ,
     is_active BOOLEAN DEFAULT TRUE,
     compliance_score NUMERIC(5,2) DEFAULT 100.00,
     last_filing_date DATE,
     next_filing_due_date DATE,
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (workspace_id, gstin)
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Add workspace FK constraint
+ALTER TABLE workspaces ADD CONSTRAINT fk_workspaces_gstin FOREIGN KEY (gstin_id) REFERENCES gstin_master(id);
 
 CREATE TABLE supplier_master (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -457,48 +485,255 @@ CREATE TABLE purchase_invoices (
     )
 );
 
-CREATE TABLE gstr2b_invoices (
+-- ============================================
+-- DOMAIN 4.1: GSTR-2B RESTRUCTURED (Partitioned)
+-- ============================================
+
+CREATE TABLE gstr_2b_filing_master (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    gstin VARCHAR(15) NOT NULL,
+    return_period VARCHAR(10) NOT NULL, -- Format: MMYYYY
+    filing_date DATE,
+    status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PROCESSED, ERROR
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (gstin, return_period)
+);
+
+CREATE TABLE gstr_2b_b2b_invoices (
+    id uuid DEFAULT uuid_generate_v4(),
+    gstin_supplier VARCHAR(15) NOT NULL,
+    trade_name VARCHAR(255),
+    invoice_number VARCHAR(50) NOT NULL,
+    invoice_type VARCHAR(20),
+    invoice_date DATE,
+    invoice_value DECIMAL(18,2),
+    place_of_supply VARCHAR(50),
+    reverse_charge VARCHAR(1),
+    taxable_value DECIMAL(18,2),
+    igst_amount DECIMAL(18,2),
+    cgst_amount DECIMAL(18,2),
+    sgst_amount DECIMAL(18,2),
+    cess_amount DECIMAL(18,2),
+    filing_period VARCHAR(10),
+    filing_date DATE,
+    itc_availability VARCHAR(50),
+    unavailability_reason VARCHAR(500),
+    source VARCHAR(50),
+    irn VARCHAR(100),
+    irn_date DATE,
+    ims_action_status VARCHAR(100),
+    remarks VARCHAR(1000),
+    itc_reduction_flag VARCHAR(3),
+    itc_reduction_igst DECIMAL(18,2),
+    itc_reduction_cgst DECIMAL(18,2),
+    itc_reduction_sgst DECIMAL(18,2),
+    itc_reduction_cess DECIMAL(18,2),
+    gstin_id uuid REFERENCES gstin_master(id), 
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    return_period VARCHAR(10) NOT NULL, -- Partition Key
+    PRIMARY KEY (id, return_period)
+) PARTITION BY LIST (return_period);
+
+-- Primary partitions
+CREATE TABLE gstr_2b_b2b_122024 PARTITION OF gstr_2b_b2b_invoices FOR VALUES IN ('122024');
+CREATE TABLE gstr_2b_b2b_012025 PARTITION OF gstr_2b_b2b_invoices FOR VALUES IN ('012025');
+CREATE TABLE gstr_2b_b2b_022025 PARTITION OF gstr_2b_b2b_invoices FOR VALUES IN ('022025');
+CREATE TABLE gstr_2b_b2b_032025 PARTITION OF gstr_2b_b2b_invoices FOR VALUES IN ('032025');
+CREATE TABLE gstr_2b_b2b_042025 PARTITION OF gstr_2b_b2b_invoices FOR VALUES IN ('042025');
+
+CREATE TABLE gstr_2b_cdnr (
+    id uuid DEFAULT uuid_generate_v4(),
+    gstin_supplier VARCHAR(15) NOT NULL,
+    trade_name VARCHAR(255),
+    note_number VARCHAR(50) NOT NULL,
+    note_type VARCHAR(20), -- C or D
+    note_date DATE,
+    note_value DECIMAL(18,2),
+    place_of_supply VARCHAR(50),
+    reverse_charge VARCHAR(1),
+    taxable_value DECIMAL(18,2),
+    igst_amount DECIMAL(18,2),
+    cgst_amount DECIMAL(18,2),
+    sgst_amount DECIMAL(18,2),
+    cess_amount DECIMAL(18,2),
+    filing_period VARCHAR(10),
+    filing_date DATE,
+    itc_availability VARCHAR(50),
+    unavailability_reason VARCHAR(500),
+    ims_action_status VARCHAR(100),
+    remarks VARCHAR(1000),
+    itc_reduction_flag VARCHAR(3),
+    itc_reduction_igst DECIMAL(18,2),
+    itc_reduction_cgst DECIMAL(18,2),
+    itc_reduction_sgst DECIMAL(18,2),
+    itc_reduction_cess DECIMAL(18,2),
+    gstin_id uuid REFERENCES gstin_master(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    return_period VARCHAR(10) NOT NULL,
+    PRIMARY KEY (id, return_period)
+) PARTITION BY LIST (return_period);
+
+CREATE TABLE gstr_2b_cdnr_122024 PARTITION OF gstr_2b_cdnr FOR VALUES IN ('122024');
+CREATE TABLE gstr_2b_cdnr_012025 PARTITION OF gstr_2b_cdnr FOR VALUES IN ('012025');
+CREATE TABLE gstr_2b_cdnr_022025 PARTITION OF gstr_2b_cdnr FOR VALUES IN ('022025');
+CREATE TABLE gstr_2b_cdnr_032025 PARTITION OF gstr_2b_cdnr FOR VALUES IN ('032025');
+CREATE TABLE gstr_2b_cdnr_042025 PARTITION OF gstr_2b_cdnr FOR VALUES IN ('042025');
+
+CREATE TABLE gstr_2b_b2ba_amendments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    gstin_supplier VARCHAR(15),
+    original_invoice_number VARCHAR(50),
+    original_invoice_date DATE,
+    revised_invoice_number VARCHAR(50),
+    revised_invoice_date DATE,
+    gstin_id UUID REFERENCES gstin_master(id),
+    return_period VARCHAR(10),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE gstr_2b_impg (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    port_code VARCHAR(10),
+    boe_number VARCHAR(50),
+    boe_date DATE,
+    icegate_ref_date DATE,
+    taxable_value DECIMAL(18,2),
+    igst_amount DECIMAL(18,2),
+    cess_amount DECIMAL(18,2),
+    gstin_id UUID REFERENCES gstin_master(id),
+    return_period VARCHAR(10),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE gstr2b_summaries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin_id UUID NOT NULL REFERENCES gstin_master(id),
-    supplier_gstin CHAR(15) NOT NULL,
-    supplier_name VARCHAR(500),
-    invoice_number VARCHAR(200) NOT NULL,
-    normalized_invoice_number VARCHAR(200) GENERATED ALWAYS AS (
-        UPPER(REGEXP_REPLACE(invoice_number, '[^A-Za-z0-9]', '', 'g'))
-    ) STORED,
-    invoice_date DATE NOT NULL,
-    taxable_value NUMERIC(15,2) NOT NULL DEFAULT 0,
-    cgst_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
-    sgst_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
-    igst_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
-    cess_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
-    total_tax_amount NUMERIC(15,2) GENERATED ALWAYS AS (
-        cgst_amount + sgst_amount + igst_amount + cess_amount
-    ) STORED,
-    itc_availability VARCHAR(20) NOT NULL
-        CHECK (itc_availability IN ('ELIGIBLE', 'INELIGIBLE', 'RCM', 'BLOCKED', 'EXEMPT', 'NIL')),
-    itc_blocked_reason VARCHAR(200),
-    itc_blocked_section VARCHAR(50),
-    place_of_supply_code CHAR(2) NOT NULL,
-    supply_type VARCHAR(20) DEFAULT 'B2B'
-        CHECK (supply_type IN ('B2B', 'B2C', 'EXPORT', 'SEZ', 'DEEMED_EXPORT', 'CDNR')),
-    is_amendment BOOLEAN DEFAULT FALSE,
-    original_invoice_number VARCHAR(200),
-    document_type VARCHAR(20) DEFAULT 'INV'
-        CHECK (document_type IN ('INV', 'CRN', 'DRN', 'ISDINV')),
-    gstr2b_period_id UUID NOT NULL REFERENCES tax_periods(id),
-    snapshot_id UUID NOT NULL REFERENCES raw_json_snapshots(id),
-    snapshot_captured_at TIMESTAMPTZ NOT NULL,
-    match_status VARCHAR(20) DEFAULT 'PENDING'
-        CHECK (match_status IN ('PENDING', 'MATCHED', 'MISMATCH', 'MISSING', 'DUPLICATE')),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    invoice_year INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM invoice_date)) STORED,
-    CONSTRAINT chk_2b_tax_consistency CHECK (
-        (igst_amount > 0 AND cgst_amount = 0 AND sgst_amount = 0) OR
-        (igst_amount = 0)
-    )
+    period_id UUID NOT NULL REFERENCES tax_periods(id) ON DELETE CASCADE,
+    summary_type VARCHAR(50) NOT NULL, -- 'ITC_AVAILABLE', 'ITC_NOT_AVAILABLE', 'ITC_REVERSAL', 'ITC_REJECTED'
+    part_type VARCHAR(10), -- 'Part A', 'Part B'
+    section_heading TEXT, -- 'All other ITC', 'IGST paid on import of goods', etc.
+    gstr3b_table_ref VARCHAR(20), -- '4(A)(5)', '4(A)(1)', etc.
+    igst_amount DECIMAL(15, 2) DEFAULT 0,
+    cgst_amount DECIMAL(15, 2) DEFAULT 0,
+    sgst_amount DECIMAL(15, 2) DEFAULT 0,
+    cess_amount DECIMAL(15, 2) DEFAULT 0,
+    advisory_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE gstr2b_imports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    period_id UUID NOT NULL REFERENCES tax_periods(id) ON DELETE CASCADE,
+    import_type VARCHAR(20) NOT NULL, -- 'OVERSEAS', 'SEZ'
+    supplier_gstin VARCHAR(15), -- Only for SEZ imports
+    icegate_ref_date DATE,
+    port_code VARCHAR(10),
+    boe_number VARCHAR(50), -- Bill of Entry number
+    boe_date DATE,
+    taxable_value DECIMAL(15, 2) DEFAULT 0,
+    igst_amount DECIMAL(15, 2) DEFAULT 0,
+    cess_amount DECIMAL(15, 2) DEFAULT 0,
+    is_amended BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE gstr2b_isd_credits (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    period_id UUID NOT NULL REFERENCES tax_periods(id) ON DELETE CASCADE,
+    isd_gstin VARCHAR(15) NOT NULL,
+    document_number VARCHAR(100),
+    document_date DATE,
+    document_value DECIMAL(15, 2) DEFAULT 0,
+    igst_amount DECIMAL(15, 2) DEFAULT 0,
+    cgst_amount DECIMAL(15, 2) DEFAULT 0,
+    sgst_amount DECIMAL(15, 2) DEFAULT 0,
+    cess_amount DECIMAL(15, 2) DEFAULT 0,
+    itc_availability VARCHAR(20),
+    itc_reason TEXT,
+    is_amended BOOLEAN DEFAULT FALSE,
+    is_rejected BOOLEAN DEFAULT FALSE,
+    rejection_reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION clean_invoice_number(inv_num text) RETURNS text AS $$
+BEGIN
+    -- Remove special chars, spaces, and leading zeros
+    RETURN ltrim(regexp_replace(upper(inv_num), '[^A-Z0-9]', '', 'g'), '0');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE VIEW view_reconciliation_source AS
+SELECT
+    id,
+    gstin_supplier,
+    trade_name,
+    invoice_number,
+    invoice_date,
+    taxable_value,
+    (igst_amount + cgst_amount + sgst_amount + cess_amount) AS total_tax,
+    'B2B' as doc_type,
+    ims_action_status,
+    itc_availability,
+    filing_date,
+    return_period,
+    gstin_id
+FROM gstr_2b_b2b_invoices
+UNION ALL
+SELECT
+    id,
+    gstin_supplier,
+    trade_name,
+    note_number as invoice_number,
+    note_date as invoice_date,
+    taxable_value,
+    (igst_amount + cgst_amount + sgst_amount + cess_amount) AS total_tax,
+    'CDNR' as doc_type,
+    ims_action_status,
+    itc_availability,
+    filing_date,
+    return_period,
+    gstin_id
+FROM gstr_2b_cdnr;
+
+CREATE TABLE audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    table_name VARCHAR(50),
+    record_id UUID, -- Can't FK nicely to partitioned tables
+    action VARCHAR(20), -- UPDATE
+    old_value JSONB,
+    new_value JSONB,
+    modified_by VARCHAR(100) NULL,
+    modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION audit_trigger_func() RETURNS TRIGGER AS $$
+DECLARE
+    old_val jsonb;
+    new_val jsonb;
+BEGIN
+    IF (TG_OP = 'UPDATE') THEN
+        old_val = to_jsonb(OLD);
+        new_val = to_jsonb(NEW);
+        INSERT INTO audit_log (table_name, record_id, action, old_value, new_value, modified_at)
+        VALUES (TG_TABLE_NAME, OLD.id, 'UPDATE', old_val, new_val, NOW());
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_b2b_update
+AFTER UPDATE ON gstr_2b_b2b_invoices
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_func();
+
+CREATE TRIGGER audit_cdnr_update
+AFTER UPDATE ON gstr_2b_cdnr
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_func();
 
 CREATE TABLE sales_invoices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -782,7 +1017,7 @@ CREATE TABLE reconciliation_results (
     recon_run_id UUID NOT NULL REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     purchase_invoice_id UUID REFERENCES purchase_invoices(id),
-    gstr2b_invoice_id UUID REFERENCES gstr2b_invoices(id),
+    gstr2b_invoice_id UUID, -- Foreign Key removed due to partitioning of 2B tables
     sales_invoice_id UUID REFERENCES sales_invoices(id),
     match_status VARCHAR(20) NOT NULL
         CHECK (match_status IN ('EXACT', 'PARTIAL', 'MISMATCH', 'MISSING', 'DUPLICATE', 'EXCLUDED')),
@@ -1627,11 +1862,5 @@ BEGIN
     WHERE table_schema = 'public' 
     AND table_type = 'BASE TABLE';
     
-    RAISE NOTICE 'Total tables created: % (Expected: 52)', table_count;
-    
-    IF table_count = 52 THEN
-        RAISE NOTICE '✅ Database schema created successfully with all 52 tables';
-    ELSE
-        RAISE WARNING '⚠️ Table count mismatch. Expected 52, found %', table_count;
-    END IF;
+    RAISE NOTICE 'Total tables created: %', table_count;
 END $$;

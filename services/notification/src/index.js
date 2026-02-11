@@ -14,6 +14,9 @@ app.get('/health', (req, res) => {
     res.json({ status: 'UP', service: 'notification-service' });
 });
 
+const activityRoutes = require('./routes/activityRoutes');
+app.use('/notifications/activities', activityRoutes);
+
 const startServer = async () => {
     try {
         await connectNats();

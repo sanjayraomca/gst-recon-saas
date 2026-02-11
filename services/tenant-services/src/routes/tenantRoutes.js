@@ -19,5 +19,8 @@ router.delete('/:id', tenantController.deleteTenant);
 router.post('/:id/users', tenantController.provisionUser);
 router.get('/:id/users', tenantController.listTenantUsers);
 
+// Activity Logs Route
+router.get('/:tenantId/activities', tenantController.getTenantActivities);
+
 module.exports = router;
 

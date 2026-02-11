@@ -75,7 +75,7 @@ const login = async (req, res) => {
         // Log Login
         await logActivity({
             userId: user.id,
-            actionType: 'LOGIN',
+            actionType: 'user_login',
             entityType: 'User',
             entityId: user.id,
             details: { email: user.email, primaryTenantId: primaryTenant ? primaryTenant.id : null },
@@ -235,44 +235,11 @@ const register = async (req, res) => {
                 updated_at: new Date()
             });
 
-            // 4. Create Default Workspace
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
-                name: 'Default Workspace',
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            });
+            // 5. Actually, removing workspace linkage as per request.
+            // Linking user to tenant via a central tenant_users table if it exists?
+            // Usually, users belong to tenants. Let's see if there is a tenant_users table.
 
-            // 5. Link Tenant to Workspace
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER'
-            });
-
-            // 6. Link User to Workspace (as Admin)
-            // 6. Link User to Workspace (as Admin)
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'TENANT_ADMIN',
-                permissions: {
-                    can_upload: true,
-                    can_reconcile: true,
-                    can_override: true,
-                    can_export: true,
-                    can_invite: true,
-                    can_configure: true
-                },
-                invitation_status: 'ACTIVE'
-            });
+            // For now, removing 4, 5, 6 as they relate to workspaces.
 
             // 7. Add User to Keycloak Groups (Tenant Admin & Users)
             try {
@@ -333,22 +300,9 @@ const register = async (req, res) => {
                     await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
                 }
 
+                // Dev User logic remains but without workspace link
                 if (devUser) {
-                    await trx('workspace_users').insert({
-                        id: crypto.randomUUID(),
-                        workspace_id: workspaceId,
-                        user_id: devUser.id,
-                        role: 'SUPER_ADMIN',
-                        permissions: JSON.stringify({
-                            can_upload: true,
-                            can_reconcile: true,
-                            can_override: true,
-                            can_export: true,
-                            can_invite: true,
-                            can_configure: true
-                        }),
-                        invitation_status: 'ACTIVE'
-                    }).onConflict(['workspace_id', 'user_id']).merge();
+                    // No workspace to link to here anymore
                 }
             } catch (devErr) {
                 console.warn('Failed to ensure Dev Super Admin exists during registration:', devErr.message);
@@ -365,7 +319,7 @@ const register = async (req, res) => {
         await logActivity({
             userId: user.id,
             tenantId: tenantId,
-            actionType: 'REGISTER',
+            actionType: 'tenant_registered',
             entityType: 'Tenant',
             entityId: tenantId,
             details: { email: user.email, tenantName: full_name + "'s Org" },
