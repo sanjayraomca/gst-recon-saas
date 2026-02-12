@@ -6,6 +6,7 @@ const { verifyToken } = require('../../../shared/src/middleware/authMiddleware')
 router.post('/login', authController.login);
 router.post('/register', authController.register);
 router.post('/refresh', authController.refresh);
+router.get('/health', (req, res) => res.json({ status: 'Auth Service Healthy' }));
 router.get('/profile', verifyToken, authController.getProfile);
 router.put('/profile', verifyToken, authController.updateProfile);
 router.post('/accept-invite', authController.acceptInvite);

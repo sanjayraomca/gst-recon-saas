@@ -336,14 +336,13 @@ const registerTenant = async (req, res) => {
                 updated_at: new Date()
             }).returning('*');
 
-            // Create Local User (WITHOUT tenant_id)
+            // Create Local User
             const [newUser] = await trx('users').insert({
                 id: crypto.randomUUID(),
                 email,
                 full_name,
                 phone,
                 designation: 'TENANT_ADMIN',
-                // tenant_id: tenantId, // REMOVED
                 auth_provider_id: keycloakId,
                 auth_provider_type: 'KEYCLOAK',
                 created_at: new Date(),
@@ -352,44 +351,18 @@ const registerTenant = async (req, res) => {
 
             user = newUser;
 
-            // 4. Create Default Workspace for the Tenant (RESTORED)
-            const workspaceId = crypto.randomUUID();
-            const [workspace] = await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: tenantCode + '-MAIN',
-                name: 'Main Branch',
-                gstn: null, // No GSTIN initially
-                tenant_id: tenantId,
-                gstin_id: null,
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                validation_status: 'ACTIVE',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            }).returning('*');
-
-            // 5. Link User to the Default Workspace (RESTORED)
-            await trx('workspace_users').insert({
+            // 4. Link User to Tenant directly (NEW - replaces default workspace creation)
+            await trx('tenant_users').insert({
                 id: crypto.randomUUID(),
-                workspace_id: workspaceId,
+                tenant_id: tenantId,
                 user_id: user.id,
                 role: 'TENANT_ADMIN',
-                permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
-                invitation_status: 'ACTIVE',
-                valid_from: new Date(),
-                joined_at: new Date()
-            });
-
-            // Link workspace to tenant
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER',
+                status: 'ACTIVE',
                 created_at: new Date(),
                 updated_at: new Date()
             });
+
+            // Tenant-Workspace link removed as default workspace is no longer created
 
             // Create Keycloak group for tenant
             const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid

@@ -37,24 +37,22 @@ const login = async (req, res) => {
             login_count: knex.raw('COALESCE(login_count, 0) + 1')
         });
 
-        // Infer Tenant(s) from Workspaces
-        const userTenants = await knex('workspace_users')
-            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+        // Infer Tenant(s) from tenant_users (Direct Link)
+        const userTenants = await knex('tenant_users')
+            .join('tenants', 'tenant_users.tenant_id', 'tenants.id')
             .select(
                 'tenants.id',
                 'tenants.tenant_code',
                 'tenants.legal_name',
-                'workspace_users.role'
+                'tenant_users.role'
             )
-            .where('workspace_users.user_id', user.id)
+            .where('tenant_users.user_id', user.id)
+            .where('tenant_users.status', 'ACTIVE')
             .distinct('tenants.id');
 
         // Extraction: Priority 
-        // Extraction: Priority 
-        // 1. (Removed) Direct tenant_id on user record
-        // 2. Tenant name matches User name (Owner/Self scenario)
-        // 3. First available tenant
+        // 1. Tenant name matches User name (Owner/Self scenario)
+        // 2. First available tenant
         let primaryTenantId = null;
         let primaryTenant = null;
 
@@ -219,6 +217,7 @@ const register = async (req, res) => {
                 email,
                 full_name,
                 phone,
+                designation: 'TENANT_ADMIN',
                 auth_provider_id: keycloakId,
                 auth_provider_type: 'KEYCLOAK',
                 created_at: new Date(),
@@ -243,37 +242,18 @@ const register = async (req, res) => {
             // await trx('users').where('id', user.id).update({ tenant_id: tenantId }); // REMOVED
             // user.tenant_id = tenantId; // REMOVED
 
-            // Create Default Workspace and Link User (ADDED to match tenantController logic)
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: 'DEFAULT',
-                name: 'Main Branch',
+            // Link User to Tenant directly via tenant_users
+            await trx('tenant_users').insert({
+                id: crypto.randomUUID(),
                 tenant_id: tenantId,
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                validation_status: 'ACTIVE',
-                is_active: true,
+                user_id: user.id,
+                role: 'TENANT_ADMIN',
+                status: 'ACTIVE',
                 created_at: new Date(),
                 updated_at: new Date()
             });
 
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'TENANT_ADMIN',
-                invitation_status: 'ACTIVE',
-                joined_at: new Date()
-            });
-
-            // Link workspace to tenant
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER'
-            });
+            // Tenant-Workspace link removed as default workspace is no longer created
 
             // This register function lacks Keycloak group creation logic present in tenantController.
             // Assuming this endpoint is for simple/legacy registration or testing.

@@ -78,16 +78,27 @@ const createWorkspace = async (req, res) => {
                 const localUser = await trx('users').where('auth_provider_id', userId).first();
 
                 if (localUser) {
-                    // Check workspace_users -> workspaces -> tenant_id
-                    const User = require('../models/userModel'); // Or direct knex
-                    const linkedTenant = await trx('workspace_users')
-                        .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-                        .where('workspace_users.user_id', localUser.id)
-                        .select('workspaces.tenant_id')
+                    // 1. Try finding via tenant_users (Direct Link - Priority)
+                    const linkedTenantUser = await trx('tenant_users')
+                        .where('user_id', localUser.id)
+                        .where('status', 'ACTIVE') // Ensure active status
                         .first();
 
-                    if (linkedTenant && linkedTenant.tenant_id) {
-                        targetTenantId = linkedTenant.tenant_id;
+                    if (linkedTenantUser) {
+                        targetTenantId = linkedTenantUser.tenant_id;
+                    }
+
+                    // 2. Fallback: Check workspace_users -> workspaces -> tenant_id
+                    if (!targetTenantId) {
+                        const linkedTenantWorkspace = await trx('workspace_users')
+                            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                            .where('workspace_users.user_id', localUser.id)
+                            .select('workspaces.tenant_id')
+                            .first();
+
+                        if (linkedTenantWorkspace && linkedTenantWorkspace.tenant_id) {
+                            targetTenantId = linkedTenantWorkspace.tenant_id;
+                        }
                     }
                 }
             }
@@ -493,46 +504,34 @@ const listWorkspaces = async (req, res) => {
             return errorResponse(res, 'User not found in local database', 404);
         }
 
-        const effectiveTenantId = tenant_id; // Removed localUser.tenant_id fallback
+        const effectiveTenantId = tenant_id;
         console.log(`listWorkspaces: effectiveTenantId=${effectiveTenantId}`);
 
         let workspaces = [];
 
+        // Build query to fetch workspaces user has access to
+        let query = knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+            .where('workspace_users.user_id', localUser.id)
+            .whereNull('workspaces.deleted_at')
+            .select(
+                'workspaces.*',
+                'tenants.legal_name as tenant_name',
+                'tenants.tenant_code',
+                'workspace_users.role as user_role',
+                'workspace_users.permissions'
+            );
+
+        // Apply tenant filter if provided
         if (effectiveTenantId) {
-            console.log(`listWorkspaces: Fetching for tenant ${effectiveTenantId}`);
-            // Security Check: If requesting a specific tenant_id, ensure user has access to it
-            if (tenant_id && tenant_id !== localUser.tenant_id) {
-                // Check if user is linked to ANY workspace in this tenant OR is a admin of this tenant?
-                // For simplicity, if they aren't the tenant owner (direct link), check workspace_users
-                const hasAccess = await knex('workspace_users')
-                    .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-                    .where('workspace_users.user_id', localUser.id)
-                    .andWhere('workspaces.tenant_id', tenant_id)
-                    .first();
-
-                if (!hasAccess) {
-                    return errorResponse(res, 'Unauthorized access to tenant workspaces', 403);
-                }
-            }
-
-            // Fetch all workspaces for the tenant
-            workspaces = await knex('workspaces')
-                .where('tenant_id', effectiveTenantId)
-                .whereNull('deleted_at')
-                .orderBy('created_at', 'desc');
+            console.log(`listWorkspaces: Filtering for tenant ${effectiveTenantId}`);
+            query = query.andWhere('workspaces.tenant_id', effectiveTenantId);
         } else {
-            // Fallback: fetch only workspaces explicitly assigned to the user
-            const userWorkspaces = await knex('workspace_users')
-                .where('user_id', localUser.id)
-                .select('workspace_id');
-            const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
-            if (workspaceIds.length > 0) {
-                workspaces = await knex('workspaces')
-                    .whereIn('id', workspaceIds)
-                    .whereNull('deleted_at')
-                    .orderBy('created_at', 'desc');
-            }
+            console.log('listWorkspaces: Fetching ALL workspaces for user across all tenants');
         }
+
+        workspaces = await query;
 
         // Fetch GSTINs for these workspaces
         if (workspaces.length > 0) {
@@ -553,9 +552,7 @@ const listWorkspaces = async (req, res) => {
             } else {
                 workspaces = workspaces.map(w => ({ ...w, gstins: [], gstin_id: null }));
             }
-
         }
-
 
         return successResponse(res, workspaces, 'Workspaces fetched');
     } catch (error) {

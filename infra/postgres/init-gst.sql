@@ -56,8 +56,8 @@ CREATE TABLE workspaces (
     description TEXT,
     workspace_type VARCHAR(20) NOT NULL DEFAULT 'COMPANY'
         CHECK (workspace_type IN ('COMPANY', 'CA_FIRM', 'CONSULTANT', 'ENTERPRISE')),
-    compliance_level VARCHAR(20) DEFAULT 'STANDARD'
-        CHECK (compliance_level IN ('STANDARD', 'HIGH', 'AUDIT_READY')),
+    compliance_level VARCHAR(20) CHECK (compliance_level IN ('STANDARD', 'HIGH', 'AUDIT_READY')),
+    validation_status VARCHAR(20) DEFAULT 'ACTIVE',
     industry_type VARCHAR(100),
     turnover_band VARCHAR(50),
     compliance_score INTEGER DEFAULT 0,
@@ -117,7 +117,18 @@ CREATE TABLE users (
     invitation_token VARCHAR(255),
     invitation_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tenant_users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'USER',
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tenant_id, user_id)
 );
 
 CREATE TABLE workspace_users (
