@@ -249,7 +249,7 @@ const registerTenant = async (req, res) => {
     try {
         const { email, password, full_name, phone, recaptcha_token } = req.body;
         const User = require('../models/userModel');
-        const axios = require('axios'); // Ensure axios is required
+        const axios = require('axios');
 
         if (!email || !password || !full_name) {
             return errorResponse(res, 'All fields (Email, Password, and Full Name) are required to create your account.', 400);
@@ -336,14 +336,14 @@ const registerTenant = async (req, res) => {
                 updated_at: new Date()
             }).returning('*');
 
-            // Create Local User
+            // Create Local User (WITHOUT tenant_id)
             const [newUser] = await trx('users').insert({
                 id: crypto.randomUUID(),
                 email,
                 full_name,
                 phone,
                 designation: 'TENANT_ADMIN',
-                tenant_id: tenantId, // Link user to their tenant
+                // tenant_id: tenantId, // REMOVED
                 auth_provider_id: keycloakId,
                 auth_provider_type: 'KEYCLOAK',
                 created_at: new Date(),
@@ -352,9 +352,44 @@ const registerTenant = async (req, res) => {
 
             user = newUser;
 
+            // 4. Create Default Workspace for the Tenant (RESTORED)
+            const workspaceId = crypto.randomUUID();
+            const [workspace] = await trx('workspaces').insert({
+                id: workspaceId,
+                workspace_code: tenantCode + '-MAIN',
+                name: 'Main Branch',
+                gstn: null, // No GSTIN initially
+                tenant_id: tenantId,
+                gstin_id: null,
+                workspace_type: 'COMPANY',
+                compliance_level: 'STANDARD',
+                validation_status: 'ACTIVE',
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            }).returning('*');
 
-            // 4. (Removed) Create Default Workspace for the Tenant
-            // 5. (Removed) Link User to the Default Workspace
+            // 5. Link User to the Default Workspace (RESTORED)
+            await trx('workspace_users').insert({
+                id: crypto.randomUUID(),
+                workspace_id: workspaceId,
+                user_id: user.id,
+                role: 'TENANT_ADMIN',
+                permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
+                invitation_status: 'ACTIVE',
+                valid_from: new Date(),
+                joined_at: new Date()
+            });
+
+            // Link workspace to tenant
+            await trx('tenant_workspaces').insert({
+                id: crypto.randomUUID(),
+                tenant_id: tenantId,
+                workspace_id: workspaceId,
+                access_type: 'OWNER',
+                created_at: new Date(),
+                updated_at: new Date()
+            });
 
             // Create Keycloak group for tenant
             const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid
@@ -365,7 +400,7 @@ const registerTenant = async (req, res) => {
                 });
                 if (group) {
                     // Link user to the new group
-                    await keycloakService.addUserToGroup(keycloakId, group.id);
+                    // await keycloakService.addUserToGroup(keycloakId, group.id); // Add to Tenant Group? Usually handled by role subgroups.
 
                     const [updatedTenant] = await trx('tenants').where({ id: tenantId }).update({
                         metadata: JSON.stringify({
@@ -381,6 +416,27 @@ const registerTenant = async (req, res) => {
                         tenant = updatedTenant;
                         console.log(`Successfully updated metadata for tenant ${tenantId}`);
                     }
+
+                    // Add user to 'users' subgroup of Tenant
+                    const usersSubgroup = await keycloakService.createSubgroup(group.id, 'users', { description: 'All users' });
+                    if (usersSubgroup) {
+                        await keycloakService.addUserToGroup(keycloakId, usersSubgroup.id);
+                    }
+
+                    // Add user to 'Tenant Admin' subgroup (We need to create it?)
+                    // Usually we have Organization -> Role hierarchy.
+                    // But for Tenant level, maybe just 'Tenant Admin' role under Tenant?
+                    // Reusing existing logic pattern if available:
+                    // Currently workspaceController creates roles under Organization (GSTIN).
+                    // This is a "Main Branch" workspace with NO GSTIN.
+                    // Let's create a 'Tenant Admin' subgroup under the Tenant Group directly for global tenant admins?
+                    // Or just rely on the workspace_user DB role which is authoritative.
+                    // User asked for "add in tenant admin group".
+                    const adminSubgroup = await keycloakService.createSubgroup(group.id, 'Tenant Admin', { description: 'Tenant Admins' });
+                    if (adminSubgroup) {
+                        await keycloakService.addUserToGroup(keycloakId, adminSubgroup.id);
+                    }
+
                 } else {
                     console.warn(`Keycloak group creation returned null for tenant ${tenantId}`);
                 }

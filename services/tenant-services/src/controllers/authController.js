@@ -51,15 +51,14 @@ const login = async (req, res) => {
             .distinct('tenants.id');
 
         // Extraction: Priority 
-        // 1. Direct tenant_id on user record (Set during registration or invites)
+        // Extraction: Priority 
+        // 1. (Removed) Direct tenant_id on user record
         // 2. Tenant name matches User name (Owner/Self scenario)
         // 3. First available tenant
-        let primaryTenantId = user.tenant_id;
+        let primaryTenantId = null;
         let primaryTenant = null;
 
-        if (primaryTenantId) {
-            primaryTenant = userTenants.find(t => t.id === primaryTenantId) || userTenants[0];
-        } else if (userTenants.length > 0) {
+        if (userTenants.length > 0) {
             const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
             primaryTenant = nameMatch || userTenants[0];
             primaryTenantId = primaryTenant.id;
@@ -240,15 +239,46 @@ const register = async (req, res) => {
                 updated_at: new Date()
             });
 
-            // Link user to tenant
-            await trx('users').where('id', user.id).update({ tenant_id: tenantId });
-            user.tenant_id = tenantId;
+            // Link user to tenant (REMOVED - now relies on workspace_users or other means)
+            // await trx('users').where('id', user.id).update({ tenant_id: tenantId }); // REMOVED
+            // user.tenant_id = tenantId; // REMOVED
 
-            // 5. Actually, removing workspace linkage as per request.
-            // Linking user to tenant via a central tenant_users table if it exists?
-            // Usually, users belong to tenants. Let's see if there is a tenant_users table.
+            // Create Default Workspace and Link User (ADDED to match tenantController logic)
+            const workspaceId = crypto.randomUUID();
+            await trx('workspaces').insert({
+                id: workspaceId,
+                workspace_code: 'DEFAULT',
+                name: 'Main Branch',
+                tenant_id: tenantId,
+                workspace_type: 'COMPANY',
+                compliance_level: 'STANDARD',
+                validation_status: 'ACTIVE',
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
 
-            // For now, removing 4, 5, 6 as they relate to workspaces.
+            await trx('workspace_users').insert({
+                id: crypto.randomUUID(),
+                workspace_id: workspaceId,
+                user_id: user.id,
+                role: 'TENANT_ADMIN',
+                invitation_status: 'ACTIVE',
+                joined_at: new Date()
+            });
+
+            // Link workspace to tenant
+            await trx('tenant_workspaces').insert({
+                id: crypto.randomUUID(),
+                tenant_id: tenantId,
+                workspace_id: workspaceId,
+                access_type: 'OWNER'
+            });
+
+            // This register function lacks Keycloak group creation logic present in tenantController.
+            // Assuming this endpoint is for simple/legacy registration or testing.
+            // Ideally should reuse tenantController logic or be deprecated.
+
 
             // 7. Add User to Keycloak Groups (Tenant Admin & Users)
             try {

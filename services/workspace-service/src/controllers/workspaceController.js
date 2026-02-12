@@ -29,7 +29,7 @@ const createWorkspace = async (req, res) => {
         else if (filing_frequency === 'monthly') filingType = 'm';
 
         // 1. Resolve Tenant Context
-        let targetTenantId = bodyTenantId || (req.user ? req.user.tenant_id : null);
+        let targetTenantId = bodyTenantId;
         let tenantGroupId = null;
 
         // If no explicit tenant ID, try to derive from Keycloak groups
@@ -71,14 +71,24 @@ const createWorkspace = async (req, res) => {
         }
 
         if (!targetTenantId) {
-            // Fallback: This is likely where the "Mock Data" issue comes from. 
-            // If we can't identify the tenant, we default to the first one. 
-            // Better to try finding a tenant linked to the user?
+            // Fallback: Try finding a tenant linked to the user via workspace_users
             const userId = req.user ? (req.user.sub || req.user.id) : null;
             if (userId) {
-                const textUser = await trx('users').where('auth_provider_id', userId).first();
-                if (textUser && textUser.tenant_id) {
-                    targetTenantId = textUser.tenant_id;
+                // Find local user ID first
+                const localUser = await trx('users').where('auth_provider_id', userId).first();
+
+                if (localUser) {
+                    // Check workspace_users -> workspaces -> tenant_id
+                    const User = require('../models/userModel'); // Or direct knex
+                    const linkedTenant = await trx('workspace_users')
+                        .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                        .where('workspace_users.user_id', localUser.id)
+                        .select('workspaces.tenant_id')
+                        .first();
+
+                    if (linkedTenant && linkedTenant.tenant_id) {
+                        targetTenantId = linkedTenant.tenant_id;
+                    }
                 }
             }
         }
@@ -476,14 +486,14 @@ const listWorkspaces = async (req, res) => {
         }
 
         const localUser = await userQuery.first();
-        console.log(`listWorkspaces: localUser found=${!!localUser}, tenant_id=${localUser?.tenant_id}`);
+        console.log(`listWorkspaces: localUser found=${!!localUser}`);
 
         if (!localUser) {
             console.warn(`listWorkspaces: User not found locally (ID: ${userId}, Email: ${userEmail})`);
             return errorResponse(res, 'User not found in local database', 404);
         }
 
-        const effectiveTenantId = tenant_id || localUser.tenant_id;
+        const effectiveTenantId = tenant_id; // Removed localUser.tenant_id fallback
         console.log(`listWorkspaces: effectiveTenantId=${effectiveTenantId}`);
 
         let workspaces = [];
