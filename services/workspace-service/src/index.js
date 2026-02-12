@@ -25,6 +25,16 @@ app.get('/health', (req, res) => {
     res.json({ status: 'UP', service: 'workspace-service' });
 });
 
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled Error:', err);
+    res.status(500).json({
+        success: false,
+        error: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+});
+
 const startServer = async () => {
     try {
         await connectNats();

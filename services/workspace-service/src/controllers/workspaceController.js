@@ -455,47 +455,71 @@ const listWorkspaces = async (req, res) => {
         const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
 
         if (!userId && !userEmail) {
+            console.warn('listWorkspaces: No user identity found in request');
             return successResponse(res, [], 'No user context found');
         }
 
-        // Find local user
-        let query = knex('users');
-        if (userId) query = query.where('auth_provider_id', userId).orWhere('id', userId);
-        if (userEmail) query = query.orWhere('email', userEmail);
+        console.log(`listWorkspaces: Looking up user ID=${userId}, Email=${userEmail}`);
 
-        const localUser = await query.first();
+        // 1. Get Local User and their Tenant Context - Safely
+        let userQuery = knex('users');
+        if (userId && userEmail) {
+            userQuery = userQuery.where(function () {
+                this.where('auth_provider_id', userId).orWhere('email', userEmail);
+            });
+        } else if (userId) {
+            userQuery = userQuery.where('auth_provider_id', userId);
+        } else if (userEmail) {
+            userQuery = userQuery.where('email', userEmail);
+        } else {
+            return successResponse(res, [], 'No user identity provided');
+        }
+
+        const localUser = await userQuery.first();
+        console.log(`listWorkspaces: localUser found=${!!localUser}, tenant_id=${localUser?.tenant_id}`);
 
         if (!localUser) {
-            return successResponse(res, [], 'User not found locally');
+            console.warn(`listWorkspaces: User not found locally (ID: ${userId}, Email: ${userEmail})`);
+            return errorResponse(res, 'User not found in local database', 404);
         }
+
+        const effectiveTenantId = tenant_id || localUser.tenant_id;
+        console.log(`listWorkspaces: effectiveTenantId=${effectiveTenantId}`);
 
         let workspaces = [];
 
-        // If tenant_id is provided, permit fetching all workspaces for that tenant
-        // TODO: Add stricter permission check (e.g., is user Tenant Admin?)
-        // If tenant_id is provided, permit fetching all workspaces for that tenant
-        // SECURITY: Verify user belongs to this tenant
-        if (tenant_id) {
-            // Relaxed check: Only deny if user has a tenant_id AND it doesn't match
-            if (localUser.tenant_id && localUser.tenant_id !== tenant_id) {
-                console.warn(`SECURITY: User ${localUser.id} (Tenant: ${localUser.tenant_id}) attempted to access Tenant ${tenant_id}`);
-                // return res.status(403).json({ error: 'Access denied: You are not a member of this tenant' });
+        if (effectiveTenantId) {
+            console.log(`listWorkspaces: Fetching for tenant ${effectiveTenantId}`);
+            // Security Check: If requesting a specific tenant_id, ensure user has access to it
+            if (tenant_id && tenant_id !== localUser.tenant_id) {
+                // Check if user is linked to ANY workspace in this tenant OR is a admin of this tenant?
+                // For simplicity, if they aren't the tenant owner (direct link), check workspace_users
+                const hasAccess = await knex('workspace_users')
+                    .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                    .where('workspace_users.user_id', localUser.id)
+                    .andWhere('workspaces.tenant_id', tenant_id)
+                    .first();
+
+                if (!hasAccess) {
+                    return errorResponse(res, 'Unauthorized access to tenant workspaces', 403);
+                }
             }
 
+            // Fetch all workspaces for the tenant
             workspaces = await knex('workspaces')
-                .where('tenant_id', tenant_id)
+                .where('tenant_id', effectiveTenantId)
+                .whereNull('deleted_at')
                 .orderBy('created_at', 'desc');
         } else {
-            // Default behavior: Fetch workspaces explicitly assigned to the user
+            // Fallback: fetch only workspaces explicitly assigned to the user
             const userWorkspaces = await knex('workspace_users')
                 .where('user_id', localUser.id)
                 .select('workspace_id');
-
             const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
-
             if (workspaceIds.length > 0) {
                 workspaces = await knex('workspaces')
                     .whereIn('id', workspaceIds)
+                    .whereNull('deleted_at')
                     .orderBy('created_at', 'desc');
             }
         }

@@ -116,6 +116,7 @@ CREATE TABLE users (
     reset_password_expires_at TIMESTAMPTZ,
     invitation_token VARCHAR(255),
     invitation_expires_at TIMESTAMPTZ,
+    tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

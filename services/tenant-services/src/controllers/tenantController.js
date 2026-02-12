@@ -314,21 +314,6 @@ const registerTenant = async (req, res) => {
         const trx = await knex.transaction();
 
         try {
-            // Create Local User
-            const [newUser] = await trx('users').insert({
-                id: crypto.randomUUID(),
-                email,
-                full_name,
-                phone,
-                designation: 'TENANT_ADMIN',
-                auth_provider_id: keycloakId,
-                auth_provider_type: 'KEYCLOAK',
-                created_at: new Date(),
-                updated_at: new Date()
-            }).returning('*');
-
-            user = newUser;
-
             // 3. Create Tenant
             const tenantId = crypto.randomUUID();
 
@@ -339,10 +324,6 @@ const registerTenant = async (req, res) => {
                 .count('id as count');
 
             const nextNum = parseInt(similarTenants[0].count) + 1;
-            // Ensure unique loop just in case (optional but safer)
-            // For now, relying on count + 1 is 'okay' for low concurrency, 
-            // but unique constraint will catch collisions. 
-            // Let's rely on count for simplicity as per request.
             const tenantCode = `${prefix}${String(nextNum).padStart(5, '0')}`;
 
             let [tenant] = await trx('tenants').insert({
@@ -354,6 +335,22 @@ const registerTenant = async (req, res) => {
                 created_at: new Date(),
                 updated_at: new Date()
             }).returning('*');
+
+            // Create Local User
+            const [newUser] = await trx('users').insert({
+                id: crypto.randomUUID(),
+                email,
+                full_name,
+                phone,
+                designation: 'TENANT_ADMIN',
+                tenant_id: tenantId, // Link user to their tenant
+                auth_provider_id: keycloakId,
+                auth_provider_type: 'KEYCLOAK',
+                created_at: new Date(),
+                updated_at: new Date()
+            }).returning('*');
+
+            user = newUser;
 
 
             // 4. (Removed) Create Default Workspace for the Tenant

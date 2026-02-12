@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
+    console.log(`verifyToken: Token present=${!!token}`);
 
     if (!token) {
         return res.status(401).json({ error: 'Access token required' });
@@ -36,6 +37,7 @@ const verifyToken = (req, res, next) => {
         }
 
         req.user = decoded;
+        console.log(`verifyToken: Success, sub=${decoded.sub}, email=${decoded.email}`);
         next();
     } catch (err) {
         console.error('Token verification failed:', err.message);

@@ -50,19 +50,24 @@ const login = async (req, res) => {
             .where('workspace_users.user_id', user.id)
             .distinct('tenants.id');
 
-        // Extract primary tenant
-        // Priority:
-        // 1. Tenant name matches User name (Owner/Self scenario)
-        // 2. First available tenant
+        // Extraction: Priority 
+        // 1. Direct tenant_id on user record (Set during registration or invites)
+        // 2. Tenant name matches User name (Owner/Self scenario)
+        // 3. First available tenant
+        let primaryTenantId = user.tenant_id;
         let primaryTenant = null;
-        if (userTenants.length > 0) {
+
+        if (primaryTenantId) {
+            primaryTenant = userTenants.find(t => t.id === primaryTenantId) || userTenants[0];
+        } else if (userTenants.length > 0) {
             const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
             primaryTenant = nameMatch || userTenants[0];
+            primaryTenantId = primaryTenant.id;
         }
 
         const responsePayload = {
             ...tokenData,
-            tenant_id: primaryTenant ? primaryTenant.id : null,
+            tenant_id: primaryTenantId,
             tenants: userTenants, // List of all accessible tenants
             user: {
                 id: user.id,
@@ -78,7 +83,7 @@ const login = async (req, res) => {
             actionType: 'user_login',
             entityType: 'User',
             entityId: user.id,
-            details: { email: user.email, primaryTenantId: primaryTenant ? primaryTenant.id : null },
+            details: { email: user.email, primaryTenantId: primaryTenantId },
             req: req
         });
 
@@ -234,6 +239,10 @@ const register = async (req, res) => {
                 created_at: new Date(),
                 updated_at: new Date()
             });
+
+            // Link user to tenant
+            await trx('users').where('id', user.id).update({ tenant_id: tenantId });
+            user.tenant_id = tenantId;
 
             // 5. Actually, removing workspace linkage as per request.
             // Linking user to tenant via a central tenant_users table if it exists?
