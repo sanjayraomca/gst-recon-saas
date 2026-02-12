@@ -355,27 +355,9 @@ const registerTenant = async (req, res) => {
                 updated_at: new Date()
             }).returning('*');
 
-            // 4. Create Default Workspace for the Tenant
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                tenant_id: tenantId,
-                workspace_code: `${tenantCode}-WS01`,
-                name: 'Main Organization',
-                workspace_type: 'COMPANY',
-                created_at: new Date(),
-                updated_at: new Date()
-            });
 
-            // 5. Link User to the Default Workspace as TENANT_ADMIN
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'TENANT_ADMIN',
-                invitation_status: 'ACTIVE',
-                joined_at: new Date()
-            });
+            // 4. (Removed) Create Default Workspace for the Tenant
+            // 5. (Removed) Link User to the Default Workspace
 
             // Create Keycloak group for tenant
             const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid
