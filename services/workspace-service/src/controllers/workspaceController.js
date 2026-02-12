@@ -20,7 +20,7 @@ const createWorkspace = async (req, res) => {
 
         // Basic Validation
         if (!code || !name) {
-            return res.status(400).json({ error: 'Code/GSTIN and Name are required' });
+            return res.status(400).json({ error: 'Please provide both the GSTIN (Tax ID) and the Organization Name to continue.' });
         }
 
         // Map filing_frequency (monthly, quarterly) to filing_type (m, q)
@@ -113,7 +113,7 @@ const createWorkspace = async (req, res) => {
                 .first(); // Assuming workspaces.tenant_id is reliable. Or join tenant_workspaces.
 
             if (conflict) {
-                return errorResponse(res, 'GSTIN already registered in your organization', 409);
+                return errorResponse(res, `This GSTIN (${gstin}) is already registered and managed within your organization.`, 409);
             }
         } else {
             // Create new GSTIN in master (decoupled)
@@ -128,7 +128,7 @@ const createWorkspace = async (req, res) => {
                 } catch (encryptError) {
                     console.error('Password encryption failed:', encryptError);
                     await trx.rollback();
-                    return res.status(500).json({ error: 'Failed to secure GSTN password' });
+                    return res.status(500).json({ error: 'We could not securely save the GSTN password. Please try again or contact support.' });
                 }
             }
 
@@ -406,15 +406,30 @@ const createWorkspace = async (req, res) => {
             // Don't fail the request if notification fails
         }
 
+        // Resolve Local User ID for logging (Must be the UUID from users table for proper join)
+        let logUserId = null;
+        if (req.user) {
+            const authId = req.user.sub || req.user.id;
+            if (authId) {
+                const localUserRecord = await knex('users')
+                    .where('auth_provider_id', authId)
+                    .orWhere('id', authId)
+                    .first();
+                if (localUserRecord) {
+                    logUserId = localUserRecord.id;
+                }
+            }
+        }
+
         // Log Organization Creation
         await logActivity({
-            userId: userId || null,
+            userId: logUserId || null,
             tenantId: targetTenantId,
             workspaceId: workspaceId,
-            actionType: 'CREATE_ORG',
+            actionType: 'create_org',
             entityType: 'Organization',
             entityId: workspaceId,
-            details: { name: name, gstin: gstin },
+            details: { org_name: name, gstin: gstin },
             req: req
         });
 
@@ -424,8 +439,8 @@ const createWorkspace = async (req, res) => {
         // Handle unique constraint on (tenant_id, gstin_id) if we rely on DB, but we checked in code.
         // Also workspaces_workspace_code_key logic might still be valid if we keep workspace_code unique?
         // User didn't ask to drop workspace_code unique constraint.
-        if (error.code === '23505' && error.constraint === 'workspaces_workspace_code_key') {
-            return errorResponse(res, 'Workspace with this Code/GSTIN already exists (Duplicate Code)', 409);
+        if (error.code === '23505' && (error.constraint === 'workspaces_workspace_code_key' || error.constraint === 'workspaces_tenant_workspace_code_key')) {
+            return errorResponse(res, 'This Organization/GSTIN is already registered for your account. Please check your existing organizations.', 409);
         }
         return errorResponse(res, error);
     }

@@ -267,51 +267,7 @@
             ]
         }
     },
-    "groups": [
-        {
-            "name": "Administrators",
-            "path": "/Administrators",
-            "attributes": {},
-            "realmRoles": [
-                "admin"
-            ],
-            "clientRoles": {
-                "admin-api": [
-                    "manage-users",
-                    "manage-groups",
-                    "manage-authorization",
-                    "view-users",
-                    "view-groups"
-                ]
-            },
-            "subGroups": []
-        },
-        {
-            "name": "Managers",
-            "path": "/Managers",
-            "attributes": {},
-            "realmRoles": [
-                "manager"
-            ],
-            "clientRoles": {
-                "admin-api": [
-                    "view-users",
-                    "view-groups"
-                ]
-            },
-            "subGroups": []
-        },
-        {
-            "name": "Users",
-            "path": "/Users",
-            "attributes": {},
-            "realmRoles": [
-                "user"
-            ],
-            "clientRoles": {},
-            "subGroups": []
-        }
-    ],
+    "groups": [],
     "users": [
         {
             "username": "service-account-admin-api",
@@ -354,9 +310,7 @@
                     "view-groups"
                 ]
             },
-            "groups": [
-                "/Administrators"
-            ]
+            "groups": []
         }
     ],
     "clientScopes": [

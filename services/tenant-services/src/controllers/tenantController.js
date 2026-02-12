@@ -21,13 +21,13 @@ const createTenant = async (req, res) => {
 
         // Validation
         if (!tenant_code || !legal_name) {
-            return errorResponse(res, 'Tenant code and legal name are required', 400);
+            return errorResponse(res, 'Please provide a unique Organization Code and your Legal Entity Name.', 400);
         }
 
         // Check for duplicate tenant code
         const existing = await Tenant.findByCode(tenant_code);
         if (existing) {
-            return errorResponse(res, 'Tenant code already exists', 409);
+            return errorResponse(res, 'This Organization Code is already taken. Please choose a different one.', 409);
         }
 
         const tenantId = crypto.randomUUID();
@@ -252,7 +252,7 @@ const registerTenant = async (req, res) => {
         const axios = require('axios'); // Ensure axios is required
 
         if (!email || !password || !full_name) {
-            return errorResponse(res, 'Email, password and full name required', 400);
+            return errorResponse(res, 'All fields (Email, Password, and Full Name) are required to create your account.', 400);
         }
 
         // Verify reCAPTCHA
@@ -306,7 +306,7 @@ const registerTenant = async (req, res) => {
         // 2. Check Local User
         let user = await User.findByEmail(email);
         if (user) {
-            return errorResponse(res, 'User already exists', 409);
+            return errorResponse(res, 'An account with this email address already exists. Please log in instead.', 409);
         }
 
         // Start Transaction for DB operations
@@ -320,6 +320,7 @@ const registerTenant = async (req, res) => {
                 email,
                 full_name,
                 phone,
+                designation: 'TENANT_ADMIN',
                 auth_provider_id: keycloakId,
                 auth_provider_type: 'KEYCLOAK',
                 created_at: new Date(),
@@ -353,6 +354,28 @@ const registerTenant = async (req, res) => {
                 created_at: new Date(),
                 updated_at: new Date()
             }).returning('*');
+
+            // 4. Create Default Workspace for the Tenant
+            const workspaceId = crypto.randomUUID();
+            await trx('workspaces').insert({
+                id: workspaceId,
+                tenant_id: tenantId,
+                workspace_code: `${tenantCode}-WS01`,
+                name: 'Main Organization',
+                workspace_type: 'COMPANY',
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // 5. Link User to the Default Workspace as TENANT_ADMIN
+            await trx('workspace_users').insert({
+                id: crypto.randomUUID(),
+                workspace_id: workspaceId,
+                user_id: user.id,
+                role: 'TENANT_ADMIN',
+                invitation_status: 'ACTIVE',
+                joined_at: new Date()
+            });
 
             // Create Keycloak group for tenant
             const groupName = tenantId; // Changed from `tenant_${tenantId}` to just uuid
@@ -655,11 +678,11 @@ const listTenantUsers = async (req, res) => {
                 knex.raw('CAST(COUNT(DISTINCT workspace_users.workspace_id) AS INTEGER) as organization_count'),
                 knex.raw('MAX(workspace_users.role) as role')
             )
-            .join('workspace_users', 'users.id', 'workspace_users.user_id')
-            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .where('workspaces.tenant_id', tenantId)
+            .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
+            .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('users.designation', 'TENANT_ADMIN')
+            .orWhere('workspaces.tenant_id', tenantId)
             .whereNot('users.email', 'superadmin.dev@gmail.com')
-            .whereNull('workspaces.deleted_at')
             .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
 
         return successResponse(res, users, 'Tenant users retrieved successfully');
@@ -707,8 +730,9 @@ const getTenantActivities = async (req, res) => {
             let actionDescription = '';
             let entityType = activity.entity_type || 'general';
 
+            const actionType = activity.action_type?.toLowerCase();
             // Generate human-readable descriptions based on action_type
-            switch (activity.action_type) {
+            switch (actionType) {
                 case 'user_created':
                     actionDescription = `Created new user: ${activity.details?.target_user_email || activity.user_name || activity.user_email}`;
                     entityType = 'user management';
@@ -738,7 +762,7 @@ const getTenantActivities = async (req, res) => {
                     entityType = 'view';
                     break;
                 case 'create_org':
-                    actionDescription = `Created new organization: ${activity.details?.org_name || 'TaxCorp Solutions'}`;
+                    actionDescription = `Created new organization: ${activity.details?.org_name || activity.details?.name || 'TaxCorp Solutions'}`;
                     entityType = 'org management';
                     break;
                 default:
@@ -759,6 +783,66 @@ const getTenantActivities = async (req, res) => {
     }
 };
 
+const getTenantStats = async (req, res) => {
+    try {
+        const { id: tenantId } = req.params;
+
+        const knex = require('../../../shared/src/db/connection');
+
+        // 1. Get Tenant Basic Info
+        const tenant = await Tenant.findById(tenantId);
+        if (!tenant) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
+        // 2. Count Organizations (Workspaces)
+        const orgsCount = await knex('workspaces')
+            .where({ tenant_id: tenantId })
+            .whereNull('deleted_at')
+            .count('id as count')
+            .first();
+
+        // 3. Get User Stats
+        // Total users for this tenant
+        const totalUsers = await knex('users')
+            .join('workspace_users', 'users.id', 'workspace_users.user_id')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspaces.tenant_id', tenantId)
+            .whereNull('workspaces.deleted_at')
+            .countDistinct('users.id as count')
+            .first();
+
+        // Admin users (SUPER_ADMIN, TENANT_ADMIN, WORKSPACE_ADMIN)
+        const adminUsers = await knex('users')
+            .join('workspace_users', 'users.id', 'workspace_users.user_id')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspaces.tenant_id', tenantId)
+            .whereNull('workspaces.deleted_at')
+            .whereIn('workspace_users.role', ['SUPER_ADMIN', 'TENANT_ADMIN', 'WORKSPACE_ADMIN'])
+            .countDistinct('users.id as count')
+            .first();
+
+        const stats = {
+            tenantInfo: {
+                name: tenant.legal_name,
+                primaryContact: tenant.contact_email || 'Not Set',
+                organizationsCount: parseInt(orgsCount.count || 0),
+                plan: tenant.subscription_plan || 'STARTER'
+            },
+            userManagement: {
+                totalUsers: parseInt(totalUsers.count || 0),
+                adminUsers: parseInt(adminUsers.count || 0),
+                organizationUsers: Math.max(0, parseInt(totalUsers.count || 0) - parseInt(adminUsers.count || 0)),
+                ssoIntegration: 'Available'
+            }
+        };
+
+        return successResponse(res, stats, 'Tenant stats retrieved successfully');
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -768,5 +852,6 @@ module.exports = {
     registerTenant,
     provisionUser,
     listTenantUsers,
-    getTenantActivities
+    getTenantActivities,
+    getTenantStats
 };

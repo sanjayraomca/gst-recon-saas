@@ -41,7 +41,7 @@ services:
     networks:
       - gst-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gstadmin"]
+      test: ["CMD-SHELL", "pg_isready -U gstadmin -d gst_recon"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -264,6 +264,12 @@ services:
       - "traefik.http.services.tenant-service.loadbalancer.server.port=3001"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
  
   workspace-service:
     build:
@@ -295,6 +301,12 @@ services:
       - "traefik.http.services.workspace-service.loadbalancer.server.port=3002"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
  
   gstn-service:
     build:
@@ -322,6 +334,12 @@ services:
       - "traefik.http.services.gstn-service.loadbalancer.server.port=3003"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
  
   upload-service:
     build:
@@ -351,6 +369,12 @@ services:
       - "traefik.http.services.upload-service.loadbalancer.server.port=3004"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
  
   report-service:
     build:
@@ -378,6 +402,12 @@ services:
       - "traefik.http.services.report-service.loadbalancer.server.port=3005"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   notification-service:
     build:
@@ -407,6 +437,12 @@ services:
       - "traefik.http.services.notification-service.loadbalancer.server.port=3006"
     networks:
       - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   frontend:
     build:
@@ -422,6 +458,12 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`app.gst.local`)"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # ==================== TOOLS ====================
   

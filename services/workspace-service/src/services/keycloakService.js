@@ -162,6 +162,159 @@ class KeycloakService {
             return null;
         }
     }
+
+    async getSubgroupByName(parentId, subgroupName) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/groups/${parentId}/children`;
+
+            const response = await axios.get(url, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`
+                }
+            });
+
+            if (response.data && Array.isArray(response.data)) {
+                return response.data.find(g => g.name === subgroupName) || null;
+            }
+            return null;
+
+        } catch (error) {
+            console.error(`Keycloak Get Subgroup Error (${subgroupName}):`, error.message);
+            return null;
+        }
+    }
+
+    async addUserToGroup(userId, groupId) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users/${userId}/groups/${groupId}`;
+
+            await axios.put(url, {}, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            return true;
+        } catch (error) {
+            console.error('Keycloak Add User to Group Error:', error.response?.data || error.message);
+            return false;
+        }
+    }
+
+    async getUserByEmail(email) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users?email=${email}`;
+
+            const response = await axios.get(url, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`
+                }
+            });
+
+            if (response.data && response.data.length > 0) {
+                return response.data[0];
+            }
+            return null;
+        } catch (error) {
+            console.error('Keycloak Get User Error:', error.message);
+            return null;
+        }
+    }
+
+    async createUser(userData) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users`;
+
+            const keycloakUser = {
+                username: userData.email,
+                email: userData.email,
+                firstName: userData.firstName || '',
+                lastName: userData.lastName || '',
+                enabled: true,
+                emailVerified: true,
+                credentials: [{
+                    type: 'password',
+                    value: userData.password,
+                    temporary: false
+                }]
+            };
+
+            const response = await axios.post(url, keycloakUser, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.status === 201) {
+                const locationParts = response.headers.location.split('/');
+                const userId = locationParts[locationParts.length - 1];
+                return userId;
+            }
+
+            const user = await this.getUserByEmail(userData.email);
+            return user ? user.id : null;
+
+        } catch (error) {
+            console.error('Keycloak Create User Error:', error.response?.data || error.message);
+            if (error.response?.status === 409) {
+                const user = await this.getUserByEmail(userData.email);
+                return user ? user.id : null;
+            }
+            throw new Error('Failed to create user in Keycloak');
+        }
+    }
+
+    async updateUser(userId, userData) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users/${userId}`;
+
+            const keycloakUpdate = {};
+            if (userData.firstName) keycloakUpdate.firstName = userData.firstName;
+            if (userData.lastName) keycloakUpdate.lastName = userData.lastName;
+
+            if (Object.keys(keycloakUpdate).length > 0) {
+                await axios.put(url, keycloakUpdate, {
+                    headers: {
+                        'Authorization': `Bearer ${adminToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+            }
+            return true;
+        } catch (error) {
+            console.error('Keycloak Update User Error:', error.response?.data || error.message);
+            return false;
+        }
+    }
+
+    async resetPassword(userId, newPassword) {
+        try {
+            const adminToken = await this.getAdminToken();
+            const url = `${this.baseUrl}/admin/realms/${this.realm}/users/${userId}/reset-password`;
+
+            await axios.put(url, {
+                type: 'password',
+                value: newPassword,
+                temporary: false
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return true;
+        } catch (error) {
+            console.error('Keycloak Reset Password Error:', error.response?.data || error.message);
+            return false;
+        }
+    }
 }
 
 module.exports = new KeycloakService();

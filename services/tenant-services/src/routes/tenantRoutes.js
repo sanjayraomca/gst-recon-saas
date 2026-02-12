@@ -22,5 +22,8 @@ router.get('/:id/users', tenantController.listTenantUsers);
 // Activity Logs Route
 router.get('/:tenantId/activities', tenantController.getTenantActivities);
 
+// Stats Route
+router.get('/:id/stats', tenantController.getTenantStats);
+
 module.exports = router;
 
