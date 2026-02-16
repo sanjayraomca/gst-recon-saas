@@ -168,6 +168,28 @@ CREATE TABLE activity_logs (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS gst_filings (
+    filing_id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    gstin VARCHAR(15) NOT NULL,
+    return_period VARCHAR(10) NOT NULL,
+    financial_year VARCHAR(10) NOT NULL,
+    generation_date DATE,
+    upload_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    import_type VARCHAR(20) NOT NULL, -- GSTR1, GSTR2A, GSTR2B, GSTR3B
+    original_filename VARCHAR(255),
+    uploaded_filepath TEXT,
+    uploaded_file_url TEXT,
+    extra_info JSONB,
+    total_records INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'Pending' CHECK (status IN ('Pending', 'In Process', 'Completed', 'Failed')),
+    imported_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_email VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX idx_activity_user ON activity_logs (user_id);
 CREATE INDEX idx_activity_tenant ON activity_logs (tenant_id);
 CREATE INDEX idx_activity_workspace ON activity_logs (workspace_id);
@@ -308,6 +330,27 @@ CREATE TABLE state_code_master (
 -- ============================================
 -- DOMAIN 4.1: GSTR-2B RESTRUCTURED (Partitioned)
 -- ============================================
+
+CREATE TABLE gstr_import_master (
+    filing_id BIGSERIAL PRIMARY KEY,
+    tenant_uuid UUID NOT NULL, -- Mapped from tenant_id, kept loose for now
+    gstin_recipient VARCHAR(15) NOT NULL,
+    return_period VARCHAR(10) NOT NULL,
+    financial_year VARCHAR(10) NOT NULL,
+    generation_date DATE NOT NULL,
+    upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    import_type VARCHAR(20), -- GSTR2B etc
+    original_filename VARCHAR(255),
+    uploaded_filepath TEXT,
+    uploaded_file_url TEXT,
+    extra_info JSONB,
+    total_records INTEGER,
+    status VARCHAR(20) DEFAULT 'Pending',
+    imported_by UUID,
+    user_email VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE gstr_import_file_master (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

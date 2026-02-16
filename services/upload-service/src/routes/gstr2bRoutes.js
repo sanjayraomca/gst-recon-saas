@@ -27,5 +27,6 @@ const upload = multer({
 
 // Routes
 router.post('/upload', verifyToken, upload.single('file'), GSTR2BController.uploadGSTR2B);
+router.get('/history', verifyToken, GSTR2BController.getImportHistory);
 
 module.exports = router;

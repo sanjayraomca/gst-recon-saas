@@ -1,16 +1,15 @@
 
-const GSTR2BModel = require('../models/gstr2bModel');
 const ExcelParser = require('../services/excelParser');
-const {
-    processB2BSheet,
-    processImportSheet
-} = require('../utils/sheetProcessors');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const fs = require('fs');
+const knex = require('../../../shared/src/db/connection');
+const FileStorageService = require('../services/fileStorageService');
+const path = require('path');
+const xlsx = require('xlsx'); // Direct require for date parsing if needed
 
 /**
- * Controller for GSTR-2B Excel Import
- * Updated for Multi-Table Schema
+ * Controller for GSTR-2B Excel Import (Simplified)
+ * Handles only File Upload & Metadata Storage
  */
 class GSTR2BController {
     static async uploadGSTR2B(req, res) {
@@ -21,88 +20,118 @@ class GSTR2BController {
             if (!return_period && period_code) return_period = period_code;
             const workspaceId = req.headers['x-workspace-id'];
 
-            // Validation
+            // Validation attributes
             if (!gstin_id || !return_period) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 return res.status(400).json({ error: 'Missing gstin_id or return_period (MMYYYY)' });
             }
 
-            // Parse File
-            const allSheets = ExcelParser.parseAllSheets(req.file.path);
+            // 1. Fetch Tenant & GSTIN Details
+            const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+            if (!workspace) throw new Error('Invalid Workspace ID');
 
-            // Track processing
-            const results = {
-                b2b: 0,
-                cdnr: 0,
-                amendments: 0,
-                impg: 0,
-                sheets_processed: []
-            };
+            // Get user email from headers or request (assuming middleware populates it, or pass via body if simpler) 
+            // For now, defaulting or extracting from token if available. 
+            // If not available, we can query user by ID if 'x-user-id' header exists.
+            const userId = req.headers['x-user-id'];
+            let userEmail = '';
+            if (userId) {
+                const user = await knex('users').where({ id: userId }).first();
+                if (user) userEmail = user.email;
+            }
 
-            const sheetGroups = {
-                'B2B': allSheets['B2B'],
-                'B2BA': allSheets['B2BA'],
-                'B2B-CDNR': allSheets['B2B-CDNR'] || allSheets['CDNR'],
-                'B2B-CDNRA': allSheets['B2B-CDNRA'] || allSheets['CDNRA'],
-                'ECO': allSheets['ECO'], // Treat as B2B usually? Or separate? Doc implies B2B table has eco_gstin column.
-                'IMPG': allSheets['IMPG'],
-                'IMPGSEZ': allSheets['IMPGSEZ'],
-                // Add Rejected/Reversal sheets mapping if needed
-            };
+            const gstinData = await knex('gstin_master').where({ id: gstin_id }).first();
+            if (!gstinData) throw new Error('Invalid GSTIN ID');
 
-            // Container for bulk inserts
-            const bulkData = {
-                gstr_2b_b2b_invoices: [],
-                gstr_2b_cdnr: [],
-                gstr_2b_b2ba_amendments: [],
-                gstr_2b_impg: []
-            };
+            const tenantId = workspace.tenant_id;
+            const gstin = gstinData.gstin;
 
-            // Process B2B/CDNR Types
-            const b2bSheets = ['B2B', 'B2BA', 'B2B-CDNR', 'B2B-CDNRA', 'ECO'];
+            // --- VALIDATION START (Strict Mode Restored) ---
+            const extractedGSTIN = ExcelParser.extractGSTIN(req.file.path);
+            console.log(`Validation: Selected=${gstin}, Extracted=${extractedGSTIN}`);
 
-            for (const sheetName of b2bSheets) {
-                if (allSheets[sheetName]) {
-                    const sheetData = processB2BSheet(allSheets[sheetName], gstin_id, return_period, sheetName);
+            if (extractedGSTIN && extractedGSTIN !== gstin) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(400).json({
+                    error: 'GSTIN Mismatch',
+                    details: `File contains data for ${extractedGSTIN}, but you selected ${gstin}. Please upload the correct file.`
+                });
+            }
+            // --- VALIDATION END ---
 
-                    // Route to correct buckets
-                    sheetData.forEach(record => {
-                        if (record.target_table && bulkData[record.target_table]) {
-                            // Remove target_table key before insert
-                            const { target_table, ...dbRecord } = record;
-                            bulkData[target_table].push(dbRecord);
+            // 2. Calculate Financial Year
+            const month = parseInt(return_period.substring(0, 2));
+            const year = parseInt(return_period.substring(2));
+            let fyStart, fyEnd;
+            if (month <= 3) {
+                fyStart = year - 1;
+                fyEnd = year;
+            } else {
+                fyStart = year;
+                fyEnd = year + 1;
+            }
+            const financialYear = `${fyStart}-${fyEnd}`;
+
+            // 3. Extract Generation Date
+            // Attempt to find "Date of generation" in the first sheet or specific cell
+            // Assuming simplified logic: check Read Me sheet if possible, else default to NOW if not found
+            let generationDate = new Date();
+            try {
+                const workbook = xlsx.readFile(req.file.path);
+                const firstSheetName = workbook.SheetNames[0]; // Usually 'Read me'
+                const worksheet = workbook.Sheets[firstSheetName];
+                // Check if we can find a date string. Usually in format "Date of generation : DD/MM/YYYY"
+                const jsonData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+                for (let row of jsonData) {
+                    const rowStr = row.join(' ');
+                    if (rowStr.includes('Date of generation')) {
+                        // regex to find DD/MM/YYYY
+                        const dateMatch = rowStr.match(/(\d{2}\/\d{2}\/\d{4})/);
+                        if (dateMatch) {
+                            const [day, month, year] = dateMatch[0].split('/');
+                            generationDate = new Date(`${year}-${month}-${day}`);
                         }
-                    });
-                    results.sheets_processed.push(sheetName);
+                        break;
+                    }
                 }
+            } catch (e) {
+                console.warn('Failed to extract generation date, using current date', e);
             }
 
-            // Process Imports
-            const importSheets = ['IMPG', 'IMPGSEZ'];
-            for (const sheetName of importSheets) {
-                if (allSheets[sheetName]) {
-                    const sheetData = processImportSheet(allSheets[sheetName], gstin_id, return_period);
-                    sheetData.forEach(record => {
-                        const { target_table, ...dbRecord } = record;
-                        if (bulkData.gstr_2b_impg) bulkData.gstr_2b_impg.push(dbRecord);
-                    });
-                    results.sheets_processed.push(sheetName);
-                }
-            }
+            // 4. Upload to MinIO
+            const originalFilename = req.file.originalname;
+            const minioPath = `${tenantId}/${gstin}/${financialYear}/Gstr2b/${originalFilename}`;
+            const uploadedPath = await FileStorageService.uploadFile(req.file.path, minioPath, req.file.mimetype);
 
-            // Perform Inserts via Model
-            // Using transactions in Model
-            await GSTR2BModel.bulkInsertNewSchema(bulkData);
+            // 5. Create Entry in gstr_import_master
+            // Note: tenant_uuid map to tenantId
+            const importData = {
+                tenant_uuid: tenantId,
+                gstin_recipient: gstin,
+                return_period: return_period,
+                financial_year: financialYear,
+                generation_date: generationDate,
+                upload_timestamp: new Date(),
+                import_type: 'GSTR2B',
+                original_filename: originalFilename,
+                uploaded_filepath: uploadedPath,
+                uploaded_file_url: uploadedPath,
+                extra_info: JSON.stringify({ workspace_id: workspaceId }),
+                total_records: 0, // Not processing records now
+                status: 'Completed',
+                imported_by: userId || null,
+                user_email: userEmail
+            };
 
-            results.b2b = bulkData.gstr_2b_b2b_invoices.length;
-            results.cdnr = bulkData.gstr_2b_cdnr.length;
-            results.amendments = bulkData.gstr_2b_b2ba_amendments.length;
-            results.impg = bulkData.gstr_2b_impg.length;
+            const [insertedRecord] = await knex('gstr_import_master').insert(importData).returning('filing_id');
 
             // Cleanup
             if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
 
-            return successResponse(res, results, 'GSTR-2B Import Successful');
+            return successResponse(res, {
+                message: 'File uploaded and metadata saved successfully',
+                filing_id: insertedRecord.filing_id
+            }, 'GSTR-2B Import Successful');
 
         } catch (error) {
             if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -110,6 +139,31 @@ class GSTR2BController {
             return errorResponse(res, error);
         }
     }
+
+    static async getImportHistory(req, res) {
+        try {
+            const workspaceId = req.headers['x-workspace-id'];
+            if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+
+            // Fetch history for the tenant derived from workspace (or store workspace_id directly in master if needed, currently implicitly via tenant or extra_info)
+            // For now, fetching all for the tenant or filtering by extra_info->workspace_id if we want strict workspace isolation
+            // Efficient way: Join workspaces to get tenant_id, then query gstr_import_master
+
+            const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+            if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+
+            const history = await knex('gstr_import_master')
+                .where({ tenant_uuid: workspace.tenant_id })
+                .orderBy('created_at', 'desc')
+                .limit(50); // Limit to last 50 for now
+
+            return successResponse(res, history, 'Import history fetched successfully');
+        } catch (error) {
+            console.error('Fetch History Error:', error);
+            return errorResponse(res, error);
+        }
+    }
 }
 
 module.exports = GSTR2BController;
+

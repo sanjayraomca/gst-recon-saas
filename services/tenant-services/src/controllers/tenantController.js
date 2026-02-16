@@ -671,7 +671,7 @@ const listTenantUsers = async (req, res) => {
         }
 
         let users = [];
-        // 2. Fetch users directly from DB for this tenant using Join
+        // 2. Fetch users strictly linked to this tenant
         const knex = require('../../../shared/src/db/connection');
 
         users = await knex('users')
@@ -686,10 +686,16 @@ const listTenantUsers = async (req, res) => {
                 knex.raw('CAST(COUNT(DISTINCT workspace_users.workspace_id) AS INTEGER) as organization_count'),
                 knex.raw('MAX(workspace_users.role) as role')
             )
+            .leftJoin('tenant_users', function () {
+                this.on('users.id', '=', 'tenant_users.user_id')
+                    .andOn('tenant_users.tenant_id', '=', knex.raw('?', [tenantId]));
+            })
             .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
             .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .where('users.designation', 'TENANT_ADMIN')
-            .orWhere('workspaces.tenant_id', tenantId)
+            .where(function () {
+                this.where('tenant_users.tenant_id', tenantId)
+                    .orWhere('workspaces.tenant_id', tenantId);
+            })
             .whereNot('users.email', 'superadmin.dev@gmail.com')
             .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
 

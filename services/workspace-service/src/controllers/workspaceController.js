@@ -32,7 +32,42 @@ const createWorkspace = async (req, res) => {
         let targetTenantId = bodyTenantId;
         let tenantGroupId = null;
 
-        // If no explicit tenant ID, try to derive from Keycloak groups
+        // A. Priority: Try finding a tenant linked to the user via DB (tenant_users / workspace_users)
+        // This is more reliable than guessing from Keycloak groups which might just contain roles.
+        if (!targetTenantId) {
+            const userId = req.user ? (req.user.sub || req.user.id) : null;
+            if (userId) {
+                // Find local user ID first
+                const localUser = await trx('users').where('auth_provider_id', userId).first();
+
+                if (localUser) {
+                    // 1. Try finding via tenant_users (Direct Link - Priority)
+                    const linkedTenantUser = await trx('tenant_users')
+                        .where('user_id', localUser.id)
+                        .where('status', 'ACTIVE') // Ensure active status
+                        .first();
+
+                    if (linkedTenantUser) {
+                        targetTenantId = linkedTenantUser.tenant_id;
+                    }
+
+                    // 2. Fallback: Check workspace_users -> workspaces -> tenant_id
+                    if (!targetTenantId) {
+                        const linkedTenantWorkspace = await trx('workspace_users')
+                            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                            .where('workspace_users.user_id', localUser.id)
+                            .select('workspaces.tenant_id')
+                            .first();
+
+                        if (linkedTenantWorkspace && linkedTenantWorkspace.tenant_id) {
+                            targetTenantId = linkedTenantWorkspace.tenant_id;
+                        }
+                    }
+                }
+            }
+        }
+
+        // B. Secondary: If no local link, try to derive from Keycloak groups
         if (!targetTenantId && req.user && req.user.groups && req.user.groups.length > 0) {
             const tokenGroupValue = req.user.groups[0];
 
@@ -71,40 +106,6 @@ const createWorkspace = async (req, res) => {
         }
 
         if (!targetTenantId) {
-            // Fallback: Try finding a tenant linked to the user via workspace_users
-            const userId = req.user ? (req.user.sub || req.user.id) : null;
-            if (userId) {
-                // Find local user ID first
-                const localUser = await trx('users').where('auth_provider_id', userId).first();
-
-                if (localUser) {
-                    // 1. Try finding via tenant_users (Direct Link - Priority)
-                    const linkedTenantUser = await trx('tenant_users')
-                        .where('user_id', localUser.id)
-                        .where('status', 'ACTIVE') // Ensure active status
-                        .first();
-
-                    if (linkedTenantUser) {
-                        targetTenantId = linkedTenantUser.tenant_id;
-                    }
-
-                    // 2. Fallback: Check workspace_users -> workspaces -> tenant_id
-                    if (!targetTenantId) {
-                        const linkedTenantWorkspace = await trx('workspace_users')
-                            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-                            .where('workspace_users.user_id', localUser.id)
-                            .select('workspaces.tenant_id')
-                            .first();
-
-                        if (linkedTenantWorkspace && linkedTenantWorkspace.tenant_id) {
-                            targetTenantId = linkedTenantWorkspace.tenant_id;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!targetTenantId) {
             const firstTenant = await trx('tenants').first();
             if (firstTenant) {
                 targetTenantId = firstTenant.id;
@@ -128,14 +129,19 @@ const createWorkspace = async (req, res) => {
 
         if (existingGstin) {
             gstinId = existingGstin.id;
+            console.log(`[DEBUG] Existing GSTIN found: ${gstinId}`);
+            console.log(`[DEBUG] Checking for conflict in Tenant: ${targetTenantId} for GSTIN ID: ${gstinId}`);
+
             // Check if this tenant already has a workspace for this GSTIN
             const conflict = await trx('workspaces')
                 .where({ tenant_id: targetTenantId, gstin_id: gstinId })
                 .first(); // Assuming workspaces.tenant_id is reliable. Or join tenant_workspaces.
 
             if (conflict) {
+                console.error(`[DEBUG] CONFLICT FOUND:`, conflict);
                 return errorResponse(res, `This GSTIN (${gstin}) is already registered and managed within your organization.`, 409);
             }
+            console.log(`[DEBUG] No conflict found in this tenant.`);
         } else {
             // Create new GSTIN in master (decoupled)
             gstinId = uuidv4();
@@ -190,40 +196,57 @@ const createWorkspace = async (req, res) => {
             updated_at: new Date()
         }).returning('*');
 
-        // 4. Create Keycloak Subgroup (New Requirement)
-        // If we derived tenantGroupId from the token earlier, use it.
-        // Otherwise, try to fetch from tenant metadata.
+        // 4. Create Keycloak Subgroup (Robust Resolution)
+        // We need the Keycloak Group ID of the Tenant to create the Organization subgroup under it.
         if (!tenantGroupId) {
             const tenant = await trx('tenants').where('id', targetTenantId).first();
-            tenantGroupId = tenant?.metadata?.keycloak_groups?.tenant_group_id;
 
-            // If still not found, fallback to fetching by ID (if ID is name-like) or Name
-            if (!tenantGroupId) {
-                // Warning: targetTenantId is a UUID, usually not the group name in Keycloak unless mapped.
-                // But previous code assumed it might be.
-                const kcGroup = await keycloakService.getGroupByName(targetTenantId); // or tenant.legal_name?
-                if (kcGroup) {
-                    tenantGroupId = kcGroup.id;
+            // 1. Try metadata
+            if (tenant?.metadata?.keycloak_groups?.tenant_group_id) {
+                tenantGroupId = tenant.metadata.keycloak_groups.tenant_group_id;
+            }
+
+            // 2. Try fetching by Tenant Name (legal_name) from Keycloak
+            if (!tenantGroupId && tenant?.legal_name) {
+                try {
+                    const kcGroup = await keycloakService.getGroupByName(tenant.legal_name);
+                    if (kcGroup) {
+                        tenantGroupId = kcGroup.id;
+                        // Optional: Update metadata for future use
+                        // await trx('tenants').where('id', targetTenantId).update({
+                        //     metadata: knex.raw("jsonb_set(metadata, '{keycloak_groups,tenant_group_id}', ?)", [JSON.stringify(tenantGroupId)])
+                        // });
+                    }
+                } catch (err) {
+                    console.warn(`Failed to fetch Keycloak group for tenant ${tenant.legal_name}:`, err.message);
                 }
             }
         }
 
         if (tenantGroupId) {
             try {
-                // Create organization (GSTIN) subgroup under tenant group
-                const orgSubgroup = await keycloakService.createSubgroup(tenantGroupId, gstin, {
-                    workspace_id: workspaceId,
-                    gstin: gstin,
-                    type: 'ORGANIZATION'
-                });
+                // Check if Organization subgroup already exists first?
+                // createSubgroup usually throws if exists, or returns existing.
+                // We'll try to get it first to be safe.
+                let orgSubgroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
+
+                if (!orgSubgroup) {
+                    orgSubgroup = await keycloakService.createSubgroup(tenantGroupId, gstin, {
+                        workspace_id: workspaceId,
+                        gstin: gstin,
+                        type: 'ORGANIZATION'
+                    });
+                    console.log(`Created organization subgroup ${gstin} under tenant group ${tenantGroupId}`);
+                } else {
+                    console.log(`Organization subgroup ${gstin} already exists under tenant group ${tenantGroupId}`);
+                }
 
                 if (orgSubgroup && orgSubgroup.id) {
-                    console.log(`Created organization subgroup ${gstin} under tenant group`);
 
                     // Create role subgroups under the organization group
                     const roles = [
                         'Super Admin',
-                        'Tenant Admin',
+                        'Tenant Admin', // This might be redundant if checking parent, but user asked for it in Org
                         'Organization Admin',
                         'Accountant',
                         'Viewer'
@@ -231,21 +254,25 @@ const createWorkspace = async (req, res) => {
 
                     for (const roleName of roles) {
                         try {
-                            await keycloakService.createSubgroup(orgSubgroup.id, roleName, {
-                                type: 'ROLE',
-                                organization: gstin
-                            });
-                            console.log(`Created role subgroup '${roleName}' under organization ${gstin}`);
+                            // Check if exists
+                            const existingRoleGroup = await keycloakService.getSubgroupByName(orgSubgroup.id, roleName);
+                            if (!existingRoleGroup) {
+                                await keycloakService.createSubgroup(orgSubgroup.id, roleName, {
+                                    type: 'ROLE',
+                                    organization: gstin
+                                });
+                                console.log(`Created role subgroup '${roleName}' under organization ${gstin}`);
+                            }
                         } catch (roleError) {
-                            console.warn(`Failed to create role subgroup '${roleName}':`, roleError.message);
+                            console.warn(`Failed to create/check role subgroup '${roleName}':`, roleError.message);
                         }
                     }
                 }
             } catch (kcError) {
-                console.warn(`Failed to create Keycloak subgroup for GSTIN ${gstin}:`, kcError.message);
+                console.warn(`Failed to handle Keycloak subgroup for GSTIN ${gstin}:`, kcError.message);
             }
         } else {
-            console.warn("Tenant Keycloak Group ID not found. Skipping subgroup creation.");
+            console.warn(`Tenant Keycloak Group ID not found for Tenant ID ${targetTenantId}. Skipping subgroup creation.`);
         }
 
 
@@ -460,6 +487,9 @@ const createWorkspace = async (req, res) => {
         // Handle unique constraint on (tenant_id, gstin_id) if we rely on DB, but we checked in code.
         // Also workspaces_workspace_code_key logic might still be valid if we keep workspace_code unique?
         // User didn't ask to drop workspace_code unique constraint.
+        if (error.code === '23505') {
+            console.error('Unique constraint violation:', error.constraint, error.detail);
+        }
         if (error.code === '23505' && (error.constraint === 'workspaces_workspace_code_key' || error.constraint === 'workspaces_tenant_workspace_code_key')) {
             return errorResponse(res, 'This Organization/GSTIN is already registered for your account. Please check your existing organizations.', 409);
         }
