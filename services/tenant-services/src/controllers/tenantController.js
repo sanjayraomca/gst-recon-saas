@@ -673,8 +673,10 @@ const listTenantUsers = async (req, res) => {
             )
             .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
             .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .where('users.designation', 'TENANT_ADMIN')
-            .orWhere('workspaces.tenant_id', tenantId)
+            .where(function () {
+                this.where('users.id', tenant.owner_user_id)
+                    .orWhere('workspaces.tenant_id', tenantId);
+            })
             .whereNot('users.email', 'superadmin.dev@gmail.com')
             .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
 

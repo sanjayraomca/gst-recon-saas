@@ -157,7 +157,7 @@ const testGSTNConnection = async (req, res) => {
                 state_code: gstin.substring(0, 2)
             }, 'GSTN connection successful');
         } else {
-            return res.status(401).json({
+            return res.status(400).json({
                 success: false,
                 error: connectionResult.error || 'Invalid GSTIN or password'
             });

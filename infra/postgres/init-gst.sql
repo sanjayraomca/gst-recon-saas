@@ -61,7 +61,7 @@ CREATE TABLE workspaces (
         CHECK (compliance_level IN ('STANDARD', 'HIGH', 'AUDIT_READY')),
     industry_type VARCHAR(100),
     turnover_band VARCHAR(50),
-    compliance_score INTEGER DEFAULT 85,
+    compliance_score INTEGER DEFAULT 0,
     last_activity TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE,
     settings JSONB DEFAULT '{
