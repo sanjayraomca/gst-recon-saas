@@ -484,12 +484,10 @@ const listWorkspaces = async (req, res) => {
         }
 
         const effectiveTenantId = tenant_id || localUser.tenant_id;
-        console.log(`listWorkspaces: effectiveTenantId=${effectiveTenantId}`);
 
         let workspaces = [];
 
         if (effectiveTenantId) {
-            console.log(`listWorkspaces: Fetching for tenant ${effectiveTenantId} and user ${localUser.id}`);
 
             // Security Check: If requesting a specific tenant_id, ensure user has access to it
             if (tenant_id && tenant_id !== localUser.tenant_id) {
@@ -500,7 +498,13 @@ const listWorkspaces = async (req, res) => {
                     .andWhere('workspaces.tenant_id', tenant_id)
                     .first();
 
-                if (!hasAccess) {
+                // Check if user is the OWNER of this tenant
+                const isTenantOwner = await knex('tenants')
+                    .where('id', tenant_id)
+                    .andWhere('owner_user_id', localUser.id)
+                    .first();
+
+                if (!hasAccess && !isTenantOwner) {
                     return errorResponse(res, 'Unauthorized access to tenant workspaces', 403);
                 }
             }
@@ -508,7 +512,7 @@ const listWorkspaces = async (req, res) => {
 
             // Fetch workspaces for the tenant that the user has access to via workspace_users
             workspaces = await knex('workspaces')
-                .distinct('workspaces.*', 'workspace_users.role as user_role')
+                .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
                 .select(
                     knex.raw('CASE WHEN tenants.owner_user_id = ? THEN true ELSE false END as is_tenant_owner', [localUser.id])
                 )
@@ -522,10 +526,12 @@ const listWorkspaces = async (req, res) => {
                 .orderBy('workspaces.created_at', 'desc');
 
             // Also fetch workspaces from OTHER tenants the user has been given access to
+            // Logic Change: Use localUser.id as primary filter, excluding current effectiveTenantId
             const crossTenantWorkspaces = await knex('workspaces')
-                .distinct('workspaces.*', 'workspace_users.role as user_role')
+                .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
                 .select(knex.raw('false as is_tenant_owner'))
                 .innerJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
                 .where('workspace_users.user_id', localUser.id)
                 .andWhere('workspace_users.invitation_status', 'ACTIVE')
                 .whereNull('workspace_users.removed_at')
@@ -535,10 +541,7 @@ const listWorkspaces = async (req, res) => {
 
             // Merge: own-tenant workspaces first, then cross-tenant ones
             if (crossTenantWorkspaces.length > 0) {
-                console.log(`listWorkspaces: Found ${workspaces.length} own and ${crossTenantWorkspaces.length} cross-tenant workspace(s) for user ${localUser.id}`);
                 workspaces = [...workspaces, ...crossTenantWorkspaces];
-            } else {
-                console.log(`listWorkspaces: Found ${workspaces.length} own workspace(s) for user ${localUser.id}`);
             }
         } else {
             // Fallback: fetch only workspaces explicitly assigned to the user
@@ -547,10 +550,11 @@ const listWorkspaces = async (req, res) => {
                 .andWhere('invitation_status', 'ACTIVE')
                 .whereNull('removed_at')
                 .select('workspace_id', 'role');
+
             const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
             if (workspaceIds.length > 0) {
                 workspaces = await knex('workspaces')
-                    .select('workspaces.*')
+                    .select('workspaces.*', 'tenants.legal_name as tenant_name')
                     .select(
                         knex.raw('CASE WHEN tenants.owner_user_id = ? THEN true ELSE false END as is_tenant_owner', [localUser.id])
                     )
@@ -564,6 +568,7 @@ const listWorkspaces = async (req, res) => {
                     const userWorkspace = userWorkspaces.find(uw => uw.workspace_id === w.id);
                     return {
                         ...w,
+                        gstins: w.gstins || [],
                         user_role: userWorkspace ? userWorkspace.role : null
                     };
                 });
@@ -582,16 +587,14 @@ const listWorkspaces = async (req, res) => {
                     const workspaceGstin = gstins.find(g => g.id === w.gstin_id);
                     return {
                         ...w,
-                        gstins: workspaceGstin ? [workspaceGstin] : [], // Frontend expects array?
+                        gstins: workspaceGstin ? [workspaceGstin] : [],
                         gstin_id: w.gstin_id
                     };
                 });
             } else {
                 workspaces = workspaces.map(w => ({ ...w, gstins: [], gstin_id: null }));
             }
-
         }
-
 
         return successResponse(res, workspaces, 'Workspaces fetched');
     } catch (error) {
