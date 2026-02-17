@@ -526,22 +526,24 @@ const listWorkspaces = async (req, res) => {
                 .orderBy('workspaces.created_at', 'desc');
 
             // Also fetch workspaces from OTHER tenants the user has been given access to
-            // Logic Change: Use localUser.id as primary filter, excluding current effectiveTenantId
-            const crossTenantWorkspaces = await knex('workspaces')
-                .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
-                .select(knex.raw('false as is_tenant_owner'))
-                .innerJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
-                .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
-                .where('workspace_users.user_id', localUser.id)
-                .andWhere('workspace_users.invitation_status', 'ACTIVE')
-                .whereNull('workspace_users.removed_at')
-                .whereNull('workspaces.deleted_at')
-                .andWhereNot('workspaces.tenant_id', effectiveTenantId)
-                .orderBy('workspaces.created_at', 'desc');
+            // ONLY if we are NOT filtering by a specific tenant_id (i.e. showing "My Workspaces")
+            if (!tenant_id) {
+                const crossTenantWorkspaces = await knex('workspaces')
+                    .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
+                    .select(knex.raw('false as is_tenant_owner'))
+                    .innerJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                    .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
+                    .where('workspace_users.user_id', localUser.id)
+                    .andWhere('workspace_users.invitation_status', 'ACTIVE')
+                    .whereNull('workspace_users.removed_at')
+                    .whereNull('workspaces.deleted_at')
+                    .andWhereNot('workspaces.tenant_id', effectiveTenantId)
+                    .orderBy('workspaces.created_at', 'desc');
 
-            // Merge: own-tenant workspaces first, then cross-tenant ones
-            if (crossTenantWorkspaces.length > 0) {
-                workspaces = [...workspaces, ...crossTenantWorkspaces];
+                // Merge: own-tenant workspaces first, then cross-tenant ones
+                if (crossTenantWorkspaces.length > 0) {
+                    workspaces = [...workspaces, ...crossTenantWorkspaces];
+                }
             }
         } else {
             // Fallback: fetch only workspaces explicitly assigned to the user
