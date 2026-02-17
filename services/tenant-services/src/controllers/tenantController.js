@@ -665,10 +665,12 @@ const listTenantUsers = async (req, res) => {
                 'users.full_name',
                 'users.email',
                 'users.phone',
-                'users.designation',
+                // Only return designation if the user is the owner of THIS tenant
+                knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
                 'users.is_active',
                 'users.last_login_at',
-                knex.raw('CAST(COUNT(DISTINCT workspace_users.workspace_id) AS INTEGER) as organization_count'),
+                // SCOPE FIX: Only count organizations belonging to THIS tenant
+                knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspace_users.workspace_id END) AS INTEGER) as organization_count', [tenantId]),
                 knex.raw('MAX(workspace_users.role) as role')
             )
             .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
