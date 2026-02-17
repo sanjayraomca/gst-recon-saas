@@ -50,14 +50,34 @@ const login = async (req, res) => {
             .where('workspace_users.user_id', user.id)
             .distinct('tenants.id');
 
+        // Also check if user OWNS any tenant (even if it has zero workspaces)
+        const ownedTenants = await knex('tenants')
+            .where('owner_user_id', user.id)
+            .select('id', 'tenant_code', 'legal_name');
+
+        const isTenantOwner = ownedTenants.length > 0;
+
+        // Merge owned tenants into the list (if not already present from workspace join)
+        const existingTenantIds = new Set(userTenants.map(t => t.id));
+        for (const ot of ownedTenants) {
+            if (!existingTenantIds.has(ot.id)) {
+                userTenants.push({ ...ot, role: 'TENANT_ADMIN' });
+            }
+        }
+
         // Extraction: Priority 
-        // 1. Direct tenant_id on user record (Set during registration or invites)
-        // 2. Tenant name matches User name (Owner/Self scenario)
-        // 3. First available tenant
-        let primaryTenantId = user.tenant_id;
+        // 1. Owned tenant (highest priority for tenant owners)
+        // 2. Direct tenant_id on user record (Set during registration or invites)
+        // 3. Tenant name matches User name (Owner/Self scenario)
+        // 4. First available tenant
+        let primaryTenantId = null;
         let primaryTenant = null;
 
-        if (primaryTenantId) {
+        if (isTenantOwner) {
+            primaryTenant = ownedTenants[0];
+            primaryTenantId = primaryTenant.id;
+        } else if (user.tenant_id) {
+            primaryTenantId = user.tenant_id;
             primaryTenant = userTenants.find(t => t.id === primaryTenantId) || userTenants[0];
         } else if (userTenants.length > 0) {
             const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
@@ -73,6 +93,8 @@ const login = async (req, res) => {
                 id: user.id,
                 full_name: user.full_name,
                 email: user.email,
+                designation: user.designation,
+                is_tenant_owner: isTenantOwner,
                 roles: userTenants.map(t => ({ tenant_id: t.id, role: t.role }))
             }
         };
@@ -232,6 +254,7 @@ const register = async (req, res) => {
             const tenantId = crypto.randomUUID();
             await trx('tenants').insert({
                 id: tenantId,
+                owner_user_id: user.id,
                 tenant_code: email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').substring(0, 10) + '_' + Math.floor(Math.random() * 1000),
                 legal_name: full_name + "'s Org",
                 subscription_plan: 'STARTER',

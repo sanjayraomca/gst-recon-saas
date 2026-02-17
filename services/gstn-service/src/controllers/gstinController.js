@@ -120,9 +120,81 @@ const updateGSTIN = async (req, res) => {
     }
 };
 
+/**
+ * Test GSTN API connection with provided credentials
+ * Used to validate GSTIN and password before organization creation
+ */
+const testGSTNConnection = async (req, res) => {
+    try {
+        const { gstin, password } = req.body;
+
+        // Validate required fields
+        if (!gstin || !password) {
+            return res.status(400).json({
+                success: false,
+                error: 'GSTIN and password are required'
+            });
+        }
+
+        // Validate GSTIN format: 2-digit state code + 10-char PAN + 1-char entity + 1-char checksum + Z + 1-char checksum
+        const gstinRegex = /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/;
+        if (!gstinRegex.test(gstin)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GSTIN format'
+            });
+        }
+
+        // TODO: Replace with actual GSTN API call
+        // For now, simulate success for testing purposes
+        // In production, integrate with actual GSTN API for authentication
+        const connectionResult = await simulateGSTNAPICall(gstin, password);
+
+        if (connectionResult.success) {
+            return successResponse(res, {
+                taxpayer_name: connectionResult.taxpayer_name,
+                trade_name: connectionResult.trade_name,
+                state_code: gstin.substring(0, 2)
+            }, 'GSTN connection successful');
+        } else {
+            return res.status(401).json({
+                success: false,
+                error: connectionResult.error || 'Invalid GSTIN or password'
+            });
+        }
+    } catch (error) {
+        console.error('Test GSTN connection error:', error);
+        return errorResponse(res, error, 'Failed to test GSTN connection');
+    }
+};
+
+/**
+ * Simulate GSTN API call
+ * TODO: Replace with actual GSTN API integration
+ */
+async function simulateGSTNAPICall(gstin, password) {
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // For testing: Accept any password with length >= 6
+    if (password.length >= 6) {
+        return {
+            success: true,
+            taxpayer_name: 'Sample Company Private Limited',
+            trade_name: 'Sample Co'
+        };
+    } else {
+        return {
+            success: false,
+            error: 'Invalid credentials'
+        };
+    }
+}
+
 module.exports = {
     createGSTIN,
     listGSTINs,
     getGSTIN,
-    updateGSTIN
+    updateGSTIN,
+    testGSTNConnection
 };

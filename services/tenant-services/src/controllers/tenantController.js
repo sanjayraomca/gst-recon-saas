@@ -305,9 +305,7 @@ const registerTenant = async (req, res) => {
 
         // 2. Check Local User
         let user = await User.findByEmail(email);
-        if (user) {
-            return errorResponse(res, 'An account with this email address already exists. Please log in instead.', 409);
-        }
+        // REMOVED: Check that blocks existing users
 
         // Start Transaction for DB operations
         const knex = require('../../../shared/src/db/connection');
@@ -326,8 +324,39 @@ const registerTenant = async (req, res) => {
             const nextNum = parseInt(similarTenants[0].count) + 1;
             const tenantCode = `${prefix}${String(nextNum).padStart(5, '0')}`;
 
+            // 3A. Create user first (needed for owner_user_id)
+            let userId;
+
+            if (user) {
+                // User exists - reuse ID and update designation
+                userId = user.id;
+                await trx('users').where({ id: userId }).update({
+                    designation: 'TENANT_ADMIN',
+                    updated_at: new Date()
+                });
+                console.log(`Linking existing user ${email} (ID: ${userId}) to new tenant, updated designation to TENANT_ADMIN`);
+            } else {
+                // New user - create record
+                userId = crypto.randomUUID();
+                const [newUser] = await trx('users').insert({
+                    id: userId,
+                    email,
+                    full_name,
+                    phone,
+                    designation: 'TENANT_ADMIN',
+                    // NO tenant_id set here - users don't belong to single tenant
+                    auth_provider_id: keycloakId,
+                    auth_provider_type: 'KEYCLOAK',
+                    created_at: new Date(),
+                    updated_at: new Date()
+                }).returning('*');
+                user = newUser;
+            }
+
+            // 3B. Create tenant with owner reference
             let [tenant] = await trx('tenants').insert({
                 id: tenantId,
+                owner_user_id: userId, // ← NEW: Set tenant owner
                 tenant_code: tenantCode,
                 legal_name: full_name, // Use same name as signup full_name
                 subscription_plan: 'STARTER',
@@ -336,21 +365,6 @@ const registerTenant = async (req, res) => {
                 updated_at: new Date()
             }).returning('*');
 
-            // Create Local User
-            const [newUser] = await trx('users').insert({
-                id: crypto.randomUUID(),
-                email,
-                full_name,
-                phone,
-                designation: 'TENANT_ADMIN',
-                tenant_id: tenantId, // Link user to their tenant
-                auth_provider_id: keycloakId,
-                auth_provider_type: 'KEYCLOAK',
-                created_at: new Date(),
-                updated_at: new Date()
-            }).returning('*');
-
-            user = newUser;
 
 
             // 4. (Removed) Create Default Workspace for the Tenant

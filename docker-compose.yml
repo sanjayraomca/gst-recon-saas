@@ -297,7 +297,7 @@ services:
       - PORT=3002
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`)"
+      - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`)"
       - "traefik.http.services.workspace-service.loadbalancer.server.port=3002"
     networks:
       - gst-network

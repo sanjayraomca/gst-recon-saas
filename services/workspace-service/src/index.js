@@ -19,6 +19,8 @@ app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-r
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
 app.use('/notices', require('./routes/noticeRoutes'));
 app.use('/vendor-communications', require('./routes/vendorCommRoutes'));
+app.use('/states', require('./routes/stateRoutes')); // State lookup routes
+
 
 
 app.get('/health', (req, res) => {

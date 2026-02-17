@@ -20,6 +20,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    owner_user_id UUID, -- FK added later after users table is created
     tenant_code VARCHAR(50) UNIQUE NOT NULL,
     legal_name VARCHAR(255) NOT NULL,
     trading_name VARCHAR(255),
@@ -163,6 +164,18 @@ CREATE INDEX idx_activity_tenant ON activity_logs (tenant_id);
 CREATE INDEX idx_activity_workspace ON activity_logs (workspace_id);
 CREATE INDEX idx_activity_action ON activity_logs (action_type);
 CREATE INDEX idx_activity_created ON activity_logs (created_at);
+
+-- Add foreign key constraint for tenant ownership (after users table exists)
+ALTER TABLE tenants ADD CONSTRAINT fk_tenants_owner 
+    FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
+
+-- Performance indexes for multi-tenant queries
+CREATE INDEX idx_tenants_owner ON tenants(owner_user_id);
+CREATE INDEX idx_users_tenant ON users(tenant_id);
+CREATE INDEX idx_workspace_users_user ON workspace_users(user_id);
+CREATE INDEX idx_workspace_users_workspace ON workspace_users(workspace_id);
+CREATE INDEX idx_workspace_users_role ON workspace_users(role);
+
 
 -- ============================================
 -- DOMAIN 2: GST MASTER DATA (6 tables)
