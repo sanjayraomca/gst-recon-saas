@@ -151,7 +151,16 @@ class GSTRImportController {
 
             // 1. Parse & Validate File GSTIN
             const workbook = xlsx.readFile(uploadedFilePath);
-            const { validateFileGSTIN } = require('../utils/fileValidation');
+            const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
+
+            const fileTypeValidation = validateFileType(workbook, gstr_type);
+            if (!fileTypeValidation.valid) {
+                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                return errorResponse(res, {
+                    message: fileTypeValidation.message,
+                    isCustom: true
+                }, 400);
+            }
 
             if (!validateFileGSTIN(workbook, gstinRecipient)) {
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {

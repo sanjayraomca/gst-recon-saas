@@ -110,9 +110,12 @@ class BookImportController {
             }
 
             // 6. Duplicate Check by Hash
+            console.log(`[DEBUG] Computing file hash for ${uploadedFilePath}`);
             const fileHash = await computeFileHash(uploadedFilePath);
+            console.log(`[DEBUG] File hash: ${fileHash}`);
             const IMPORT_TYPE = type === 'SALES' ? 'SALES_REGISTER' : 'PURCHASE_REGISTER';
 
+            console.log(`[DEBUG] Checking for duplicate import: type=${IMPORT_TYPE}, period=${return_period}`);
             const { exactDuplicate, previousImport } = await GSTRImportModel.checkDuplicateByHash(
                 tenantUuid,
                 'SELF',
@@ -123,14 +126,28 @@ class BookImportController {
             );
 
             if (exactDuplicate) {
+                console.log(`[DEBUG] Exact duplicate found: ${previousImport.import_filing_id}`);
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
                 return successResponse(res, { duplicate: true, previousImport }, 'File already imported.');
             }
 
             // 7. Parse & Validate File GSTIN
+            console.log(`[DEBUG] Reading workbook from ${uploadedFilePath}`);
             const workbook = xlsx.readFile(uploadedFilePath);
-            const { validateFileGSTIN } = require('../utils/fileValidation');
+            const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
 
+            console.log(`[DEBUG] Validating file type: expected=${type}`);
+            const fileTypeValidation = validateFileType(workbook, type);
+            if (!fileTypeValidation.valid) {
+                console.log(`[DEBUG] File type validation failed: ${fileTypeValidation.message}`);
+                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                return errorResponse(res, {
+                    message: fileTypeValidation.message,
+                    isCustom: true
+                }, 400);
+            }
+
+            console.log(`[DEBUG] Validating organization GSTIN: expected=${expectedGstin}`);
             if (!validateFileGSTIN(workbook, expectedGstin)) {
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
                 return errorResponse(res, {
@@ -140,6 +157,7 @@ class BookImportController {
             }
 
             // 8. Upload to MinIO
+            console.log(`[DEBUG] Calculating financial year for ${return_period}`);
             const financialYear = BookImportController.calculateFinancialYear(return_period);
             const minioMetadata = {
                 tenantUuid,
@@ -149,9 +167,12 @@ class BookImportController {
                 originalFilename: req.file.originalname,
                 returnPeriod: return_period
             };
+            console.log(`[DEBUG] Uploading to MinIO: ${req.file.originalname}`);
             const minioResult = await minioClient.uploadFile(uploadedFilePath, minioMetadata);
+            console.log(`[DEBUG] MinIO upload successful: ${minioResult.objectPath}`);
 
             // 9. Create Import Record
+            console.log(`[DEBUG] Creating database import record`);
             const importRecord = await GSTRImportModel.createImportRecord({
                 tenantUuid,
                 gstinRecipient: 'SELF',
@@ -167,21 +188,29 @@ class BookImportController {
                 userEmail,
                 fileHash
             });
+            console.log(`[DEBUG] Import record created: ${importRecord.import_filing_id}`);
 
             // 10. Process
             const sheetName = workbook.SheetNames[0];
+            console.log(`[DEBUG] Processing first sheet: ${sheetName}`);
             const jsonRows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+            console.log(`[DEBUG] Total rows read from sheet: ${jsonRows.length}`);
 
             let result;
             if (type === 'SALES') {
-                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period);
+                console.log(`[DEBUG] Starting processSalesSheet`);
+                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin);
+                console.log(`[DEBUG] processSalesSheet completed. Count=${invoices.length}`);
                 result = await BookModel.bulkInsertSales(invoices);
             } else {
-                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period);
+                console.log(`[DEBUG] Starting processPurchaseSheet`);
+                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin);
+                console.log(`[DEBUG] processPurchaseSheet completed. Count=${vouchers.length}`);
                 result = await BookModel.bulkInsertPurchase(vouchers);
             }
+            console.log(`[DEBUG] DB insertion completed. inserted=${result.inserted}`);
 
-            if (result.inserted === 0 && (!result.skipped || result.skipped === 0)) {
+            if (result.inserted === 0) {
                 await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {
                     minioPath: minioResult.objectPath,
                     reason: 'No valid records found in file'

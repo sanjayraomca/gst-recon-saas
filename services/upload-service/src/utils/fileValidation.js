@@ -52,6 +52,67 @@ const validateFileGSTIN = (workbook, expectedGstin) => {
     return false;
 };
 
+/**
+ * Validates that the workbook contains sheets/keywords expected for a specific GSTR or Book type.
+ * 
+ * @param {Object} workbook - Parsed xlsx workbook
+ * @param {string} type - Expected type (e.g., GSTR2A, GSTR2B, SALES, PURCHASE)
+ * @returns {Object} - { valid: boolean, message: string }
+ */
+const validateFileType = (workbook, type) => {
+    if (!workbook || !workbook.SheetNames || !type) {
+        return { valid: false, message: 'Invalid workbook or type provided.' };
+    }
+
+    const sNames = workbook.SheetNames.map(s => s.toUpperCase());
+    const typeUpper = type.toUpperCase();
+
+    // 1. GSTR-2A / 2B Validation
+    if (typeUpper.includes('GSTR2A') || typeUpper.includes('GSTR2B') || typeUpper.includes('GSTR-2A') || typeUpper.includes('GSTR-2B')) {
+        const hasGSTRSheets = sNames.some(s => s.includes('B2B') || s.includes('IMPG') || s.includes('ISD') || s.includes('CDN'));
+        if (!hasGSTRSheets) {
+            return {
+                valid: false,
+                message: `File Mismatch: The uploaded file does not appear to be a GSTR-2A/2B portal file. Expected sheets like 'B2B', 'IMPG', etc.`
+            };
+        }
+    }
+
+    // 2. Sales/Purchase Book Validation
+    if (typeUpper === 'SALES' || typeUpper === 'PURCHASE' || typeUpper === 'SALES_REGISTER' || typeUpper === 'PURCHASE_REGISTER') {
+        // Book files are usually single sheet or have specific headers. 
+        // We'll check the first few rows of the first sheet for common keywords.
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const xlsx = require('xlsx');
+        const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, range: 0 }); // Read first few rows
+
+        const keywords = ['GSTIN', 'INVOICE', 'DATE', 'AMT', 'VOUCHER', 'VALUE', 'TAXABLE'];
+        let matchedKeywords = 0;
+
+        // Scan first 10 rows for keywords
+        for (let i = 0; i < Math.min(rows.length, 10); i++) {
+            const rowStr = rows[i]?.join(' ').toUpperCase() || '';
+            keywords.forEach(k => { if (rowStr.includes(k)) matchedKeywords++; });
+        }
+
+        if (matchedKeywords < 2) {
+            return {
+                valid: false,
+                message: `File Mismatch: The uploaded file does not look like a Sales or Purchase Register. Please ensure it follows the correct template.`
+            };
+        }
+
+        // Specific Prevention: If it's a GSTR file but being uploaded as a Book file (usually unlikely, but vice versa is common)
+        if (sNames.some(s => s.includes('B2B') && s.length < 10)) {
+            // Might be a GSTR file, but some users might name sheets B2B in books too. 
+            // Usually GSTR files are very distinct.
+        }
+    }
+
+    return { valid: true };
+};
+
 module.exports = {
-    validateFileGSTIN
+    validateFileGSTIN,
+    validateFileType
 };
