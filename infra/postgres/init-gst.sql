@@ -1110,6 +1110,19 @@ CREATE TABLE expense_vouchers (
     supplier_invoice_date DATE,
     due_date DATE,
 
+    -- Added 2026-02-21
+    place_of_supply VARCHAR(100),
+    is_interstate BOOLEAN DEFAULT FALSE,
+    is_rcm BOOLEAN DEFAULT FALSE,
+    round_off NUMERIC(8, 2) DEFAULT 0,
+    book_type VARCHAR(2) 
+        CHECK (book_type IN ('SA','SR','CN','DN')), 
+    status VARCHAR(20) DEFAULT 'DRAFT' 
+        CHECK (status IN ('DRAFT', 'APPROVED', 'POSTED', 'CANCELLED')),
+    remarks TEXT,
+    total_qty NUMERIC(15, 3) DEFAULT 0,
+    discount NUMERIC(15, 2) DEFAULT 0,
+
     taxable_total NUMERIC(15, 2) DEFAULT 0,
     net_amount NUMERIC(15, 2) NOT NULL,
     total_cgst_amount NUMERIC(15, 2) DEFAULT 0,
@@ -1129,7 +1142,11 @@ CREATE TABLE expense_vouchers (
 
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    -- Unique constraint to prevent duplicates
+    CONSTRAINT uq_expense_voucher_invoice 
+    UNIQUE (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
 );
 
 
@@ -1165,6 +1182,10 @@ CREATE TABLE expense_items (
 
     -- Reverse Charge
     is_rcm BOOLEAN DEFAULT FALSE,
+
+    -- ITC Blocking (Added 2026-02-21)
+    itc_eligible BOOLEAN DEFAULT TRUE,
+    itc_block_reason TEXT,
 
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
