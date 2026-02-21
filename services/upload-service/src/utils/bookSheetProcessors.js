@@ -32,7 +32,7 @@ const buildColumnMap = (headerRow) => {
         else if (has('PARTY NAME') || has('CUSTOMER NAME') || has('SUPPLIER NAME') || has('PARTY_NAME')) colMap['party_name'] = index;
         else if (has('INVOICE NUMBER') || has('VOUCHER NUMBER') || has('INV NO') || has('VCHR NO') || has('INVOICE NO') || has('VOUCHER NO')) colMap['invoice_number'] = index;
         else if (has('INVOICE DATE') || has('VOUCHER DATE') || has('INV DATE') || has('VCHR DATE') || header === 'DATE' || header === 'VCHR_DATE' || header === 'INV_DATE') colMap['invoice_date'] = index;
-        else if (has('INVOICE VALUE') || has('TOTAL VALUE') || has('NET AMOUNT') || has('INV AMT') || has('VCHR AMT') || has('NET_AMT') || has('INVOICE AMOUNT') || has('VCHR_AMT')) colMap['invoice_value'] = index;
+        else if (has('INVOICE VALUE') || has('TOTAL VALUE') || has('NET AMOUNT') || has('INV AMT') || has('VCHR AMT') || has('NET_AMT') || has('INVOICE AMOUNT') || has('VCHR_AMT') || has('INVOICE AMT') || has('TOTAL AMT')) colMap['invoice_value'] = index;
         else if (has('PLACE OF SUPPLY') || has('POS') || has('STATE') || has('PARTY_STATE')) colMap['place_of_supply'] = index;
         else if (has('ROUND OFF') || has('ROUND_OFF')) colMap['round_off'] = index;
         else if (has('REVERSE CHARGE') || has('RCM')) colMap['reverse_charge'] = index;
@@ -250,6 +250,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             total_amount_with_tax: total
         });
 
+        // Update Header Totals
         voucherGroup.header.taxable_total += taxable;
         voucherGroup.header.total_igst_amount += igst;
         voucherGroup.header.total_cgst_amount += cgst;
@@ -257,10 +258,21 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         voucherGroup.header.total_cess_amount += cess;
         voucherGroup.header.total_qty += cleanAmount(colMap['quantity'] !== undefined ? row[colMap['quantity']] : 0);
 
-        // Recalculate net_amount to ensure perfection as per user request
+        // Capture net_amount from column if present in ANY row of the group
+        const rowInvValue = cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0);
+        if (rowInvValue > 0) {
+            voucherGroup.header.net_amount = rowInvValue;
+        }
+
+        // Calculation fallback/verification
         // net_amount = taxable_total + total_taxes - discount + round_off
         const totalTaxes = voucherGroup.header.total_igst_amount + voucherGroup.header.total_cgst_amount + voucherGroup.header.total_sgst_amount + voucherGroup.header.total_cess_amount;
-        voucherGroup.header.net_amount = voucherGroup.header.taxable_total + totalTaxes - voucherGroup.header.discount + (voucherGroup.header.round_off || 0);
+        const calculatedNet = voucherGroup.header.taxable_total + totalTaxes - (voucherGroup.header.discount || 0) + (voucherGroup.header.round_off || 0);
+
+        // If net_amount is still 0 (from column), use calculated value
+        if (voucherGroup.header.net_amount <= 0 && calculatedNet > 0) {
+            voucherGroup.header.net_amount = calculatedNet;
+        }
     }
 
     return Array.from(voucherMap.values());
