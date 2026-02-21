@@ -268,19 +268,6 @@ CREATE TABLE tax_periods (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE gst_rates (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rate NUMERIC(4,2) NOT NULL,
-    cgst_rate NUMERIC(4,2),
-    sgst_rate NUMERIC(4,2),
-    igst_rate NUMERIC(4,2),
-    description VARCHAR(200),
-    hsn_chapter_prefix VARCHAR(10),
-    effective_from DATE NOT NULL,
-    effective_to DATE,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
 
 CREATE TABLE hsn_sac_codes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -315,7 +302,7 @@ CREATE TABLE state_code_master (
 CREATE TABLE gstr_import_file_master (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     gstin VARCHAR(15) NOT NULL,
-    return_period VARCHAR(10) NOT NULL, -- Format: MMYYYY
+    return_period VARCHAR(255) NOT NULL, -- Format: MMYYYY
     filing_date DATE,
     status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PROCESSED, ERROR
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -394,70 +381,7 @@ CREATE TABLE audit_trail (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE gst_notices (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin_id UUID NOT NULL REFERENCES gstin_master(id),
-    notice_number VARCHAR(100) NOT NULL,
-    notice_type VARCHAR(50) NOT NULL
-        CHECK (notice_type IN ('DRC-01', 'DRC-01A', 'SCN', 'ASMT-10', 'AUDIT', 
-                              'INTIMATION', 'SHOW_CAUSE', 'DEMAND', 'OTHER')),
-    notice_date DATE NOT NULL,
-    received_date DATE NOT NULL,
-    due_date DATE,
-    issuing_authority VARCHAR(200),
-    jurisdiction VARCHAR(100),
-    demand_amount NUMERIC(15,2) DEFAULT 0,
-    interest_amount NUMERIC(15,2) DEFAULT 0,
-    penalty_amount NUMERIC(15,2) DEFAULT 0,
-    total_payable NUMERIC(15,2) GENERATED ALWAYS AS (
-        demand_amount + interest_amount + penalty_amount
-    ) STORED,
-    reason_code VARCHAR(50),
-    reason_description TEXT,
-    sections_applicable VARCHAR(500),
-    periods_covered VARCHAR(500),
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN'
-        CHECK (status IN ('OPEN', 'REPLIED', 'UNDER_REVIEW', 'RESOLVED', 
-                         'APPEALED', 'CLOSED', 'WITHDRAWN')),
-    response_due_date DATE,
-    response_submitted_date DATE,
-    response_arn VARCHAR(100),
-    notice_document_id UUID,
-    response_document_id UUID,
-    supporting_documents JSONB,
-    linked_invoice_ids UUID[],
-    linked_period_ids UUID[],
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    created_by UUID REFERENCES users(id),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_by UUID REFERENCES users(id),
-    UNIQUE (workspace_id, notice_number)
-);
 
-CREATE TABLE notice_defense_packs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    notice_id UUID NOT NULL REFERENCES gst_notices(id) ON DELETE CASCADE,
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    defense_strategy VARCHAR(50)
-        CHECK (defense_strategy IN ('FULL_DENIAL', 'PARTIAL_ACCEPTANCE', 
-                                   'TECHNICAL_DEFECT', 'TIME_BARRED', 'OTHER')),
-    legal_grounds TEXT,
-    case_precedents TEXT,
-    draft_reply TEXT,
-    explanation_summary TEXT,
-    supporting_arguments JSONB,
-    evidence_snapshot_ids UUID[],
-    recon_snapshot_id UUID,
-    document_references JSONB,
-    generation_status VARCHAR(20) DEFAULT 'DRAFT'
-        CHECK (generation_status IN ('DRAFT', 'REVIEW', 'APPROVED', 'FILED', 'ARCHIVED')),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    created_by UUID REFERENCES users(id),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    reviewed_by UUID REFERENCES users(id),
-    reviewed_at TIMESTAMPTZ
-);
 
 CREATE TABLE documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -492,124 +416,18 @@ CREATE TABLE documents (
 -- NEW: Vendor Communications (1 table)
 -- ============================================
 
-CREATE TABLE vendor_communications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    supplier_gstin CHAR(15),
-    supplier_id UUID REFERENCES supplier_master(id),
-    communication_type VARCHAR(30) NOT NULL
-        CHECK (communication_type IN ('EMAIL', 'PHONE', 'LETTER', 'WHATSAPP', 'MEETING', 'SYSTEM')),
-    direction VARCHAR(10) NOT NULL
-        CHECK (direction IN ('SENT', 'RECEIVED')),
-    subject VARCHAR(500),
-    body TEXT,
-    attachments JSONB,
-    related_invoice_ids UUID[],
-    related_period_id UUID REFERENCES tax_periods(id),
-    issue_type VARCHAR(50),
-    status VARCHAR(20) DEFAULT 'SENT'
-        CHECK (status IN ('DRAFT', 'SENT', 'DELIVERED', 'READ', 'REPLIED', 'RESOLVED')),
-    requires_follow_up BOOLEAN DEFAULT FALSE,
-    follow_up_date DATE,
-    follow_up_notes TEXT,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    replied_at TIMESTAMPTZ
-);
 
 -- ============================================
 -- NEW: Cash Flow Impact (1 table)
 -- ============================================
 
-CREATE TABLE cash_flow_impact (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin_id UUID NOT NULL REFERENCES gstin_master(id),
-    analysis_date DATE NOT NULL,
-    period_id UUID REFERENCES tax_periods(id),
-    eligible_itc NUMERIC(15,2) DEFAULT 0,
-    deferred_itc NUMERIC(15,2) DEFAULT 0,
-    reversed_itc NUMERIC(15,2) DEFAULT 0,
-    claimed_itc NUMERIC(15,2) DEFAULT 0,
-    rcm_payable NUMERIC(15,2) DEFAULT 0,
-    interest_payable NUMERIC(15,2) DEFAULT 0,
-    penalty_payable NUMERIC(15,2) DEFAULT 0,
-    working_capital_blocked NUMERIC(15,2) DEFAULT 0,
-    expected_cash_outflow NUMERIC(15,2) DEFAULT 0,
-    next_30_days_outflow NUMERIC(15,2) DEFAULT 0,
-    risk_score NUMERIC(5,2) DEFAULT 0,
-    risk_level VARCHAR(20) DEFAULT 'LOW'
-        CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
-    recommendations JSONB,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    generated_by UUID REFERENCES users(id)
-);
 
 
 -- ============================================
 -- DOMAIN 9: ALERTS & RULES (3 tables)
 -- ============================================
 
-CREATE TABLE system_alerts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    alert_type VARCHAR(50) NOT NULL
-        CHECK (alert_type IN ('VENDOR_NON_FILING', 'ITC_MISMATCH', 'NOTICE_RECEIVED',
-                             'FILING_DUE', 'RECONCILIATION_FAILED', 'DATA_DISCREPANCY',
-                             'RULE_CHANGE', 'SYSTEM_MAINTENANCE', 'PERFORMANCE_ISSUE')),
-    severity VARCHAR(20) NOT NULL DEFAULT 'MEDIUM'
-        CHECK (severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO')),
-    title VARCHAR(200) NOT NULL,
-    description TEXT,
-    related_entity_type VARCHAR(50),
-    related_entity_id UUID,
-    reference_ids UUID[],
-    alert_data JSONB,
-    status VARCHAR(20) DEFAULT 'ACTIVE'
-        CHECK (status IN ('ACTIVE', 'ACKNOWLEDGED', 'RESOLVED', 'DISMISSED')),
-    action_required BOOLEAN DEFAULT FALSE,
-    action_taken VARCHAR(200),
-    action_taken_by UUID REFERENCES users(id),
-    action_taken_at TIMESTAMPTZ,
-    triggered_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    acknowledged_at TIMESTAMPTZ,
-    resolved_at TIMESTAMPTZ,
-    expiry_at TIMESTAMPTZ,
-    delivered_via TEXT[],
-    delivery_status VARCHAR(20) DEFAULT 'PENDING'
-        CHECK (delivery_status IN ('PENDING', 'SENT', 'DELIVERED', 'FAILED', 'READ')),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
 
-CREATE TABLE gst_rules_master (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rule_code VARCHAR(100) UNIQUE NOT NULL,
-    rule_name VARCHAR(200) NOT NULL,
-    rule_category VARCHAR(50) NOT NULL
-        CHECK (rule_category IN ('ELIGIBILITY', 'BLOCKING', 'TIMING', 'DOCUMENTATION',
-                                'PAYMENT', 'RCM', 'IMPORT', 'EXPORT', 'COMPOSITION')),
-    gst_section VARCHAR(50),
-    rule_number VARCHAR(50),
-    notification_number VARCHAR(100),
-    circular_number VARCHAR(100),
-    description TEXT NOT NULL,
-    rule_condition JSONB NOT NULL,
-    rule_action VARCHAR(200) NOT NULL,
-    effective_from DATE NOT NULL,
-    effective_to DATE,
-    applicable_to VARCHAR(100) DEFAULT 'ALL'
-        CHECK (applicable_to IN ('ALL', 'REGULAR', 'COMPOSITION', 'SEZ', 'ISD')),
-    severity VARCHAR(20) DEFAULT 'MEDIUM'
-        CHECK (severity IN ('HIGH', 'MEDIUM', 'LOW')),
-    risk_score NUMERIC(5,2) DEFAULT 50.00,
-    version INTEGER NOT NULL DEFAULT 1,
-    is_active BOOLEAN DEFAULT TRUE,
-    is_deprecated BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    created_by VARCHAR(100),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
 
 
 
@@ -726,3 +544,711 @@ INSERT INTO state_code_master (state, code) VALUES
 ('Andhra Pradesh (New)', '37'),
 ('Ladakh', '38')
 ON CONFLICT (state) DO NOTHING;
+
+-- ============================================
+-- DOMAIN 11: GSTR IMPORT & RECONCILIATION
+-- ============================================
+
+-- Master Table for File Imports
+CREATE TABLE IF NOT EXISTS gstr_import_master (
+    import_filing_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_uuid UUID NOT NULL,
+    gstin_recipient VARCHAR(15) NOT NULL,
+    return_period VARCHAR(255) NOT NULL,
+    financial_year VARCHAR(50) NOT NULL,
+    generation_date DATE NOT NULL,
+    upload_timestamp TIMESTAMP DEFAULT NOW(),
+    import_type VARCHAR(20) NOT NULL 
+        CHECK (import_type IN ('GSTR1', 'GSTR2A', 'GSTR2B', 'GSTR3B', 'GSTR4', 'GSTR6', 'GSTR7', 'GSTR8', 'GSTR9', 'GSTR9C', 'SALES_REGISTER', 'PURCHASE_REGISTER')),
+    original_filename VARCHAR(500),
+    uploaded_filepath TEXT,
+    uploaded_file_url TEXT,
+    extra_info JSONB DEFAULT '{}',
+    total_record INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'Pending' 
+        CHECK (status IN ('Pending', 'InProcess', 'Completed', 'Failed')),
+    imported_by UUID,
+    user_email VARCHAR(255),
+    file_hash VARCHAR(64)                           -- MD5 hash of uploaded file for exact duplicate detection
+);
+
+-- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_gstr_import_tenant ON gstr_import_master(tenant_uuid);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_gstin ON gstr_import_master(gstin_recipient);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_period ON gstr_import_master(return_period);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_status ON gstr_import_master(status);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_timestamp ON gstr_import_master(upload_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_type ON gstr_import_master(import_type);
+
+-- Add foreign key constraints
+ALTER TABLE gstr_import_master 
+    ADD CONSTRAINT fk_gstr_import_tenant 
+    FOREIGN KEY (tenant_uuid) REFERENCES tenants(id) ON DELETE CASCADE;
+
+ALTER TABLE gstr_import_master 
+    ADD CONSTRAINT fk_gstr_import_user 
+    FOREIGN KEY (imported_by) REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_gstr_import_filing_id ON gstr_import_master(import_filing_id);
+
+-- Detail Table for GSTR-2B B2B Invoices
+CREATE TABLE IF NOT EXISTS gstr_2b_b2b_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,                 -- Links to the file upload master
+    tenant_id UUID NOT NULL,                        -- Tenant isolation
+    workspace_id UUID,                              -- Optional workspace association
+    gstin_supplier VARCHAR(15) NOT NULL,            -- 24AALFA...
+    trade_name VARCHAR(255),                        -- Supplier Name
+    
+    -- Invoice Details
+    invoice_number VARCHAR(50) NOT NULL,
+    invoice_type VARCHAR(20),                       -- Regular, SEZWP, etc.
+    invoice_date DATE NOT NULL,
+    return_period VARCHAR(255),                      -- e.g. "122025" — used in duplicate detection unique constraint
+    invoice_value NUMERIC(15, 2),                   -- Total Invoice Value
+    place_of_supply VARCHAR(100),                   -- e.g. "24-Gujarat"
+    reverse_charge VARCHAR(5) DEFAULT 'No',         -- "Yes" or "No" (kept as string for raw fidelity)
+    
+    -- Tax Amounts (Using NUMERIC for financial precision)
+    taxable_value NUMERIC(15, 2) DEFAULT 0,
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    central_tax NUMERIC(15, 2) DEFAULT 0,
+    state_ut_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    -- Compliance Meta
+    supplier_filing_period VARCHAR(255),             -- e.g. "Dec-2025"
+    supplier_filing_date DATE,
+    itc_availability VARCHAR(5) DEFAULT 'Yes',      -- "Yes" / "No"
+    itc_availability_reason TEXT,                   -- If No, why?
+    applicable_tax_rate VARCHAR(255),                -- e.g. "18.00" or "100%" (Stored as string to preserve source format)
+    
+    -- E-Invoice Data
+    source VARCHAR(50),                             -- e.g. "E-Invoice"
+    irn VARCHAR(100),                               -- Invoice Reference Number (Hash)
+    irn_date DATE,
+
+    -- Reconciliation Status
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    -- Audit Columns
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    -- Constraints
+    CONSTRAINT fk_gstr_b2b_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_b2b_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_b2b_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+
+    -- Unique constraint to prevent duplicate invoices across imports for the same tenant/period
+    CONSTRAINT uq_gstr_b2b_invoice
+        UNIQUE (tenant_id, invoice_number, return_period)
+);
+
+-- Add Indexes for Performance
+CREATE INDEX IF NOT EXISTS idx_gstr_b2b_import_filing_id ON gstr_2b_b2b_invoices(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2b_tenant_id ON gstr_2b_b2b_invoices(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2b_workspace_id ON gstr_2b_b2b_invoices(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2b_gstin ON gstr_2b_b2b_invoices(gstin_supplier);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2b_invoice_date ON gstr_2b_b2b_invoices(invoice_date);
+
+-- Attach the Auto-Update Trigger
+DROP TRIGGER IF EXISTS update_gstr_2b_b2b_invoices_updated_at ON gstr_2b_b2b_invoices;
+CREATE TRIGGER update_gstr_2b_b2b_invoices_updated_at
+BEFORE UPDATE ON gstr_2b_b2b_invoices
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+-- Migration: Add GSTR-2B Amendments (B2BA) and Credit/Debit Notes (CDNR) tables
+-- Date: 2026-02-18
+
+-- Detail Table for GSTR-2B B2BA (Amendments)
+CREATE TABLE IF NOT EXISTS gstr_2b_b2ba_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    workspace_id UUID,
+    gstin_supplier VARCHAR(15) NOT NULL,
+    trade_name VARCHAR(255),
+    
+    -- Original Invoice Details
+    original_invoice_number VARCHAR(50) NOT NULL,
+    original_invoice_date DATE NOT NULL,
+    
+    -- Revised Invoice Details
+    revised_invoice_number VARCHAR(50) NOT NULL,
+    revised_invoice_date DATE NOT NULL,
+    
+    invoice_type VARCHAR(20),
+    return_period VARCHAR(255),
+    invoice_value NUMERIC(15, 2),
+    place_of_supply VARCHAR(100),
+    reverse_charge VARCHAR(5) DEFAULT 'No',
+    
+    -- Tax Amounts
+    taxable_value NUMERIC(15, 2) DEFAULT 0,
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    central_tax NUMERIC(15, 2) DEFAULT 0,
+    state_ut_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    -- Compliance Meta
+    supplier_filing_period VARCHAR(255),
+    supplier_filing_date DATE,
+    itc_availability VARCHAR(5) DEFAULT 'Yes',
+    itc_availability_reason TEXT,
+    applicable_tax_rate VARCHAR(255),
+    is_amended BOOLEAN DEFAULT TRUE,
+
+    -- Reconciliation Status
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_gstr_b2ba_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_b2ba_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_b2ba_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+    UNIQUE(tenant_id, original_invoice_number, revised_invoice_number, return_period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gstr_b2ba_import_filing_id ON gstr_2b_b2ba_invoices(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2ba_tenant_id ON gstr_2b_b2ba_invoices(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_b2ba_gstin ON gstr_2b_b2ba_invoices(gstin_supplier);
+
+-- Detail Table for GSTR-2B CDNR (Credit/Debit Notes)
+CREATE TABLE IF NOT EXISTS gstr_2b_cdnr (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    workspace_id UUID,
+    gstin_supplier VARCHAR(15) NOT NULL,
+    trade_name VARCHAR(255),
+    
+    -- Note Details
+    note_type VARCHAR(255),                          -- Credit / Debit
+    note_number VARCHAR(50) NOT NULL,
+    note_date DATE NOT NULL,
+    original_invoice_number VARCHAR(50),
+    original_invoice_date DATE,
+    
+    return_period VARCHAR(255),
+    note_value NUMERIC(15, 2),
+    place_of_supply VARCHAR(100),
+    reverse_charge VARCHAR(5) DEFAULT 'No',
+    
+    -- Tax Amounts
+    taxable_value NUMERIC(15, 2) DEFAULT 0,
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    central_tax NUMERIC(15, 2) DEFAULT 0,
+    state_ut_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    -- Compliance Meta
+    supplier_filing_period VARCHAR(255),
+    supplier_filing_date DATE,
+    itc_availability VARCHAR(5) DEFAULT 'Yes',
+    itc_availability_reason TEXT,
+    applicable_tax_rate VARCHAR(255),
+
+    -- Reconciliation Status
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_gstr_cdnr_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_cdnr_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_cdnr_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+    UNIQUE(tenant_id, note_number, return_period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gstr_cdnr_import_filing_id ON gstr_2b_cdnr(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_cdnr_tenant_id ON gstr_2b_cdnr(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_cdnr_gstin ON gstr_2b_cdnr(gstin_supplier);
+-- Migration: Add GSTR-2B IMPG, ISD and CDNRA tables
+-- Date: 2026-02-18
+
+-- Imports of Goods (IMPG) table
+CREATE TABLE IF NOT EXISTS gstr_2b_impg (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    workspace_id UUID,
+    
+    port_code VARCHAR(255),
+    boe_number VARCHAR(50) NOT NULL,
+    boe_date DATE NOT NULL,
+    return_period VARCHAR(255),
+    icegate_ref_date DATE,
+    
+    taxable_value NUMERIC(15, 2) DEFAULT 0,
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    itc_availability VARCHAR(5) DEFAULT 'Yes',
+    itc_availability_reason TEXT,
+    applicable_tax_rate VARCHAR(255),
+
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_gstr_impg_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_impg_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_impg_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+    UNIQUE(tenant_id, boe_number, port_code, return_period)
+);
+
+-- Input Service Distributor (ISD) table
+CREATE TABLE IF NOT EXISTS gstr_2b_isd (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    workspace_id UUID,
+    
+    gstin_isd VARCHAR(15) NOT NULL,
+    isd_name VARCHAR(255),
+    document_type VARCHAR(20),       -- ISD Document / ISD Amendment
+    document_number VARCHAR(50) NOT NULL,
+    document_date DATE NOT NULL,
+    return_period VARCHAR(255),
+    
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    central_tax NUMERIC(15, 2) DEFAULT 0,
+    state_ut_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    itc_availability VARCHAR(5) DEFAULT 'Yes',
+    is_amended BOOLEAN DEFAULT FALSE,
+    original_document_number VARCHAR(50),
+    original_document_date DATE,
+
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_gstr_isd_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_isd_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_isd_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+    UNIQUE(tenant_id, gstin_isd, document_number, return_period)
+);
+
+-- Amended Credit/Debit Notes (CDNRA) table
+CREATE TABLE IF NOT EXISTS gstr_2b_cdnra (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    import_filing_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    workspace_id UUID,
+    gstin_supplier VARCHAR(15) NOT NULL,
+    trade_name VARCHAR(255),
+    
+    -- Original Note Details
+    original_note_number VARCHAR(50) NOT NULL,
+    original_note_date DATE NOT NULL,
+    
+    -- Revised Note Details
+    revised_note_number VARCHAR(50) NOT NULL,
+    revised_note_date DATE NOT NULL,
+    note_type VARCHAR(255),
+    
+    original_invoice_number VARCHAR(50),
+    original_invoice_date DATE,
+    
+    return_period VARCHAR(255),
+    note_value NUMERIC(15, 2),
+    place_of_supply VARCHAR(100),
+    reverse_charge VARCHAR(5) DEFAULT 'No',
+    
+    -- Tax Amounts
+    taxable_value NUMERIC(15, 2) DEFAULT 0,
+    integrated_tax NUMERIC(15, 2) DEFAULT 0,
+    central_tax NUMERIC(15, 2) DEFAULT 0,
+    state_ut_tax NUMERIC(15, 2) DEFAULT 0,
+    cess NUMERIC(15, 2) DEFAULT 0,
+    
+    -- Compliance Meta
+    supplier_filing_period VARCHAR(255),
+    supplier_filing_date DATE,
+    itc_availability VARCHAR(5) DEFAULT 'Yes',
+    itc_availability_reason TEXT,
+    applicable_tax_rate VARCHAR(255),
+    is_amended BOOLEAN DEFAULT TRUE,
+
+    -- Reconciliation Status
+    reconciliation_status VARCHAR(50) DEFAULT 'pending' 
+    CHECK (reconciliation_status IN ('pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim')),
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_gstr_cdnra_import_filing
+        FOREIGN KEY (import_filing_id)
+        REFERENCES gstr_import_master(import_filing_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_cdnra_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_gstr_cdnra_workspace
+        FOREIGN KEY (workspace_id)
+        REFERENCES workspaces(id)
+        ON DELETE SET NULL,
+    UNIQUE(tenant_id, original_note_number, revised_note_number, return_period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gstr_impg_tenant_id ON gstr_2b_impg(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_isd_tenant_id ON gstr_2b_isd(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_cdnra_tenant_id ON gstr_2b_cdnra(tenant_id);
+
+-- ========================================================
+-- DOMAIN 12: SALES & EXPENSE
+-- Final Version
+-- Includes:
+--   - invoice_type
+--   - Controlled book_type (SA, SR, CN, DN)
+--   - Payment tracking
+--   - round_off
+--   - line_number
+--   - is_rcm
+--   - ITC tracking
+--   - voucher_type
+-- ========================================================
+
+BEGIN;
+
+-- ========================================================
+-- 1️⃣ SALES_INVOICES
+-- ========================================================
+
+CREATE TABLE sales_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tax_period_id UUID REFERENCES tax_periods(id),
+
+    -- Invoice Classification
+    invoice_type VARCHAR(20) NOT NULL
+        CHECK (invoice_type IN (
+            'B2B','B2C_SMALL','B2C_LARGE',
+            'EXPORT','SEZ','DEBIT_NOTE','CREDIT_NOTE'
+        )),
+
+    -- Amendment Tracking
+    original_invoice_id UUID REFERENCES sales_invoices(id) ON DELETE SET NULL,
+    is_amendment BOOLEAN DEFAULT FALSE,
+    amendment_reason TEXT,
+
+    -- Filing Compliance
+    filing_status VARCHAR(20) DEFAULT 'NOT_FILED'
+        CHECK (filing_status IN ('NOT_FILED', 'READY', 'FILED', 'FAILED')),
+    filing_date DATE,
+    filing_period CHAR(6),
+
+    -- Document Identification
+    invoice_number VARCHAR(100) NOT NULL,
+    invoice_date DATE NOT NULL,
+    due_date DATE,
+
+    -- Controlled Book Type
+    book_type VARCHAR(2) NOT NULL
+        CHECK (book_type IN ('SA','SR','CN','DN')),
+
+    entry_serial_no INTEGER DEFAULT 0,
+
+    -- Party Snapshot
+    customer_id UUID REFERENCES supplier_master(id),
+    customer_name VARCHAR(500),
+    customer_gstin CHAR(15),
+
+    place_of_supply VARCHAR(100),
+    is_interstate BOOLEAN DEFAULT FALSE,
+    reverse_charge BOOLEAN DEFAULT FALSE,
+
+    -- Financial Totals
+    total_taxable_value NUMERIC(15, 2) DEFAULT 0,
+    total_igst NUMERIC(15, 2) DEFAULT 0,
+    total_cgst NUMERIC(15, 2) DEFAULT 0,
+    total_sgst NUMERIC(15, 2) DEFAULT 0,
+    total_cess NUMERIC(15, 2) DEFAULT 0,
+    total_invoice_value NUMERIC(15, 2) DEFAULT 0,
+    round_off NUMERIC(8, 2) DEFAULT 0,
+
+    -- Payment Tracking
+    payment_status VARCHAR(20) DEFAULT 'UNPAID'
+        CHECK (payment_status IN ('UNPAID','PARTIAL','PAID','OVERDUE')),
+    amount_paid NUMERIC(15,2) DEFAULT 0,
+
+    -- Audit
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    -- Uniqueness Constraint
+    CONSTRAINT uq_sales_invoice_unique 
+        UNIQUE (tenant_id, workspace_id, book_type, invoice_number, tax_period_id)
+);
+
+
+-- ========================================================
+-- 2️⃣ SALES_INVOICE_ITEMS
+-- ========================================================
+
+CREATE TABLE sales_invoice_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+
+    invoice_id UUID NOT NULL 
+        REFERENCES sales_invoices(id) ON DELETE CASCADE,
+
+    -- Line Control
+    line_number INTEGER NOT NULL,
+
+    hsn_sac_code VARCHAR(10),
+    description TEXT,
+    quantity NUMERIC(15, 3) DEFAULT 0,
+    uom VARCHAR(20),
+    unit_rate NUMERIC(15, 4) DEFAULT 0,
+
+    taxable_value NUMERIC(15, 2) NOT NULL,
+    gst_rate_percent NUMERIC(5, 2),
+
+    igst_amount NUMERIC(15, 2) DEFAULT 0,
+    cgst_amount NUMERIC(15, 2) DEFAULT 0,
+    sgst_amount NUMERIC(15, 2) DEFAULT 0,
+    cess_amount NUMERIC(15, 2) DEFAULT 0,
+
+    total_amount_with_tax NUMERIC(15, 2) DEFAULT 0,
+
+    -- Reverse Charge Per Line
+    is_rcm BOOLEAN DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- ========================================================
+-- 3️⃣ EXPENSE_VOUCHERS
+-- ========================================================
+
+CREATE TABLE expense_vouchers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tax_period_id UUID REFERENCES tax_periods(id),
+
+    -- Voucher Classification
+    voucher_type VARCHAR(20)
+        CHECK (voucher_type IN (
+            'PURCHASE','EXPENSE','DEBIT_NOTE','CREDIT_NOTE'
+        )),
+
+    parent_voucher_id UUID 
+        REFERENCES expense_vouchers(id) ON DELETE SET NULL,
+
+    filing_status VARCHAR(20) DEFAULT 'NOT_FILED',
+    filing_date DATE,
+    filing_period CHAR(6),
+
+    supplier_id UUID REFERENCES supplier_master(id),
+    supplier_name VARCHAR(500),
+    supplier_gstin CHAR(15),
+
+    supplier_invoice_no VARCHAR(100) NOT NULL,
+    supplier_invoice_date DATE,
+    due_date DATE,
+
+    taxable_total NUMERIC(15, 2) DEFAULT 0,
+    net_amount NUMERIC(15, 2) NOT NULL,
+    total_cgst_amount NUMERIC(15, 2) DEFAULT 0,
+    total_sgst_amount NUMERIC(15, 2) DEFAULT 0,
+    total_igst_amount NUMERIC(15, 2) DEFAULT 0,
+    total_cess_amount NUMERIC(15, 2) DEFAULT 0,
+
+    -- ITC Tracking
+    itc_eligible BOOLEAN DEFAULT TRUE,
+    itc_claimed BOOLEAN DEFAULT FALSE,
+    itc_claimed_period CHAR(6),
+
+    -- Payment Tracking
+    payment_status VARCHAR(20) DEFAULT 'UNPAID'
+        CHECK (payment_status IN ('UNPAID','PARTIAL','PAID','OVERDUE')),
+    amount_paid NUMERIC(15,2) DEFAULT 0,
+
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- ========================================================
+-- 4️⃣ EXPENSE_ITEMS
+-- ========================================================
+
+CREATE TABLE expense_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+
+    expense_id UUID NOT NULL 
+        REFERENCES expense_vouchers(id) ON DELETE CASCADE,
+
+    account_id UUID,
+
+    hsn_code VARCHAR(10),
+    description TEXT,
+    quantity NUMERIC(15, 3) DEFAULT 0,
+    uom VARCHAR(20),
+    unit_rate NUMERIC(15, 4) DEFAULT 0,
+
+    gross_amount NUMERIC(15, 2) DEFAULT 0,
+    discount_amount NUMERIC(15, 2) DEFAULT 0,
+    taxable_amount NUMERIC(15, 2) DEFAULT 0,
+    tax_per NUMERIC(5, 2),
+
+    igst_amount NUMERIC(15, 2) DEFAULT 0,
+    cgst_amount NUMERIC(15, 2) DEFAULT 0,
+    sgst_amount NUMERIC(15, 2) DEFAULT 0,
+    cess_amount NUMERIC(15, 2) DEFAULT 0,
+
+    total_amount_with_tax NUMERIC(15, 2) DEFAULT 0,
+
+    -- Reverse Charge
+    is_rcm BOOLEAN DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMIT;
+
+-- ========================================================
+-- END OF DOMAIN 12
+-- ========================================================
+
+
+-- ========================================================
+-- DOMAIN 13: PURCHASE REGISTER (BOOKS)
+-- ========================================================
+
+CREATE TABLE IF NOT EXISTS purchase_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    gstin_id UUID, -- Optional link to gstin_master
+    supplier_id UUID, -- Optional link to supplier_master
+    
+    -- Invoice Details from CSV
+    invoice_number VARCHAR(100) NOT NULL, -- vchr_no
+    invoice_date DATE NOT NULL,           -- vchr_date
+    posting_date DATE,
+    invoice_type VARCHAR(50),             -- vchr_type (EXP)
+    
+    -- Supplier Details
+    supplier_gstin VARCHAR(15),           -- party_gstn_no
+    supplier_name VARCHAR(500),           -- party_name
+    supplier_state_code VARCHAR(10),      -- party_state
+    
+    -- Tax & Amounts
+    taxable_value NUMERIC(15, 2) DEFAULT 0, -- total_taxable_amount
+    cgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cgst_tax_amount
+    sgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_sgst_tax_amount
+    igst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_igst_tax_amount
+    cess_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cess_tax_amount
+    
+    invoice_amount NUMERIC(15, 2) DEFAULT 0, -- invoice_amount
+    round_off_amount NUMERIC(8, 2) DEFAULT 0, -- round_off_amount
+    
+    -- Meta from CSV
+    place_of_supply_code VARCHAR(10),
+    supply_type VARCHAR(50),              -- gstr_category
+    reverse_charge BOOLEAN DEFAULT FALSE, -- reverse_charge
+    is_interstate BOOLEAN DEFAULT FALSE,  -- inter_state
+    is_amendment BOOLEAN DEFAULT FALSE,   -- is_amendment
+    filing_period VARCHAR(20),            -- filing_period
+    tax_rate NUMERIC(5, 2),               -- tax_per
+    
+    -- Fields in Model but missing in CSV (will be nullable)
+    ecommerce_gstin VARCHAR(15),
+    hsn_sac_code VARCHAR(10),
+    hsn_sac_description TEXT,
+    item_description TEXT,
+    quantity NUMERIC(15, 3),
+    unit_price NUMERIC(15, 2),
+    discount_amount NUMERIC(15, 2) DEFAULT 0,
+    
+    -- System Fields
+    itc_eligibility_status VARCHAR(50) DEFAULT 'ELIGIBLE',
+    itc_claimed BOOLEAN DEFAULT FALSE,
+    payment_status VARCHAR(20) DEFAULT 'UNPAID',
+    payment_date DATE,
+    payment_amount NUMERIC(15, 2),
+    source_system VARCHAR(50) DEFAULT 'MANUAL',
+    source_file_id UUID,
+    raw_data_hash VARCHAR(64),
+    
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for Purchase Invoices
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_workspace ON purchase_invoices(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_gstin ON purchase_invoices(supplier_gstin);
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date);
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_number ON purchase_invoices(invoice_number);
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_purchase_invoices_updated_at ON purchase_invoices;
+CREATE TRIGGER update_purchase_invoices_updated_at
+BEFORE UPDATE ON purchase_invoices
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+

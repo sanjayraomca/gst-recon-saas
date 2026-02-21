@@ -38,17 +38,36 @@ const parseExcelDate = (dateVal) => {
 
     // If string in DD/MM/YYYY or DD-MM-YYYY
     if (typeof dateVal === 'string') {
-        const parts = dateVal.split(/[\/\-]/);
+        const cleanDate = dateVal.trim();
+        const parts = cleanDate.split(/[\/\-]/);
         if (parts.length === 3) {
             let day, month, year;
             if (parts[2].length === 4) { // DD/MM/YYYY
                 [day, month, year] = parts;
             } else if (parts[0].length === 4) { // YYYY/MM/DD
                 [year, month, day] = parts;
+            } else if (parts[2].length === 2) { // DD/MM/YY
+                [day, month, year] = parts;
+                year = '20' + year; // Assume 20xx
+            } else if (parts[0].length === 2) { // YY/MM/DD (Less common but possible)
+                // Ambiguous with DD/MM/YY, but let's assume valid DD-MM-YY first
+                [day, month, year] = parts;
+                year = '20' + year;
             }
+
             if (day && month && year) {
                 return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
             }
+        }
+    }
+
+    // If number (Excel serial date)
+    if (typeof dateVal === 'number' || (typeof dateVal === 'string' && !isNaN(parseFloat(dateVal)) && /^\d+$/.test(dateVal.trim()))) {
+        const num = parseFloat(dateVal);
+        // Excel serial dates are usually between 20000 (1954) and 60000 (2064)
+        if (num > 20000 && num < 60000) {
+            const date = new Date((num - 25569) * 86400 * 1000);
+            return date.toISOString().split('T')[0];
         }
     }
 

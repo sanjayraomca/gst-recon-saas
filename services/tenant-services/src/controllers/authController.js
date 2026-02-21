@@ -229,12 +229,21 @@ const register = async (req, res) => {
             if (!user.auth_provider_id) {
                 user = await User.update(user.id, { auth_provider_id: keycloakId });
             }
+            // If user exists but has no tenant_id, try to link them to their owned tenant
+            if (!user.tenant_id) {
+                const ownedTenant = await knex('tenants').where('owner_user_id', user.id).first();
+                if (ownedTenant) {
+                    await knex('users').where('id', user.id).update({ tenant_id: ownedTenant.id });
+                    user.tenant_id = ownedTenant.id;
+                }
+            }
             return errorResponse(res, 'User already exists in local DB', 409);
         }
 
         // Start Transaction for DB operations
         const knex = require('../../../shared/src/db/connection');
         const trx = await knex.transaction();
+        let tenantId; // Declare outside try block to avoid scoping issues
 
         try {
             user = await trx('users').insert({
@@ -251,7 +260,7 @@ const register = async (req, res) => {
             user = user[0]; // Knex returns array
 
             // 3. Create Default Tenant for new User
-            const tenantId = crypto.randomUUID();
+            tenantId = crypto.randomUUID();
             await trx('tenants').insert({
                 id: tenantId,
                 owner_user_id: user.id,

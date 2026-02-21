@@ -21,7 +21,10 @@ const errorResponse = (res, error, statusCode = 500) => {
     } else if (statusCode === 403) {
         message = 'You do not have permission to perform this action.';
     } else if (statusCode === 400 && !error.isCustom) {
-        message = 'Some information is missing or incorrect. Please check your input and try again.';
+        // Only use generic message if the original message is missing or very generic
+        if (!message || message === 'Error' || message === 'Bad Request') {
+            message = 'Some information is missing or incorrect. Please check your input and try again.';
+        }
     } else if (statusCode === 500 || statusCode === 502) {
         message = 'Something went wrong on our end. Please try again in a few minutes.';
     }

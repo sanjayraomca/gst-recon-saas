@@ -64,9 +64,18 @@ const buildColumnMap = (headerRow) => {
         else if (header.includes('ICEGATE REFERENCE DATE')) colMap['icegate_ref_date'] = index;
 
         // Amendment Specifics
-        else if (header.includes('ORIGINAL INVOICE NUMBER')) colMap['original_invoice_number'] = index;
-        else if (header.includes('ORIGINAL INVOICE DATE')) colMap['original_invoice_date'] = index;
+        else if (header.includes('ORIGINAL INVOICE/NOTE NUMBER') || header.includes('ORIGINAL INVOICE NUMBER') || header.includes('ORIGINAL NOTE NUMBER')) colMap['original_invoice_number'] = index;
+        else if (header.includes('ORIGINAL INVOICE/NOTE DATE') || header.includes('ORIGINAL INVOICE DATE') || header.includes('ORIGINAL NOTE DATE')) colMap['original_invoice_date'] = index;
+
+        // ISD Specifics
+        else if (header.includes('GSTIN OF ISD')) colMap['gstin_isd'] = index;
+        else if (header.includes('ISD NAME')) colMap['isd_name'] = index;
+        else if (header.includes('ISD DOCUMENT NUMBER')) colMap['isd_doc_number'] = index;
+        else if (header.includes('ISD DOCUMENT DATE')) colMap['isd_doc_date'] = index;
+        else if (header.includes('ORIGINAL ISD DOCUMENT NUMBER')) colMap['original_isd_doc_number'] = index;
+        else if (header.includes('ORIGINAL ISD DOCUMENT DATE')) colMap['original_isd_doc_date'] = index;
     });
+    console.log('[DEBUG] Column Map:', JSON.stringify(colMap));
     return colMap;
 };
 
@@ -112,21 +121,42 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
     // Sometimes headers span 2 rows. If row[headerRowIndex+1] looks like sub-headers, merge them?
     // Simplified: Use the row that contains 'GSTIN OF SUPPLIER'.
 
-    const headerRow = rows[headerRowIndex];
-    if (rows[headerRowIndex + 1] && rows[headerRowIndex + 1].join('').includes('Invoice value')) {
-        // Merge logic if needed, but usually main keywords are enough
+    // Header Processing (handle multi-row headers)
+    // Merge current row and next row if next row contains key columns like 'Invoice', 'Tax', 'Note'
+    let headerRow = rows[headerRowIndex];
+    const nextRow = rows[headerRowIndex + 1];
+    let isMerged = false;
+
+    if (nextRow && nextRow.some(cell => cell && (
+        cell.toString().toUpperCase().includes('INVOICE') ||
+        cell.toString().toUpperCase().includes('TAX') ||
+        cell.toString().toUpperCase().includes('NOTE')
+    ))) {
+        // Merge with next row if mapped
+        if (nextRow) {
+            const mergedHeader = [];
+            const len = Math.max(headerRow.length, nextRow.length);
+            for (let idx = 0; idx < len; idx++) {
+                const val1 = headerRow[idx] ? headerRow[idx].toString().toUpperCase().trim() : '';
+                const val2 = nextRow[idx] ? nextRow[idx].toString().toUpperCase().trim() : '';
+                mergedHeader[idx] = (val1 + ' ' + val2).trim();
+            }
+            headerRow = mergedHeader;
+            isMerged = true;
+        }
+
     }
 
     const colMap = buildColumnMap(headerRow);
-    const dataStartIndex = headerRowIndex + 1; // Or +2 if confirm double header
+    const dataStartIndex = headerRowIndex + (isMerged ? 2 : 1);
 
     for (let i = dataStartIndex; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length < 5) continue;
 
         const gstin = row[colMap['gstin_supplier'] || 0]?.toString().trim() || '';
-        // Skip empty or total rows
-        if (!gstin || gstin.toUpperCase().includes('TOTAL') || gstin.length < 5) continue;
+        // Skip empty or total/invalid rows
+        if (!gstin || gstin.toUpperCase().includes('TOTAL') || !isValidGSTIN(gstin)) continue;
 
         // Common Fields
         const commonData = {
@@ -157,24 +187,38 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
             itc_reduction_cgst: cleanAmount(colMap['itc_reduction_cgst'] !== undefined ? row[colMap['itc_reduction_cgst']] : 0),
             itc_reduction_sgst: cleanAmount(colMap['itc_reduction_sgst'] !== undefined ? row[colMap['itc_reduction_sgst']] : 0),
             itc_reduction_cess: cleanAmount(colMap['itc_reduction_cess'] !== undefined ? row[colMap['itc_reduction_cess']] : 0),
+            applicable_tax_rate: colMap['tax_rate_percentage'] !== undefined ? row[colMap['tax_rate_percentage']]?.toString() : null
         };
 
         if (isCDNR) {
             // Processing CDNR Record
-            const noteNum = colMap['note_number'] !== undefined ? row[colMap['note_number']] : '';
+            const noteNumRaw = colMap['note_number'] !== undefined ? row[colMap['note_number']] : '';
+            const noteNum = noteNumRaw ? normalizeInvoiceNumber(noteNumRaw.toString()) : '';
             if (!noteNum) continue;
+
+            const originalInvNumRaw = colMap['original_invoice_number'] !== undefined ? row[colMap['original_invoice_number']] : null;
+            const originalInvNum = originalInvNumRaw ? normalizeInvoiceNumber(originalInvNumRaw.toString()) : null;
 
             results.push({
                 ...commonData,
-                target_table: 'gstr_2b_cdnr',
+                target_table: isAmended ? 'gstr_2b_cdnra' : 'gstr_2b_cdnr',
                 note_number: noteNum,
                 note_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'C', // Credit/Debit
                 note_date: parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null),
                 note_value: cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0),
+                original_invoice_number: originalInvNum,
+                original_invoice_date: parseExcelDate(colMap['original_invoice_date'] !== undefined ? row[colMap['original_invoice_date']] : null),
+                // CDNRA specific
+                original_note_number: isAmended ? (originalInvNum || noteNum) : null,
+                original_note_date: isAmended ? parseExcelDate(colMap['original_invoice_date'] !== undefined ? row[colMap['original_invoice_date']] : null) : null,
+                revised_note_number: isAmended ? noteNum : null,
+                revised_note_date: isAmended ? parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null) : null,
+                is_amended: isAmended
             });
         } else {
             // Processing B2B Record
-            const invNum = colMap['invoice_number'] !== undefined ? row[colMap['invoice_number']] : '';
+            const invNumRaw = colMap['invoice_number'] !== undefined ? row[colMap['invoice_number']] : '';
+            const invNum = invNumRaw ? normalizeInvoiceNumber(invNumRaw.toString()) : '';
             if (!invNum) continue;
 
             const b2bRecord = {
@@ -186,26 +230,23 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
                 invoice_value: cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0),
             };
 
-            results.push(b2bRecord);
-
             if (isAmended) {
-                // Also create an entry for b2ba_amendments log if needed, 
-                // OR logically B2BA implies the record in B2B table IS the amendment.
-                // The doc says "Create gstr_2b_b2ba_amendments to handle specific Original vs Revised columns".
-                // So we should insert into that table too.
-                const originalInv = colMap['original_invoice_number'] !== undefined ? row[colMap['original_invoice_number']] : null;
-                if (originalInv) {
-                    results.push({
-                        target_table: 'gstr_2b_b2ba_amendments',
-                        gstin_supplier: gstin,
-                        gstin_id: gstinId,
-                        return_period: fileReturnPeriod,
-                        original_invoice_number: originalInv,
-                        original_invoice_date: parseExcelDate(colMap['original_invoice_date'] !== undefined ? row[colMap['original_invoice_date']] : null),
-                        revised_invoice_number: invNum,
-                        revised_invoice_date: parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null)
-                    });
-                }
+                // For B2BA, we map to gstr_2b_b2ba_invoices
+                const originalInvRaw = colMap['original_invoice_number'] !== undefined ? row[colMap['original_invoice_number']] : null;
+                const originalInv = originalInvRaw ? normalizeInvoiceNumber(originalInvRaw.toString()) : null;
+                results.push({
+                    ...commonData,
+                    target_table: 'gstr_2b_b2ba_invoices',
+                    original_invoice_number: originalInv || invNum, // fallback to current if not provided
+                    original_invoice_date: parseExcelDate(colMap['original_invoice_date'] !== undefined ? row[colMap['original_invoice_date']] : null),
+                    revised_invoice_number: invNum,
+                    revised_invoice_date: b2bRecord.invoice_date,
+                    invoice_type: b2bRecord.invoice_type,
+                    invoice_value: b2bRecord.invoice_value,
+                    is_amended: true
+                });
+            } else {
+                results.push(b2bRecord);
             }
         }
     }
@@ -217,8 +258,24 @@ const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
     const headerRowIndex = getHeaderIndex(rows, ['BOE NUMBER', 'PORT CODE']);
     if (headerRowIndex === -1) return [];
 
-    const colMap = buildColumnMap(rows[headerRowIndex]);
-    const dataStartIndex = headerRowIndex + 1;
+    let headerRow = rows[headerRowIndex];
+    const nextRow = rows[headerRowIndex + 1];
+    let isMerged = false;
+
+    if (nextRow && nextRow.some(cell => cell && (
+        cell.toString().toUpperCase().includes('DATE') ||
+        cell.toString().toUpperCase().includes('TAX')
+    ))) {
+        headerRow = headerRow.map((cell, idx) => {
+            const val1 = cell ? cell.toString().toUpperCase().trim() : '';
+            const val2 = nextRow[idx] ? nextRow[idx].toString().toUpperCase().trim() : '';
+            return (val1 + ' ' + val2).trim();
+        });
+        isMerged = true;
+    }
+
+    const colMap = buildColumnMap(headerRow);
+    const dataStartIndex = headerRowIndex + (isMerged ? 2 : 1);
 
     for (let i = dataStartIndex; i < rows.length; i++) {
         const row = rows[i];
@@ -237,8 +294,65 @@ const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
             boe_date: parseExcelDate(colMap['boe_date'] !== undefined ? row[colMap['boe_date']] : null),
             icegate_ref_date: parseExcelDate(colMap['icegate_ref_date'] !== undefined ? row[colMap['icegate_ref_date']] : null),
             taxable_value: cleanAmount(colMap['taxable_value'] !== undefined ? row[colMap['taxable_value']] : 0),
-            igst_amount: cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0),
-            cess_amount: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0)
+            integrated_tax: cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0),
+            cess: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0),
+            itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().startsWith('Y') ? 'Yes' : 'No') : 'Yes',
+            itc_availability_reason: colMap['unavailability_reason'] !== undefined ? row[colMap['unavailability_reason']] : null,
+            applicable_tax_rate: colMap['tax_rate_percentage'] !== undefined ? row[colMap['tax_rate_percentage']]?.toString() : null
+        });
+    }
+    return results;
+};
+
+const processISDSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
+    const isAmended = sheetName.endsWith('A');
+    const results = [];
+    const headerRowIndex = getHeaderIndex(rows, ['GSTIN OF ISD', 'ISD DOCUMENT NUMBER']);
+    if (headerRowIndex === -1) return [];
+
+    let headerRow = rows[headerRowIndex];
+    const nextRow = rows[headerRowIndex + 1];
+    let isMerged = false;
+
+    if (nextRow && nextRow.some(cell => cell && (
+        cell.toString().toUpperCase().includes('DOCUMENT') ||
+        cell.toString().toUpperCase().includes('TAX')
+    ))) {
+        headerRow = headerRow.map((cell, idx) => {
+            const val1 = cell ? cell.toString().toUpperCase().trim() : '';
+            const val2 = nextRow[idx] ? nextRow[idx].toString().toUpperCase().trim() : '';
+            return (val1 + ' ' + val2).trim();
+        });
+        isMerged = true;
+    }
+
+    const colMap = buildColumnMap(headerRow);
+    const dataStartIndex = headerRowIndex + (isMerged ? 2 : 1);
+
+    for (let i = dataStartIndex; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 5) continue;
+
+        const gstinIsd = row[colMap['gstin_isd']]?.toString().trim() || '';
+        if (!gstinIsd || gstinIsd.toUpperCase().includes('TOTAL') || !isValidGSTIN(gstinIsd)) continue;
+
+        results.push({
+            target_table: 'gstr_2b_isd',
+            gstin_id: gstinId,
+            return_period: fileReturnPeriod,
+            gstin_isd: gstinIsd,
+            isd_name: colMap['isd_name'] !== undefined ? row[colMap['isd_name']] : null,
+            document_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : (isAmended ? 'ISD Amendment' : 'ISD Document'),
+            document_number: colMap['isd_doc_number'] !== undefined ? row[colMap['isd_doc_number']] : '',
+            document_date: parseExcelDate(colMap['isd_doc_date'] !== undefined ? row[colMap['isd_doc_date']] : null),
+            integrated_tax: cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0),
+            central_tax: cleanAmount(colMap['cgst_amount'] !== undefined ? row[colMap['cgst_amount']] : 0),
+            state_ut_tax: cleanAmount(colMap['sgst_amount'] !== undefined ? row[colMap['sgst_amount']] : 0),
+            cess: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0),
+            itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().startsWith('Y') ? 'Yes' : 'No') : 'Yes',
+            is_amended: isAmended,
+            original_document_number: isAmended ? (colMap['original_isd_doc_number'] !== undefined ? row[colMap['original_isd_doc_number']] : null) : null,
+            original_document_date: isAmended ? parseExcelDate(colMap['original_isd_doc_date'] !== undefined ? row[colMap['original_isd_doc_date']] : null) : null
         });
     }
     return results;
@@ -250,5 +364,6 @@ const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
 
 module.exports = {
     processB2BSheet,
-    processImportSheet
+    processImportSheet,
+    processISDSheet
 };

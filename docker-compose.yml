@@ -256,7 +256,7 @@ services:
       - KEYCLOAK_CLIENT_ID=admin-api
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - JWT_SECRET=change-this-secret-in-production
-      - RECAPTCHA_SECRET_KEY=6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe
+      # - RECAPTCHA_SECRET_KEY=... (disabled for e2e tests)
       - FRONTEND_URL=http://localhost:3000
     labels:
       - "traefik.enable=true"
@@ -361,6 +361,12 @@ services:
       - DB_PASSWORD=GstAdmin123
       - NATS_URL=nats://nats:4222
       - PORT=3004
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=MinioAdmin123
+      - MINIO_USE_SSL=false
+      - MINIO_BUCKET=gst-documents
     volumes:
       - ./uploads:/app/uploads
     labels:
