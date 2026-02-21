@@ -38,6 +38,7 @@ const buildColumnMap = (headerRow) => {
         else if (has('REVERSE CHARGE') || has('RCM')) colMap['reverse_charge'] = index;
         else if (has('INVOICE TYPE') || has('DOCUMENT TYPE') || has('VCHR TYPE')) colMap['invoice_type'] = index;
         else if (has('BOOK TYPE')) colMap['book_type'] = index; // SA, SR, CN, DN
+        else if (has('DISCOUNT')) colMap['discount'] = index;
 
         // Line Item Details
         else if (has('TAXABLE VALUE') || has('TAXABLE AMOUNT') || has('TAXABLE AMT') || has('TAXABLE_AMT')) colMap['taxable_value'] = index;
@@ -213,6 +214,8 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     total_sgst_amount: 0,
                     total_igst_amount: 0,
                     total_cess_amount: 0,
+                    total_qty: 0,
+                    discount: cleanAmount(colMap['discount'] !== undefined ? row[colMap['discount']] : 0),
                     net_amount: cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0), // Total Invoice Value
 
                     itc_eligible: colMap['itc_eligible'] !== undefined ? (row[colMap['itc_eligible']]?.toString().toUpperCase().startsWith('Y')) : true,
@@ -252,6 +255,12 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         voucherGroup.header.total_cgst_amount += cgst;
         voucherGroup.header.total_sgst_amount += sgst;
         voucherGroup.header.total_cess_amount += cess;
+        voucherGroup.header.total_qty += cleanAmount(colMap['quantity'] !== undefined ? row[colMap['quantity']] : 0);
+
+        // Recalculate net_amount to ensure perfection as per user request
+        // net_amount = taxable_total + total_taxes - discount + round_off
+        const totalTaxes = voucherGroup.header.total_igst_amount + voucherGroup.header.total_cgst_amount + voucherGroup.header.total_sgst_amount + voucherGroup.header.total_cess_amount;
+        voucherGroup.header.net_amount = voucherGroup.header.taxable_total + totalTaxes - voucherGroup.header.discount + (voucherGroup.header.round_off || 0);
     }
 
     return Array.from(voucherMap.values());

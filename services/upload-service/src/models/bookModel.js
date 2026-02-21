@@ -100,11 +100,11 @@ class BookModel {
                     INSERT INTO expense_vouchers (
                         tenant_id, workspace_id, tax_period_id, voucher_type, book_type,
                         supplier_invoice_no, supplier_invoice_date, supplier_name, supplier_gstin,
-                        place_of_supply, round_off,
+                        place_of_supply, round_off, total_qty, discount,
                         taxable_total, net_amount,
                         total_cgst_amount, total_sgst_amount, total_igst_amount, total_cess_amount,
                         itc_eligible, itc_claimed, filing_period, payment_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
                     ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
                     DO UPDATE SET
                         voucher_type = EXCLUDED.voucher_type,
@@ -112,6 +112,8 @@ class BookModel {
                         supplier_gstin = EXCLUDED.supplier_gstin,
                         place_of_supply = EXCLUDED.place_of_supply,
                         round_off = EXCLUDED.round_off,
+                        total_qty = EXCLUDED.total_qty,
+                        discount = EXCLUDED.discount,
                         taxable_total = EXCLUDED.taxable_total,
                         net_amount = EXCLUDED.net_amount,
                         total_cgst_amount = EXCLUDED.total_cgst_amount,
@@ -124,7 +126,7 @@ class BookModel {
                  `, [
                     header.tenant_id, header.workspace_id, header.tax_period_id, header.voucher_type, header.book_type || 'SR',
                     header.supplier_invoice_no, header.supplier_invoice_date, header.supplier_name, header.supplier_gstin,
-                    header.place_of_supply, header.round_off || 0,
+                    header.place_of_supply, header.round_off || 0, header.total_qty || 0, header.discount || 0,
                     header.taxable_total, header.net_amount,
                     header.total_cgst_amount, header.total_sgst_amount, header.total_igst_amount, header.total_cess_amount,
                     header.itc_eligible, header.itc_claimed, header.filing_period
