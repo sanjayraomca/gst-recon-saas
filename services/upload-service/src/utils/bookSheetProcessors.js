@@ -23,27 +23,63 @@ const buildColumnMap = (headerRow) => {
     const colMap = {};
     headerRow.forEach((cell, index) => {
         const header = cell?.toString().toUpperCase().trim() || '';
+        if (!header) return;
+
+        // Skip reference/amendment columns — they are empty for most rows
+        // and should never be mapped as primary invoice_number or invoice_date
+        if (header.startsWith('REF_') || header.startsWith('REF ')) return;
 
         // Helper to check both "WORD WORD" and "WORD_WORD"
         const has = (str) => header.includes(str) || header.includes(str.replace(/ /g, '_'));
+        const is = (str) => header === str || header === str.replace(/ /g, '_');
 
-        // Common
-        if (has('GSTIN')) colMap['gstin'] = index;
-        else if (has('PARTY NAME') || has('CUSTOMER NAME') || has('SUPPLIER NAME') || has('PARTY_NAME')) colMap['party_name'] = index;
-        else if (has('INVOICE NUMBER') || has('VOUCHER NUMBER') || has('INV NO') || has('VCHR NO') || has('INVOICE NO') || has('VOUCHER NO') || has('BILL NO') || has('BILL_NO') || has('SL NO') || has('SL_NO') || has('SERIAL NO') || header === 'NO' || header === 'BILL') colMap['invoice_number'] = index;
-        else if (has('INVOICE DATE') || has('VOUCHER DATE') || has('INV DATE') || has('VCHR DATE') || header === 'DATE' || header === 'VCHR_DATE' || header === 'INV_DATE') colMap['invoice_date'] = index;
-        else if (has('INVOICE VALUE') || has('TOTAL VALUE') || has('NET AMOUNT') || has('INV AMT') || has('VCHR AMT') || has('NET_AMT') || has('INVOICE AMOUNT') || has('VCHR_AMT') || has('INVOICE AMT') || has('TOTAL AMT') || has('BILL AMOUNT') || has('TOTAL AMOUNT') || has('BILL_AMT') || has('INV_AMT') || has('ROW_WISE_TOTAL_AMOUNT') || has('INVOICE_AMOUNT')) colMap['invoice_value'] = index;
+        // ── Customer/Supplier GSTIN ────────────────────────────────────────
+        // Support both GSTIN and GSTN column variants
+        if ((has('PARTY GSTIN') || has('PARTY GSTN') || has('CUSTOMER GSTIN') || has('SUPPLIER GSTIN') || is('GSTIN') || is('GSTN')) && !colMap['gstin']) {
+            colMap['gstin'] = index;
+        }
+        // ── Party name ─────────────────────────────────────────────────────
+        else if (has('PARTY NAME') || has('CUSTOMER NAME') || has('SUPPLIER NAME') || has('PARTY_NAME')) {
+            colMap['party_name'] = index;
+        }
+        // ── Invoice / Voucher Number ────────────────────────────────────────
+        // Prefer VCHR_FULL_NUMBER or INVOICE_NUMBER over plain VCHR_NO
+        else if (has('VCHR FULL NUMBER') || has('VCHR_FULL_NUMBER') || has('FULL NUMBER') || has('FULL_NUMBER')) {
+            colMap['invoice_number'] = index;  // full formatted number e.g. INV1
+        }
+        else if (!colMap['invoice_number'] && (
+            has('INVOICE NUMBER') || has('VOUCHER NUMBER') || has('INV NO') || has('VCHR NO') ||
+            has('INVOICE NO') || has('VOUCHER NO') || has('BILL NO') || has('BILL_NO') ||
+            has('SL NO') || has('SL_NO') || has('SERIAL NO') || is('NO') || is('BILL')
+        )) {
+            colMap['invoice_number'] = index;
+        }
+        // ── Invoice Date ────────────────────────────────────────────────────
+        else if (has('INVOICE DATE') || has('VOUCHER DATE') || has('INV DATE') || has('VCHR DATE') ||
+            is('DATE') || is('VCHR_DATE') || is('INV_DATE')) {
+            colMap['invoice_date'] = index;
+        }
+        // ── Invoice Value ───────────────────────────────────────────────────
+        else if (has('INVOICE VALUE') || has('TOTAL VALUE') || has('NET AMOUNT') || has('INV AMT') ||
+            has('VCHR AMT') || has('NET_AMT') || has('INVOICE AMOUNT') || has('VCHR_AMT') ||
+            has('INVOICE AMT') || has('TOTAL AMT') || has('BILL AMOUNT') || has('TOTAL AMOUNT') ||
+            has('BILL_AMT') || has('INV_AMT') || has('ROW_WISE_TOTAL_AMOUNT') || has('INVOICE_AMOUNT')) {
+            colMap['invoice_value'] = index;
+        }
         else if (has('PLACE OF SUPPLY') || has('POS')) colMap['place_of_supply'] = index;
         else if (has('PARTY STATE') || has('PARTY_STATE')) colMap['party_state'] = index;
-        else if (has('INTER STATE') || has('INTER_STATE') || header === 'INTERSTATE') colMap['inter_state'] = index;
+        else if (has('INTER STATE') || has('INTER_STATE') || is('INTERSTATE')) colMap['inter_state'] = index;
         else if (has('ROUND OFF') || has('ROUND_OFF')) colMap['round_off'] = index;
         else if (has('REVERSE CHARGE') || has('RCM')) colMap['reverse_charge'] = index;
         else if (has('INVOICE TYPE') || has('DOCUMENT TYPE') || has('VCHR TYPE')) colMap['invoice_type'] = index;
-        else if (has('BOOK TYPE')) colMap['book_type'] = index; // SA, SR, CN, DN
+        else if (has('BOOK TYPE')) colMap['book_type'] = index;
         else if (has('DISCOUNT')) colMap['discount'] = index;
 
-        // Line Item Details
-        else if (has('TAXABLE VALUE') || has('TAXABLE AMOUNT') || has('TAXABLE AMT') || has('TAXABLE_AMT') || has('TOTAL TAXABLE AMOUNT') || has('TOTAL_TAXABLE_AMOUNT')) colMap['taxable_value'] = index;
+        // ── Tax / Amount columns ────────────────────────────────────────────
+        else if (has('TAXABLE VALUE') || has('TAXABLE AMOUNT') || has('TAXABLE AMT') ||
+            has('TAXABLE_AMT') || has('TOTAL TAXABLE AMOUNT') || has('TOTAL_TAXABLE_AMOUNT')) {
+            colMap['taxable_value'] = index;
+        }
         else if (has('IGST') || has('TOTAL IGST TAX AMOUNT') || has('TOTAL_IGST_TAX_AMOUNT')) colMap['igst_amount'] = index;
         else if (has('CGST') || has('TOTAL CGST TAX AMOUNT') || has('TOTAL_CGST_TAX_AMOUNT')) colMap['cgst_amount'] = index;
         else if (has('SGST') || has('TOTAL SGST TAX AMOUNT') || has('TOTAL_SGST_TAX_AMOUNT')) colMap['sgst_amount'] = index;
@@ -54,8 +90,6 @@ const buildColumnMap = (headerRow) => {
         else if (has('UOM') || has('UNIT')) colMap['uom'] = index;
         else if (has('ITEM DESCRIPTION') || has('DESCRIPTION')) colMap['description'] = index;
         else if (has('REMARKS')) colMap['remarks'] = index;
-
-        // Purchase Specific
         else if (has('ITC ELIGIBLE')) colMap['itc_eligible'] = index;
         else if (has('ITC CLAIMED')) colMap['itc_claimed'] = index;
     });
@@ -64,124 +98,223 @@ const buildColumnMap = (headerRow) => {
     return colMap;
 };
 
+
+/**
+ * Maps raw CSV vchr_type / book_type codes to the DB invoice_type constraint values.
+ * DB allows: 'B2B','B2C_SMALL','B2C_LARGE','EXPORT','SEZ','DEBIT_NOTE','CREDIT_NOTE'
+ *
+ * @param {string} rawType  - vchr_type from CSV (SA, SR, CN, DN, etc.)
+ * @param {string} custGstin - customer GSTIN (null/empty for B2C)
+ * @returns {string}
+ */
+const resolveInvoiceType = (rawType, custGstin) => {
+    const t = (rawType || '').toString().toUpperCase().trim();
+    if (t === 'CN') return 'CREDIT_NOTE';
+    if (t === 'DN') return 'DEBIT_NOTE';
+    if (t === 'EXPORT') return 'EXPORT';
+    if (t === 'SEZ') return 'SEZ';
+    // SA = standard sale, SR = sales return — determine B2B vs B2C by GSTIN presence
+    if (custGstin && isValidGSTIN(custGstin)) return 'B2B';
+    return 'B2C_SMALL';
+};
+
 const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPeriod, orgGstin) => {
-    // Key identifiers for Sales Register
-    const headerRowIndex = getHeaderIndex(rows, ['INVOICE', 'DATE', 'VALUE']);
-    if (headerRowIndex === -1) return [];
+
+    // ── 1. Find the header row ─────────────────────────────────────────────
+    let headerRowIndex = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        const rowStr = (rows[i] || []).join(' ').toUpperCase();
+        if (rowStr.includes('VCHR') || rowStr.includes('INVOICE') || rowStr.includes('ORG_GSTIN')) {
+            headerRowIndex = i;
+            break;
+        }
+    }
+    if (headerRowIndex === -1) {
+        console.log('[processSalesSheet] ERROR: header row not found');
+        return [];
+    }
 
     const headerRow = rows[headerRowIndex];
-    const colMap = buildColumnMap(headerRow);
-    const dataStartIndex = headerRowIndex + 1;
 
-    // Use a map to aggregate line items under invoices if mostly flat file
-    // Key: invoice_number + invoice_date
+    // ── 2. Build a name→index map from actual header strings ───────────────
+    const col = {};
+    headerRow.forEach((cell, idx) => {
+        const h = (cell || '').toString().toLowerCase().trim().replace(/\s+/g, '_');
+        col[h] = idx;
+    });
+    console.log('[processSalesSheet] Columns detected:', JSON.stringify(col));
+
+    // ── 3. Identify the key column indices for this CSV format ────────────
+    // Invoice number: prefer vchr_full_number (e.g. INV1), fallback vchr_no
+    const invNumIdx = col['vchr_full_number'] ?? col['vchr_no'] ?? col['invoice_number'] ?? col['invoice_no'] ?? null;
+    // Invoice date: vchr_date
+    const invDateIdx = col['vchr_date'] ?? col['invoice_date'] ?? col['date'] ?? null;
+    // vchr_type: SA/SR/CN/DN — used to derive invoice_type
+    const vTypeIdx = col['vchr_type'] ?? col['invoice_type'] ?? col['document_type'] ?? null;
+    // Party
+    const partyIdx = col['party_name'] ?? col['customer_name'] ?? col['supplier_name'] ?? null;
+    const gstinIdx = col['party_gstn_no'] ?? col['party_gstin'] ?? col['customer_gstin'] ?? col['gstin'] ?? null;
+    const stateIdx = col['party_state'] ?? null;
+    const interIdx = col['inter_state'] ?? col['interstate'] ?? null;
+    const rcIdx = col['reverse_charge'] ?? null;
+    const posIdx = col['party_state'] ?? null;  // use party_state as place_of_supply if no explicit POS column
+    // Amounts
+    const taxableIdx = col['total_taxable_amount'] ?? col['taxable_value'] ?? col['taxable_amount'] ?? null;
+    const igstIdx = col['total_igst_tax_amount'] ?? col['igst_amount'] ?? col['igst'] ?? null;
+    const sgstIdx = col['total_sgst_tax_amount'] ?? col['sgst_amount'] ?? col['sgst'] ?? null;
+    const cgstIdx = col['total_cgst_tax_amount'] ?? col['cgst_amount'] ?? col['cgst'] ?? null;
+    const cessIdx = col['total_cess_tax_amount'] ?? col['cess_amount'] ?? col['cess'] ?? null;
+    const invValueIdx = col['invoice_amount'] ?? col['row_wise_total_amount'] ?? col['invoice_value'] ?? col['total_value'] ?? null;
+    const roundOffIdx = col['round_off_amount'] ?? col['round_off'] ?? null;
+
+    if (invNumIdx === null || invDateIdx === null) {
+        console.log('[processSalesSheet] ERROR: cannot find invoice_number or invoice_date columns');
+        return [];
+    }
+
+    // ── 4. Parse date: supports DD-MM-YY, DD-MM-YYYY, YYYY-MM-DD, Excel serial ──
+    const parseDate = (val) => {
+        if (!val && val !== 0) return null;
+        // Excel serial number
+        if (typeof val === 'number') return parseExcelDate(val);
+        const s = val.toString().trim();
+        if (!s) return null;
+        // Try DD-MM-YY or DD-MM-YYYY
+        const ddmmyy = s.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{2,4})$/);
+        if (ddmmyy) {
+            let [, dd, mm, yy] = ddmmyy;
+            if (yy.length === 2) yy = parseInt(yy) >= 50 ? `19${yy}` : `20${yy}`;
+            return `${yy}-${mm}-${dd}`;
+        }
+        // Try YYYY-MM-DD
+        const yyyymmdd = s.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
+        if (yyyymmdd) return s.replace(/\//g, '-');
+        return parseExcelDate(val);
+    };
+
+    // ── 5. Process data rows ───────────────────────────────────────────────
+    // The CSV has MULTIPLE rows per invoice (one per HSN/tax rate).
+    // Group by vchr_full_number + vchr_date and SUM the tax amounts.
     const invoiceMap = new Map();
+    const dataStart = headerRowIndex + 1;
 
-    for (let i = dataStartIndex; i < rows.length; i++) {
+    for (let i = dataStart; i < rows.length; i++) {
         const row = rows[i];
-        if (!row || row.length < 3) continue;
+        if (!row || row.length < 5) continue;
 
-        let invNumRaw = row[colMap['invoice_number']]?.toString().trim();
-        if (!invNumRaw || invNumRaw.toUpperCase().includes('TOTAL')) continue; // Skip empty or total rows
+        const invNumRaw = (row[invNumIdx] ?? '').toString().trim();
+        if (!invNumRaw || invNumRaw.toUpperCase().includes('TOTAL') || invNumRaw.toUpperCase() === 'VCHR_FULL_NUMBER') continue;
         const invNum = normalizeInvoiceNumber(invNumRaw);
         if (!invNum) continue;
 
-        const customerGstin = colMap['gstin'] !== undefined ? row[colMap['gstin']]?.toString().trim() : null;
-        if (customerGstin && !isValidGSTIN(customerGstin)) continue; // Skip invalid GSTINs
+        const invDate = parseDate(row[invDateIdx]);
+        if (!invDate) continue;
 
-        const invDateRaw = row[colMap['invoice_date']];
-        const invDate = parseExcelDate(invDateRaw);
-        if (!invDate) continue; // Skip if invalid date
+        const groupKey = `${invNum}__${invDate}`;
 
-        // Composite Key for grouping items
-        const groupKey = `${invNum}_${invDate}`;
+        const custGstin = gstinIdx !== null ? (row[gstinIdx] ?? '').toString().trim() || null : null;
+        const custGstinClean = custGstin && isValidGSTIN(custGstin) ? custGstin : null;
+
+        const vchType = vTypeIdx !== null ? (row[vTypeIdx] ?? '').toString().trim() : 'SA';
+        // Map vchr_type to book_type (for DB column)
+        const bookType = (() => {
+            const t = vchType.toUpperCase();
+            if (t === 'CN' || t === 'CREDIT NOTE') return 'CN';
+            if (t === 'DN' || t === 'DEBIT NOTE') return 'DN';
+            if (t === 'SR' || t === 'SALES RETURN') return 'SR';
+            return 'SA'; // default Sales
+        })();
+
+        const invType = resolveInvoiceType(vchType, custGstinClean);
+
+        const taxable = cleanAmount(taxableIdx !== null ? row[taxableIdx] : 0);
+        const igst = cleanAmount(igstIdx !== null ? row[igstIdx] : 0);
+        const sgst = cleanAmount(sgstIdx !== null ? row[sgstIdx] : 0);
+        const cgst = cleanAmount(cgstIdx !== null ? row[cgstIdx] : 0);
+        const cess = cleanAmount(cessIdx !== null ? row[cessIdx] : 0);
+        const rowTotal = cleanAmount(invValueIdx !== null ? row[invValueIdx] : 0);
 
         if (!invoiceMap.has(groupKey)) {
-            // New Invoice Header
+            const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
+            const pos = posIdx !== null ? partyState : (custGstinClean ? custGstinClean.substring(0, 2) : null);
+            const isInter = interIdx !== null
+                ? (row[interIdx] ?? '').toString().toUpperCase().startsWith('Y')
+                : (orgGstin && custGstinClean ? orgGstin.substring(0, 2) !== custGstinClean.substring(0, 2) : false);
+            const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
+
             invoiceMap.set(groupKey, {
                 header: {
                     tenant_id: tenantId,
                     workspace_id: workspaceId,
-                    tax_period_id: taxPeriodId,
+                    tax_period_id: taxPeriodId || null,
+                    invoice_type: invType,
+                    book_type: bookType,
                     invoice_number: invNum,
                     invoice_date: invDate,
-                    invoice_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'B2B',
-                    book_type: colMap['book_type'] !== undefined ? row[colMap['book_type']] : 'SA', // SA=Sales
-                    customer_name: colMap['party_name'] !== undefined ? row[colMap['party_name']] : null,
-                    customer_gstin: customerGstin,
-
-                    // Derivation rules:
-                    // 1. place_of_supply defaults to mapped column, if not present fallback to first 2 digits of customerGstin
-                    // 2. is_interstate is true if the first 2 digits of the Org GSTIN and customerGstin differ
-                    place_of_supply: colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : (customerGstin ? customerGstin.substring(0, 2) : null),
-
-                    is_interstate: orgGstin && customerGstin ? (orgGstin.substring(0, 2) !== customerGstin.substring(0, 2)) : false,
-
-                    reverse_charge: colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().startsWith('Y')) : false,
-                    total_invoice_value: cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0),
-                    // Totals will be aggregated
+                    customer_name: partyIdx !== null ? (row[partyIdx] ?? '').toString().trim() || null : null,
+                    customer_gstin: custGstinClean,
+                    place_of_supply: pos ? pos.toString() : null,
+                    is_interstate: isInter,
+                    reverse_charge: rc,
                     total_taxable_value: 0,
                     total_igst: 0,
                     total_cgst: 0,
                     total_sgst: 0,
                     total_cess: 0,
-                    filing_period: returnPeriod // Store just in case
+                    total_invoice_value: 0,
+                    filing_period: returnPeriod || null,
                 },
                 items: []
             });
         }
 
-        const invoiceGroup = invoiceMap.get(groupKey);
+        const inv = invoiceMap.get(groupKey);
+        // Aggregate tax amounts across multiple rows (multi-HSN invoices)
+        inv.header.total_taxable_value += taxable;
+        inv.header.total_igst += igst;
+        inv.header.total_cgst += cgst;
+        inv.header.total_sgst += sgst;
+        inv.header.total_cess += cess;
+        // Use the largest row_wise_total as invoice_amount (last writer wins if multiple exact rows)
+        if (rowTotal > 0) inv.header.total_invoice_value = rowTotal;
 
-        // Extract Line Item
-        const taxable = cleanAmount(colMap['taxable_value'] !== undefined ? row[colMap['taxable_value']] : 0);
-        const igst = cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0);
-        const cgst = cleanAmount(colMap['cgst_amount'] !== undefined ? row[colMap['cgst_amount']] : 0);
-        const sgst = cleanAmount(colMap['sgst_amount'] !== undefined ? row[colMap['sgst_amount']] : 0);
-        const cess = cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0);
-        const total = taxable + igst + cgst + sgst + cess;
-
-        invoiceGroup.items.push({
-            hsn_sac_code: colMap['hsn_code'] !== undefined ? row[colMap['hsn_code']]?.toString() : null,
-            description: colMap['description'] !== undefined ? row[colMap['description']] : null,
-            quantity: cleanAmount(colMap['quantity'] !== undefined ? row[colMap['quantity']] : 0),
-            uom: colMap['uom'] !== undefined ? row[colMap['uom']] : null,
-            unit_rate: cleanAmount(colMap['rate'] !== undefined ? row[colMap['rate']] : 0),
+        // Line item
+        inv.items.push({
+            hsn_sac_code: null,
+            description: null,
+            quantity: 0,
+            uom: null,
+            unit_rate: 0,
             taxable_value: taxable,
             igst_amount: igst,
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cess,
-            total_amount_with_tax: total
+            total_amount_with_tax: taxable + igst + cgst + sgst + cess
         });
+    }
 
-        // Update Header Totals
-        invoiceGroup.header.total_taxable_value += taxable;
-        invoiceGroup.header.total_igst += igst;
-        invoiceGroup.header.total_cgst += cgst;
-        invoiceGroup.header.total_sgst += sgst;
-        invoiceGroup.header.total_cess += cess;
-
-        // Capture total_invoice_value from column if present
-        const rowInvValue = cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0);
-        if (rowInvValue > 0) {
-            invoiceGroup.header.total_invoice_value = rowInvValue;
+    // Recalculate total_invoice_value from sum if not set from column
+    for (const inv of invoiceMap.values()) {
+        if (!inv.header.total_invoice_value || inv.header.total_invoice_value <= 0) {
+            inv.header.total_invoice_value =
+                inv.header.total_taxable_value +
+                inv.header.total_igst + inv.header.total_cgst +
+                inv.header.total_sgst + inv.header.total_cess;
+        }
+        // Round to 2dp
+        for (const k of ['total_taxable_value', 'total_igst', 'total_cgst', 'total_sgst', 'total_cess', 'total_invoice_value']) {
+            inv.header[k] = Math.round(inv.header[k] * 100) / 100;
         }
     }
 
-    // Final Pass for Sales: Ensure total_invoice_value is calculated
-    for (const invGroup of invoiceMap.values()) {
-        const totalTaxes = invGroup.header.total_igst + invGroup.header.total_cgst + invGroup.header.total_sgst + invGroup.header.total_cess;
-        const calculatedNet = invGroup.header.total_taxable_value + totalTaxes;
-
-        if (invGroup.header.total_invoice_value <= 0 && calculatedNet > 0) {
-            invGroup.header.total_invoice_value = calculatedNet;
-        }
-    }
-
-    // Convert Map to Array
-    return Array.from(invoiceMap.values());
+    const result = Array.from(invoiceMap.values());
+    console.log(`[processSalesSheet] Processed ${result.length} unique invoices from ${rows.length - dataStart} data rows`);
+    return result;
 };
+
+
+
 
 const normalizeVoucherType = (val) => {
     if (!val) return 'PURCHASE';

@@ -300,7 +300,6 @@ CREATE TABLE state_code_master (
 -- ============================================
 
 
-
 CREATE OR REPLACE FUNCTION clean_invoice_number(inv_num text) RETURNS text AS $$
 BEGIN
     -- Remove special chars, spaces, and leading zeros
@@ -419,38 +418,6 @@ CREATE TABLE documents (
 -- ============================================
 
 
-
-
-
--- ============================================
--- DOMAIN 10: REPORTING (1 table)
--- ============================================
-
-CREATE TABLE saved_reports (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    report_name VARCHAR(200) NOT NULL,
-    report_type VARCHAR(50) NOT NULL
-        CHECK (report_type IN ('ITC_SUMMARY', 'MISMATCH_DETAIL', 'VENDOR_ANALYSIS',
-                              'COMPLIANCE_SCORE', 'RISK_ASSESSMENT', 'CASH_FLOW',
-                              'AUDIT_TRAIL', 'CUSTOM')),
-    report_config JSONB NOT NULL,
-    filters_applied JSONB,
-    columns_selected TEXT[],
-    is_scheduled BOOLEAN DEFAULT FALSE,
-    schedule_frequency VARCHAR(20)
-        CHECK (schedule_frequency IN ('DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY')),
-    schedule_day INTEGER,
-    schedule_time TIME,
-    recipients JSONB,
-    last_generated_at TIMESTAMPTZ,
-    last_generated_by UUID REFERENCES users(id),
-    generation_status VARCHAR(20),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    created_by UUID REFERENCES users(id),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (workspace_id, report_name)
-);
 
 
 

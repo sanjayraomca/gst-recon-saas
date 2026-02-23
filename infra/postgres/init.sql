@@ -15,15 +15,3 @@ INSERT INTO system_status (service_name, status) VALUES
 ('redis', 'active'),
 ('minio', 'active'),
 ('rabbitmq', 'active');
-
--- Create test user
-CREATE TABLE IF NOT EXISTS test_users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO test_users (email, name) VALUES 
-('admin@gst.com', 'System Administrator'),
-('test@example.com', 'Test User');
