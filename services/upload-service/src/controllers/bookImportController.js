@@ -156,6 +156,7 @@ class BookImportController {
                 }, 400);
             }
 
+
             // 8. Upload to MinIO
             console.log(`[DEBUG] Calculating financial year for ${return_period}`);
             const financialYear = BookImportController.calculateFinancialYear(return_period);

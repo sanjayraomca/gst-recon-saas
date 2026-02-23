@@ -295,19 +295,6 @@ CREATE TABLE state_code_master (
     code CHAR(2) UNIQUE NOT NULL
 );
 
--- ============================================
--- DOMAIN 4.1: GSTR-2B RESTRUCTURED (Partitioned)
--- ============================================
-
-CREATE TABLE gstr_import_file_master (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    gstin VARCHAR(15) NOT NULL,
-    return_period VARCHAR(255) NOT NULL, -- Format: MMYYYY
-    filing_date DATE,
-    status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PROCESSED, ERROR
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (gstin, return_period)
-);
 
 
 CREATE OR REPLACE FUNCTION clean_invoice_number(inv_num text) RETURNS text AS $$
@@ -428,38 +415,6 @@ CREATE TABLE documents (
 -- ============================================
 
 
-
-
-
--- ============================================
--- DOMAIN 10: REPORTING (1 table)
--- ============================================
-
-CREATE TABLE saved_reports (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    report_name VARCHAR(200) NOT NULL,
-    report_type VARCHAR(50) NOT NULL
-        CHECK (report_type IN ('ITC_SUMMARY', 'MISMATCH_DETAIL', 'VENDOR_ANALYSIS',
-                              'COMPLIANCE_SCORE', 'RISK_ASSESSMENT', 'CASH_FLOW',
-                              'AUDIT_TRAIL', 'CUSTOM')),
-    report_config JSONB NOT NULL,
-    filters_applied JSONB,
-    columns_selected TEXT[],
-    is_scheduled BOOLEAN DEFAULT FALSE,
-    schedule_frequency VARCHAR(20)
-        CHECK (schedule_frequency IN ('DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY')),
-    schedule_day INTEGER,
-    schedule_time TIME,
-    recipients JSONB,
-    last_generated_at TIMESTAMPTZ,
-    last_generated_by UUID REFERENCES users(id),
-    generation_status VARCHAR(20),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    created_by UUID REFERENCES users(id),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (workspace_id, report_name)
-);
 
 
 
@@ -1195,81 +1150,4 @@ COMMIT;
 -- ========================================================
 -- END OF DOMAIN 12
 -- ========================================================
-
-
--- ========================================================
--- DOMAIN 13: PURCHASE REGISTER (BOOKS)
--- ========================================================
-
-CREATE TABLE IF NOT EXISTS purchase_invoices (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin_id UUID, -- Optional link to gstin_master
-    supplier_id UUID, -- Optional link to supplier_master
-    
-    -- Invoice Details from CSV
-    invoice_number VARCHAR(100) NOT NULL, -- vchr_no
-    invoice_date DATE NOT NULL,           -- vchr_date
-    posting_date DATE,
-    invoice_type VARCHAR(50),             -- vchr_type (EXP)
-    
-    -- Supplier Details
-    supplier_gstin VARCHAR(15),           -- party_gstn_no
-    supplier_name VARCHAR(500),           -- party_name
-    supplier_state_code VARCHAR(10),      -- party_state
-    
-    -- Tax & Amounts
-    taxable_value NUMERIC(15, 2) DEFAULT 0, -- total_taxable_amount
-    cgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cgst_tax_amount
-    sgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_sgst_tax_amount
-    igst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_igst_tax_amount
-    cess_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cess_tax_amount
-    
-    invoice_amount NUMERIC(15, 2) DEFAULT 0, -- invoice_amount
-    round_off_amount NUMERIC(8, 2) DEFAULT 0, -- round_off_amount
-    
-    -- Meta from CSV
-    place_of_supply_code VARCHAR(10),
-    supply_type VARCHAR(50),              -- gstr_category
-    reverse_charge BOOLEAN DEFAULT FALSE, -- reverse_charge
-    is_interstate BOOLEAN DEFAULT FALSE,  -- inter_state
-    is_amendment BOOLEAN DEFAULT FALSE,   -- is_amendment
-    filing_period VARCHAR(20),            -- filing_period
-    tax_rate NUMERIC(5, 2),               -- tax_per
-    
-    -- Fields in Model but missing in CSV (will be nullable)
-    ecommerce_gstin VARCHAR(15),
-    hsn_sac_code VARCHAR(10),
-    hsn_sac_description TEXT,
-    item_description TEXT,
-    quantity NUMERIC(15, 3),
-    unit_price NUMERIC(15, 2),
-    discount_amount NUMERIC(15, 2) DEFAULT 0,
-    
-    -- System Fields
-    itc_eligibility_status VARCHAR(50) DEFAULT 'ELIGIBLE',
-    itc_claimed BOOLEAN DEFAULT FALSE,
-    payment_status VARCHAR(20) DEFAULT 'UNPAID',
-    payment_date DATE,
-    payment_amount NUMERIC(15, 2),
-    source_system VARCHAR(50) DEFAULT 'MANUAL',
-    source_file_id UUID,
-    raw_data_hash VARCHAR(64),
-    
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes for Purchase Invoices
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_workspace ON purchase_invoices(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_gstin ON purchase_invoices(supplier_gstin);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_number ON purchase_invoices(invoice_number);
-
--- Trigger for updated_at
-DROP TRIGGER IF EXISTS update_purchase_invoices_updated_at ON purchase_invoices;
-CREATE TRIGGER update_purchase_invoices_updated_at
-BEFORE UPDATE ON purchase_invoices
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
 

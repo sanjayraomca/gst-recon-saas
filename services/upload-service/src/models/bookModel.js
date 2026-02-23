@@ -37,11 +37,11 @@ class BookModel {
                         updated_at = NOW()
                     RETURNING id
                 `, [
-                    header.tenant_id, header.workspace_id, header.tax_period_id, header.invoice_type,
-                    header.invoice_number, header.invoice_date, header.book_type, header.customer_name, header.customer_gstin,
-                    header.place_of_supply, header.reverse_charge, header.total_taxable_value,
-                    header.total_igst, header.total_cgst, header.total_sgst, header.total_cess,
-                    header.total_invoice_value, header.filing_period
+                    header.tenant_id, header.workspace_id, header.tax_period_id || null, header.invoice_type,
+                    header.invoice_number, header.invoice_date, header.book_type || 'SA', header.customer_name || null, header.customer_gstin || null,
+                    header.place_of_supply || null, header.reverse_charge || false, header.total_taxable_value || 0,
+                    header.total_igst || 0, header.total_cgst || 0, header.total_sgst || 0, header.total_cess || 0,
+                    header.total_invoice_value || 0, header.filing_period || null
                 ]);
 
                 const invoiceId = headerRes.rows[0].id;
