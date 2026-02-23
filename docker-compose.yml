@@ -373,6 +373,10 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`) || PathPrefix(`/gst-import`)"
       - "traefik.http.services.upload-service.loadbalancer.server.port=3004"
+      # Increase body size limit to 50MB to allow large file uploads
+      - "traefik.http.routers.upload-service.middlewares=upload-buffering"
+      - "traefik.http.middlewares.upload-buffering.buffering.maxRequestBodyBytes=52428800"
+      - "traefik.http.middlewares.upload-buffering.buffering.memRequestBodyBytes=52428800"
     networks:
       - gst-network
     healthcheck:
