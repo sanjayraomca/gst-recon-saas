@@ -1,5 +1,5 @@
 const BookDataModel = require('../models/bookDataModel');
-const db = require('../../shared/src/db/connection');
+const db = require('../../../shared/src/db/connection');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 
 /**
