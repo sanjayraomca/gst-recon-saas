@@ -18,6 +18,7 @@ app.use('/reconciliation', require('./routes/reconciliationRoutes'));
 app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-reversals
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
 app.use('/states', require('./routes/stateRoutes')); // State lookup routes
+app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
 
 
 
