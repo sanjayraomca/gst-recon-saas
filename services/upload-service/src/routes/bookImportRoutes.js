@@ -13,4 +13,10 @@ router.post('/sales/upload', upload.single('file'), BookImportController.uploadS
 // Purchase Register Upload Route
 router.post('/purchase/upload', upload.single('file'), BookImportController.uploadPurchaseBook);
 
+// Sales Return Upload Route
+router.post('/sales-return/upload', upload.single('file'), BookImportController.uploadSalesReturn);
+
+// Purchase Return Upload Route
+router.post('/purchase-return/upload', upload.single('file'), BookImportController.uploadPurchaseReturn);
+
 module.exports = router;

@@ -118,7 +118,7 @@ const resolveInvoiceType = (rawType, custGstin) => {
     return 'B2C_SMALL';
 };
 
-const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPeriod, orgGstin) => {
+const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPeriod, orgGstin, uploadType = 'SALES') => {
 
     // ── 1. Find the header row ─────────────────────────────────────────────
     let headerRowIndex = -1;
@@ -222,10 +222,11 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
             if (t === 'CN' || t === 'CREDIT NOTE') return 'CN';
             if (t === 'DN' || t === 'DEBIT NOTE') return 'DN';
             if (t === 'SR' || t === 'SALES RETURN') return 'SR';
+            if (uploadType === 'SALES_RETURN') return 'CN';
             return 'SA'; // default Sales
         })();
 
-        const invType = resolveInvoiceType(vchType, custGstinClean);
+        const invType = resolveInvoiceType(bookType === 'CN' ? 'CN' : vchType, custGstinClean);
 
         const taxable = cleanAmount(taxableIdx !== null ? row[taxableIdx] : 0);
         const igst = cleanAmount(igstIdx !== null ? row[igstIdx] : 0);
@@ -325,7 +326,7 @@ const normalizeVoucherType = (val) => {
     return 'PURCHASE';
 };
 
-const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPeriod, orgGstin) => {
+const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPeriod, orgGstin, uploadType = 'PURCHASE') => {
     // Key identifiers for Purchase Register
     const headerRowIndex = getHeaderIndex(rows, ['INVOICE', 'DATE', 'VALUE']);
     if (headerRowIndex === -1) return [];
@@ -373,8 +374,8 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     tenant_id: tenantId,
                     workspace_id: workspaceId,
                     tax_period_id: taxPeriodId,
-                    voucher_type: normalizeVoucherType(colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'PURCHASE'),
-                    book_type: colMap['book_type'] !== undefined ? row[colMap['book_type']] : 'SR', // Map to real data book_type (SR, CN, DN)
+                    voucher_type: normalizeVoucherType(colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : (uploadType === 'PURCHASE_RETURN' ? 'DN' : 'PURCHASE')),
+                    book_type: colMap['book_type'] !== undefined ? row[colMap['book_type']] : (uploadType === 'PURCHASE_RETURN' ? 'DN' : 'SR'), // Map to real data book_type (SR, CN, DN)
                     supplier_invoice_no: invNum,
                     supplier_invoice_date: invDate,
                     supplier_name: colMap['party_name'] !== undefined ? row[colMap['party_name']] : null,
