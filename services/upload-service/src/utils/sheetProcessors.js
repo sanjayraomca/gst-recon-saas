@@ -22,13 +22,50 @@ const buildColumnMap = (headerRow) => {
     headerRow.forEach((cell, index) => {
         const header = cell?.toString().toUpperCase().trim() || '';
 
-        // Common Columns
-        if (header.includes('GSTIN OF SUPPLIER')) colMap['gstin_supplier'] = index;
+        // Amendment Specifics (Old format explicit names)
+        if (header.includes('ORIGINAL INVOICE/NOTE NUMBER') || header.includes('ORIGINAL INVOICE NUMBER') || header.includes('ORIGINAL NOTE NUMBER')) colMap['original_invoice_number'] = index;
+        else if (header.includes('ORIGINAL INVOICE/NOTE DATE') || header.includes('ORIGINAL INVOICE DATE') || header.includes('ORIGINAL NOTE DATE')) colMap['original_invoice_date'] = index;
+        else if (header.includes('ORIGINAL ISD DOCUMENT NUMBER')) colMap['original_isd_doc_number'] = index;
+        else if (header.includes('ORIGINAL ISD DOCUMENT DATE')) colMap['original_isd_doc_date'] = index;
+
+        // Common Columns (Handle duplicates for new 122025 Amendment format)
+        else if (header.includes('GSTIN OF SUPPLIER')) colMap['gstin_supplier'] = index;
         else if (header.includes('TRADE/LEGAL NAME') || header.includes('TRADE NAME')) colMap['trade_name'] = index;
-        else if (header.includes('INVOICE NUMBER')) colMap['invoice_number'] = index;
-        else if (header.includes('NOTE NUMBER')) colMap['note_number'] = index; // For CDNR
+
+        else if (header.includes('INVOICE NUMBER')) {
+            if (colMap['invoice_number'] !== undefined) {
+                colMap['original_invoice_number'] = colMap['invoice_number'];
+                colMap['invoice_number'] = index;
+            } else {
+                colMap['invoice_number'] = index;
+            }
+        }
+        else if (header.includes('NOTE NUMBER')) {
+            if (colMap['note_number'] !== undefined) {
+                colMap['original_note_number'] = colMap['note_number'];
+                colMap['note_number'] = index;
+            } else {
+                colMap['note_number'] = index;
+            }
+        }
         else if (header.includes('INVOICE TYPE') || header.includes('NOTE TYPE')) colMap['invoice_type'] = index;
-        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE')) colMap['invoice_date'] = index;
+        else if (header.includes('INVOICE DATE')) {
+            if (colMap['invoice_date'] !== undefined) {
+                colMap['original_invoice_date'] = colMap['invoice_date'];
+                colMap['invoice_date'] = index;
+            } else {
+                colMap['invoice_date'] = index;
+            }
+        }
+        else if (header.includes('NOTE DATE')) {
+            if (colMap['note_date'] !== undefined) {
+                colMap['original_note_date'] = colMap['note_date'];
+                colMap['note_date'] = index;
+            } else {
+                colMap['note_date'] = index;
+            }
+        }
+
         else if (header.includes('INVOICE VALUE') || header.includes('NOTE VALUE')) colMap['invoice_value'] = index;
         else if (header.includes('PLACE OF SUPPLY')) colMap['place_of_supply'] = index;
         else if (header.includes('REVERSE CHARGE')) colMap['reverse_charge'] = index;
@@ -59,21 +96,29 @@ const buildColumnMap = (headerRow) => {
 
         // IMPG Specifics
         else if (header.includes('PORT CODE')) colMap['port_code'] = index;
-        else if (header.includes('BOE NUMBER')) colMap['boe_number'] = index;
-        else if (header.includes('BOE DATE')) colMap['boe_date'] = index;
+        else if (header.includes('BOE NUMBER') || header.includes('ENTRY DETAILS NUMBER')) colMap['boe_number'] = index;
+        else if (header.includes('BOE DATE') || header === 'DATE') colMap['boe_date'] = index;
         else if (header.includes('ICEGATE REFERENCE DATE')) colMap['icegate_ref_date'] = index;
-
-        // Amendment Specifics
-        else if (header.includes('ORIGINAL INVOICE/NOTE NUMBER') || header.includes('ORIGINAL INVOICE NUMBER') || header.includes('ORIGINAL NOTE NUMBER')) colMap['original_invoice_number'] = index;
-        else if (header.includes('ORIGINAL INVOICE/NOTE DATE') || header.includes('ORIGINAL INVOICE DATE') || header.includes('ORIGINAL NOTE DATE')) colMap['original_invoice_date'] = index;
 
         // ISD Specifics
         else if (header.includes('GSTIN OF ISD')) colMap['gstin_isd'] = index;
         else if (header.includes('ISD NAME')) colMap['isd_name'] = index;
-        else if (header.includes('ISD DOCUMENT NUMBER')) colMap['isd_doc_number'] = index;
-        else if (header.includes('ISD DOCUMENT DATE')) colMap['isd_doc_date'] = index;
-        else if (header.includes('ORIGINAL ISD DOCUMENT NUMBER')) colMap['original_isd_doc_number'] = index;
-        else if (header.includes('ORIGINAL ISD DOCUMENT DATE')) colMap['original_isd_doc_date'] = index;
+        else if (header.includes('ISD DOCUMENT NUMBER')) {
+            if (colMap['isd_doc_number'] !== undefined) {
+                colMap['original_isd_doc_number'] = colMap['isd_doc_number'];
+                colMap['isd_doc_number'] = index;
+            } else {
+                colMap['isd_doc_number'] = index;
+            }
+        }
+        else if (header.includes('ISD DOCUMENT DATE')) {
+            if (colMap['isd_doc_date'] !== undefined) {
+                colMap['original_isd_doc_date'] = colMap['isd_doc_date'];
+                colMap['isd_doc_date'] = index;
+            } else {
+                colMap['isd_doc_date'] = index;
+            }
+        }
     });
     console.log('[DEBUG] Column Map:', JSON.stringify(colMap));
     return colMap;
