@@ -139,14 +139,14 @@ class BookModel {
                         updated_at = NOW()
                     RETURNING id
                  `, [
-                    header.tenant_id, header.workspace_id, header.tax_period_id, header.voucher_type, header.book_type || 'SR',
-                    header.supplier_invoice_no, header.supplier_invoice_date, header.supplier_name, header.supplier_gstin,
-                    header.place_of_supply, header.is_interstate || 'No', header.is_rcm || false, header.round_off || 0,
-                    header.status || 'DRAFT', header.remarks,
+                    header.tenant_id, header.workspace_id, header.tax_period_id || null, header.voucher_type || null, header.book_type || 'SR',
+                    header.supplier_invoice_no || null, header.supplier_invoice_date || null, header.supplier_name || null, header.supplier_gstin || null,
+                    header.place_of_supply || null, header.is_interstate || 'No', header.is_rcm || false, header.round_off || 0,
+                    header.status || 'DRAFT', header.remarks || null,
                     header.total_qty || 0, header.discount || 0,
-                    header.taxable_total, header.net_amount,
-                    header.total_cgst_amount, header.total_sgst_amount, header.total_igst_amount, header.total_cess_amount,
-                    header.itc_eligible, header.itc_claimed, header.filing_period
+                    header.taxable_total || 0, header.net_amount || 0,
+                    header.total_cgst_amount || 0, header.total_sgst_amount || 0, header.total_igst_amount || 0, header.total_cess_amount || 0,
+                    header.itc_eligible !== undefined ? header.itc_eligible : null, header.itc_claimed !== undefined ? header.itc_claimed : null, header.filing_period || null
                 ]);
 
                 const voucherId = headerRes.rows[0].id;

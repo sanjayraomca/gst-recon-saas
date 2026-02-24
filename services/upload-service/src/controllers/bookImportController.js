@@ -191,6 +191,13 @@ class BookImportController {
             });
             console.log(`[DEBUG] Import record created: ${importRecord.import_filing_id}`);
 
+            // 2. Validate Document Type
+            const validTypes = ['SALES', 'PURCHASE', 'SALES_RETURN', 'PURCHASE_RETURN'];
+            if (!validTypes.includes(type.toUpperCase())) {
+                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                return errorResponse(res, { message: `Invalid import type: ${type}`, isCustom: true }, 400);
+            }
+
             // 10. Process
             const sheetName = workbook.SheetNames[0];
             console.log(`[DEBUG] Processing first sheet: ${sheetName}`);
@@ -198,14 +205,14 @@ class BookImportController {
             console.log(`[DEBUG] Total rows read from sheet: ${jsonRows.length}`);
 
             let result;
-            if (type === 'SALES') {
-                console.log(`[DEBUG] Starting processSalesSheet`);
-                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin);
+            if (type === 'SALES' || type === 'SALES_RETURN') {
+                console.log(`[DEBUG] Starting processSalesSheet for ` + type);
+                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
                 console.log(`[DEBUG] processSalesSheet completed. Count=${invoices.length}`);
                 result = await BookModel.bulkInsertSales(invoices);
-            } else {
-                console.log(`[DEBUG] Starting processPurchaseSheet`);
-                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin);
+            } else if (type === 'PURCHASE' || type === 'PURCHASE_RETURN') {
+                console.log(`[DEBUG] Starting processPurchaseSheet for ` + type);
+                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
                 console.log(`[DEBUG] processPurchaseSheet completed. Count=${vouchers.length}`);
                 result = await BookModel.bulkInsertPurchase(vouchers);
             }
@@ -252,6 +259,14 @@ class BookImportController {
 
     static async uploadPurchaseBook(req, res) {
         return BookImportController.uploadBookData(req, res, 'PURCHASE');
+    }
+
+    static async uploadSalesReturn(req, res) {
+        return BookImportController.uploadBookData(req, res, 'SALES_RETURN');
+    }
+
+    static async uploadPurchaseReturn(req, res) {
+        return BookImportController.uploadBookData(req, res, 'PURCHASE_RETURN');
     }
 
     static calculateFinancialYear(returnPeriod) {
