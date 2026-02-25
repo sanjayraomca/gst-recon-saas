@@ -3,8 +3,8 @@
 
 BEGIN;
 
--- 1. Enhance expense_vouchers table
-ALTER TABLE expense_vouchers 
+-- 1. Enhance purchase_vouchers table
+ALTER TABLE purchase_vouchers 
     ADD COLUMN IF NOT EXISTS place_of_supply VARCHAR(100),
     ADD COLUMN IF NOT EXISTS is_interstate BOOLEAN DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS is_rcm BOOLEAN DEFAULT FALSE,
@@ -17,15 +17,15 @@ ALTER TABLE expense_vouchers
 
 -- Add unique constraint to prevent duplicates
 -- Refined to include book_type and tax_period_id based on real data
-ALTER TABLE expense_vouchers
-    DROP CONSTRAINT IF EXISTS uq_expense_voucher_invoice;
+ALTER TABLE purchase_vouchers
+    DROP CONSTRAINT IF EXISTS uq_purchase_voucher_invoice;
 
-ALTER TABLE expense_vouchers
-    ADD CONSTRAINT uq_expense_voucher_invoice 
+ALTER TABLE purchase_vouchers
+    ADD CONSTRAINT uq_purchase_voucher_invoice 
     UNIQUE (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id);
 
--- 2. Enhance expense_items table
-ALTER TABLE expense_items
+-- 2. Enhance purchase_items table
+ALTER TABLE purchase_items
     ADD COLUMN IF NOT EXISTS itc_eligible BOOLEAN DEFAULT TRUE,
     ADD COLUMN IF NOT EXISTS itc_block_reason TEXT;
 

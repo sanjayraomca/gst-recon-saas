@@ -58,13 +58,13 @@ CREATE TABLE IF NOT EXISTS sales_invoice_items (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS expense_vouchers (
+CREATE TABLE IF NOT EXISTS purchase_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     tax_period_id UUID REFERENCES tax_periods(id),
     voucher_type VARCHAR(20) CHECK (voucher_type IN ('PURCHASE','EXPENSE','DEBIT_NOTE','CREDIT_NOTE')),
-    parent_voucher_id UUID REFERENCES expense_vouchers(id) ON DELETE SET NULL,
+    parent_voucher_id UUID REFERENCES purchase_vouchers(id) ON DELETE SET NULL,
     filing_status VARCHAR(20) DEFAULT 'NOT_FILED',
     filing_date DATE,
     filing_period CHAR(6),
@@ -90,9 +90,9 @@ CREATE TABLE IF NOT EXISTS expense_vouchers (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS expense_items (
+CREATE TABLE IF NOT EXISTS purchase_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
-    expense_id UUID NOT NULL REFERENCES expense_vouchers(id) ON DELETE CASCADE,
+    purchase_id UUID NOT NULL REFERENCES purchase_vouchers(id) ON DELETE CASCADE,
     account_id UUID,
     hsn_code VARCHAR(10),
     description TEXT,

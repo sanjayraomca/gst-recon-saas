@@ -11,7 +11,7 @@ const db = require('../../../shared/src/db/connection');
  *   total_taxable_value, total_igst, total_cgst, total_sgst, total_cess,
  *   total_invoice_value, filing_status (NO plain 'status' column)
  *
- * expense_vouchers columns used:
+ * purchase_vouchers columns used:
  *   id, workspace_id, voucher_type, book_type, supplier_invoice_no,
  *   supplier_invoice_date, supplier_name, supplier_gstin, place_of_supply,
  *   is_interstate, taxable_total, total_cgst_amount, total_sgst_amount,
@@ -30,15 +30,15 @@ class BookDataModel {
             case 'dn_sales':
                 return { table: 'sales', invoiceTypes: ['DEBIT_NOTE'] };
             case 'purchase_invoice':
-                return { table: 'expense', voucherTypes: ['PURCHASE'] };
+                return { table: 'purchase', voucherTypes: ['PURCHASE'] };
             case 'expense_invoice':
-                return { table: 'expense', voucherTypes: ['EXPENSE'] };
+                return { table: 'purchase', voucherTypes: ['EXPENSE'] };
             case 'purchase_return':
-                return { table: 'expense', bookTypes: ['DN'], voucherTypes: ['PURCHASE'] };
+                return { table: 'purchase', bookTypes: ['DN'], voucherTypes: ['PURCHASE'] };
             case 'cn_purchase':
-                return { table: 'expense', voucherTypes: ['CREDIT_NOTE'], bookTypes: ['CN'] };
+                return { table: 'purchase', voucherTypes: ['CREDIT_NOTE'], bookTypes: ['CN'] };
             case 'dn_purchase':
-                return { table: 'expense', voucherTypes: ['DEBIT_NOTE'], bookTypes: ['DN'] };
+                return { table: 'purchase', voucherTypes: ['DEBIT_NOTE'], bookTypes: ['DN'] };
             default:
                 return null;
         }
@@ -102,9 +102,9 @@ class BookDataModel {
                 .limit(page_size)
                 .offset(offset);
 
-        } else {
-            // --- expense_vouchers ---
-            let q = db('expense_vouchers as ev')
+        } else if (resolved.table === 'purchase') {
+            // --- purchase_vouchers ---
+            let q = db('purchase_vouchers as ev')
                 .where('ev.workspace_id', workspaceId);
 
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
@@ -121,7 +121,7 @@ class BookDataModel {
                         .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
                 });
             }
-            // expense_vouchers has a plain 'status' column
+            // purchase_vouchers has a plain 'status' column
             if (status && status !== 'all') q = q.where('ev.status', status);
 
             const [{ count }] = await q.clone().count('* as count');

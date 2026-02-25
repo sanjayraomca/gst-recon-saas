@@ -1059,10 +1059,10 @@ CREATE TABLE sales_invoice_items (
 
 
 -- ========================================================
--- 3️⃣ EXPENSE_VOUCHERS and PURCHASE_INVOICES
+-- 3️⃣ PURCHASE_VOUCHERS and PURCHASE_INVOICES
 -- ========================================================
 
-CREATE TABLE expense_vouchers (
+CREATE TABLE purchase_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
 
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1076,7 +1076,7 @@ CREATE TABLE expense_vouchers (
         )),
 
     parent_voucher_id UUID 
-        REFERENCES expense_vouchers(id) ON DELETE SET NULL,
+        REFERENCES purchase_vouchers(id) ON DELETE SET NULL,
 
     filing_status VARCHAR(20) DEFAULT 'NOT_FILED',
     filing_date DATE,
@@ -1125,20 +1125,20 @@ CREATE TABLE expense_vouchers (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     -- Unique constraint to prevent duplicates
-    CONSTRAINT uq_expense_voucher_invoice 
+    CONSTRAINT uq_purchase_voucher_invoice 
     UNIQUE (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
 );
 
 
 -- ========================================================
--- 4️⃣ EXPENSE_ITEMS and PURCHASE_INVOICE_ITEMS
+-- 4️⃣ PURCHASE_ITEMS and PURCHASE_INVOICE_ITEMS
 -- ========================================================
 
-CREATE TABLE expense_items (
+CREATE TABLE purchase_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
 
-    expense_id UUID NOT NULL 
-        REFERENCES expense_vouchers(id) ON DELETE CASCADE,
+    purchase_id UUID NOT NULL 
+        REFERENCES purchase_vouchers(id) ON DELETE CASCADE,
 
     account_id UUID,
 
@@ -1440,7 +1440,7 @@ SELECT
     m.import_type,
 
     n.created_at
-
+      
 FROM normalized_gstr2b_invoices n
 JOIN gstr_import_master m USING (import_filing_id)
 WHERE n.is_active = TRUE

@@ -80,7 +80,7 @@ class BookModel {
     }
 
     /**
-     * Bulk insert Purchase (Expense Vouchers) and their items
+     * Bulk insert Purchase (Purchase Vouchers) and their items
      * @param {Array} vouchers - Array of processed vouchers { header, items }
      */
     static async bulkInsertPurchase(vouchers) {
@@ -102,12 +102,12 @@ class BookModel {
                 }
 
                 // Insert/Update Header
-                // Inconsistency note: init-gst.sql doesn't show a unique constraint for expense_vouchers
+                // Inconsistency note: init-gst.sql doesn't show a unique constraint for purchase_vouchers
                 // We'll use a standard insert and handle it as a new record for now, or use a heuristic.
                 // However, to keep it "same as GSTR-2B", a constraint would be ideal.
 
                 const headerRes = await trx.raw(`
-                    INSERT INTO expense_vouchers (
+                    INSERT INTO purchase_vouchers (
                         tenant_id, workspace_id, tax_period_id, voucher_type, book_type,
                         supplier_invoice_no, supplier_invoice_date, supplier_name, supplier_gstin,
                         place_of_supply, is_interstate, is_rcm, round_off, status, remarks, 
@@ -152,11 +152,11 @@ class BookModel {
                 const voucherId = headerRes.rows[0].id;
 
                 // Replace Strategy for Items
-                await trx('expense_items').where('expense_id', voucherId).del();
+                await trx('purchase_items').where('purchase_id', voucherId).del();
 
                 if (items && items.length > 0) {
                     const itemsToInsert = items.map(item => ({
-                        expense_id: voucherId,
+                        purchase_id: voucherId,
                         hsn_code: item.hsn_code,
                         description: item.description,
                         quantity: item.quantity,
@@ -169,7 +169,7 @@ class BookModel {
                         cess_amount: item.cess_amount,
                         total_amount_with_tax: item.total_amount_with_tax
                     }));
-                    await trx.batchInsert('expense_items', itemsToInsert, 200);
+                    await trx.batchInsert('purchase_items', itemsToInsert, 200);
                 }
                 totalInserted++;
             }
