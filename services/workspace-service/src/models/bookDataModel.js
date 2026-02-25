@@ -50,7 +50,7 @@ class BookDataModel {
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
-        const { search, status, period } = filters;
+        const { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply } = filters;
 
         let records = [];
         let total = 0;
@@ -74,6 +74,12 @@ class BookDataModel {
                         .orWhere('si.customer_gstin', 'ilike', `%${search}%`);
                 });
             }
+            if (gstin) q = q.whereRaw(`trim(si.customer_gstin) ilike ?`, [`%${gstin.trim()}%`]);
+            if (date_from) q = q.whereRaw(`si.invoice_date >= ?::date`, [date_from]);
+            if (date_to) q = q.whereRaw(`si.invoice_date <= ?::date`, [date_to]);
+            if (amt_min) q = q.whereRaw(`si.total_taxable_value >= ?`, [parseFloat(amt_min)]);
+            if (amt_max) q = q.whereRaw(`si.total_taxable_value <= ?`, [parseFloat(amt_max)]);
+            if (place_of_supply) q = q.where('si.place_of_supply', 'ilike', `%${place_of_supply}%`);
             // sales_invoices has filing_status, not status
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
@@ -121,6 +127,12 @@ class BookDataModel {
                         .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
                 });
             }
+            if (gstin) q = q.where('ev.supplier_gstin', 'ilike', `%${gstin.trim()}%`);
+            if (date_from) q = q.whereRaw(`ev.supplier_invoice_date >= ?::date`, [date_from]);
+            if (date_to) q = q.whereRaw(`ev.supplier_invoice_date <= ?::date`, [date_to]);
+            if (amt_min) q = q.whereRaw(`ev.taxable_total >= ?`, [parseFloat(amt_min)]);
+            if (amt_max) q = q.whereRaw(`ev.taxable_total <= ?`, [parseFloat(amt_max)]);
+            if (place_of_supply) q = q.where('ev.place_of_supply', 'ilike', `%${place_of_supply}%`);
             // purchase_vouchers has a plain 'status' column
             if (status && status !== 'all') q = q.where('ev.status', status);
 
@@ -160,6 +172,93 @@ class BookDataModel {
             }
         };
     }
+    /**
+     * getSummary - returns aggregate totals for all 9 book types in a single call.
+     * Used by the grouped cards UI to show live counts + tax breakdown per type.
+     */
+    static async getSummary(workspaceId, period) {
+        const periodFilter = (alias, col) => {
+            if (!period) return '';
+            // period = 'YYYY-MM' OR 'YYYY-QN' handled client-side; backend expects YYYY-MM
+            return db.raw(`AND to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
+        };
+
+        // Helper to parse period into SQL condition
+        const addPeriod = (q, alias, col) => {
+            if (!period) return q;
+            return q.whereRaw(`to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
+        };
+
+        // --- Sales types ---
+        const salesTypes = [
+            { id: 'sales_invoice', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'], bookTypes: null },
+            { id: 'sales_return', invoiceTypes: null, bookTypes: ['SR'] },
+            { id: 'cn_sales', invoiceTypes: ['CREDIT_NOTE'], bookTypes: null },
+            { id: 'dn_sales', invoiceTypes: ['DEBIT_NOTE'], bookTypes: null },
+        ];
+        const salesResults = {};
+        for (const t of salesTypes) {
+            let q = db('sales_invoices as si').where('si.workspace_id', workspaceId);
+            if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
+            if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
+            q = addPeriod(q, 'si', 'invoice_date');
+            const [row] = await q.select(
+                db.raw('COUNT(*) as total'),
+                db.raw('COALESCE(SUM(si.total_taxable_value),0) as taxable'),
+                db.raw('COALESCE(SUM(si.total_igst),0) as igst'),
+                db.raw('COALESCE(SUM(si.total_cgst),0) as cgst'),
+                db.raw('COALESCE(SUM(si.total_sgst),0) as sgst'),
+                db.raw('COALESCE(SUM(si.total_cess),0) as cess'),
+                db.raw('COALESCE(SUM(si.total_invoice_value),0) as invoice_value')
+            );
+            salesResults[t.id] = {
+                total: parseInt(row.total),
+                taxable: parseFloat(row.taxable),
+                igst: parseFloat(row.igst),
+                cgst: parseFloat(row.cgst),
+                sgst: parseFloat(row.sgst),
+                cess: parseFloat(row.cess),
+                invoiceValue: parseFloat(row.invoice_value)
+            };
+        }
+
+        // --- Purchase types ---
+        const purchaseTypes = [
+            { id: 'purchase_invoice', voucherTypes: ['PURCHASE'], bookTypes: null },
+            { id: 'expense_invoice', voucherTypes: ['EXPENSE'], bookTypes: null },
+            { id: 'purchase_return', voucherTypes: ['PURCHASE'], bookTypes: ['DN'] },
+            { id: 'cn_purchase', voucherTypes: ['CREDIT_NOTE'], bookTypes: ['CN'] },
+            { id: 'dn_purchase', voucherTypes: ['DEBIT_NOTE'], bookTypes: ['DN'] },
+        ];
+        const purchaseResults = {};
+        for (const t of purchaseTypes) {
+            let q = db('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
+            if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
+            if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
+            q = addPeriod(q, 'ev', 'supplier_invoice_date');
+            const [row] = await q.select(
+                db.raw('COUNT(*) as total'),
+                db.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),
+                db.raw('COALESCE(SUM(ev.total_igst_amount),0) as igst'),
+                db.raw('COALESCE(SUM(ev.total_cgst_amount),0) as cgst'),
+                db.raw('COALESCE(SUM(ev.total_sgst_amount),0) as sgst'),
+                db.raw('COALESCE(SUM(ev.total_cess_amount),0) as cess'),
+                db.raw('COALESCE(SUM(ev.net_amount),0) as invoice_value')
+            );
+            purchaseResults[t.id] = {
+                total: parseInt(row.total),
+                taxable: parseFloat(row.taxable),
+                igst: parseFloat(row.igst),
+                cgst: parseFloat(row.cgst),
+                sgst: parseFloat(row.sgst),
+                cess: parseFloat(row.cess),
+                invoiceValue: parseFloat(row.invoice_value)
+            };
+        }
+
+        return { ...salesResults, ...purchaseResults };
+    }
 }
 
 module.exports = BookDataModel;
+
