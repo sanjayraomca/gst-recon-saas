@@ -49,20 +49,12 @@ const buildColumnMap = (headerRow) => {
             }
         }
         else if (header.includes('INVOICE TYPE') || header.includes('NOTE TYPE')) colMap['invoice_type'] = index;
-        else if (header.includes('INVOICE DATE')) {
+        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE')) {
             if (colMap['invoice_date'] !== undefined) {
                 colMap['original_invoice_date'] = colMap['invoice_date'];
                 colMap['invoice_date'] = index;
             } else {
                 colMap['invoice_date'] = index;
-            }
-        }
-        else if (header.includes('NOTE DATE')) {
-            if (colMap['note_date'] !== undefined) {
-                colMap['original_note_date'] = colMap['note_date'];
-                colMap['note_date'] = index;
-            } else {
-                colMap['note_date'] = index;
             }
         }
 
