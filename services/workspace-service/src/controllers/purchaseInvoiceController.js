@@ -1,5 +1,6 @@
 const PurchaseInvoiceModel = require('../models/purchaseInvoiceModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * Get all purchase invoices with filters and pagination
@@ -100,6 +101,17 @@ const createInvoice = async (req, res) => {
 
         const invoice = await PurchaseInvoiceModel.create(workspaceId, invoiceData);
 
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'CREATE_PURCHASE_INVOICE',
+            entityType: 'PurchaseInvoice',
+            entityId: invoice.id,
+            details: { invoiceNumber: invoiceData.invoice_number },
+            req
+        });
+
         return successResponse(res, invoice, 'Purchase invoice created successfully', 201);
     } catch (error) {
         console.error('Error creating purchase invoice:', error);
@@ -128,6 +140,17 @@ const updateInvoice = async (req, res) => {
         if (!invoice) {
             return errorResponse(res, 'Invoice not found', 404);
         }
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'UPDATE_PURCHASE_INVOICE',
+            entityType: 'PurchaseInvoice',
+            entityId: invoice.id,
+            details: { invoiceId },
+            req
+        });
 
         return successResponse(res, invoice, 'Purchase invoice updated successfully');
     } catch (error) {

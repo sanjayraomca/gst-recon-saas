@@ -3,6 +3,7 @@ const GstinMasterService = require('../../../shared/src/services/gstinMasterServ
 const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
 const minioClient = require('../utils/minioClient');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -569,6 +570,16 @@ class GSTRImportController {
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
                 fs.unlinkSync(uploadedFilePath);
             }
+
+            await logActivity({
+                userId,
+                tenantId: tenantUuid,
+                workspaceId: workspaceId || null,
+                actionType: 'GSTR_IMPORT',
+                entityType: 'GSTR_Data',
+                details: { fileName: req.file.originalname, type: gstr_type.toUpperCase(), recordsInserted: totalInserted, period: return_period },
+                req
+            });
 
             const message = isUpdate
                 ? `File processed as update: ${totalInserted} new records added, ${totalSkipped} already existed.`

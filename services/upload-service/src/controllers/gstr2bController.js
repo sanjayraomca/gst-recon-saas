@@ -6,6 +6,7 @@ const {
     processImportSheet
 } = require('../utils/sheetProcessors');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const fs = require('fs');
 
 /**
@@ -101,6 +102,16 @@ class GSTR2BController {
 
             // Cleanup
             if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+            await logActivity({
+                userId: req.user ? req.user.id : null,
+                tenantId: req.user ? req.user.tenant_id : null,
+                workspaceId,
+                actionType: 'GSTR2B_IMPORT',
+                entityType: 'GSTR_Data',
+                details: { fileName: req.file.originalname, results, period: return_period },
+                req
+            });
 
             return successResponse(res, results, 'GSTR-2B Import Successful');
 

@@ -1,5 +1,6 @@
 const ReconciliationConfigModel = require('../models/reconciliationConfigModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const createConfig = async (req, res) => {
     try {
@@ -7,6 +8,18 @@ const createConfig = async (req, res) => {
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
         const config = await ReconciliationConfigModel.create(workspaceId, req.body, req.user?.id);
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'CREATE_RECON_CONFIG',
+            entityType: 'ReconConfig',
+            entityId: config.id,
+            details: { type: req.body.config_type },
+            req
+        });
+
         return successResponse(res, config, 'Configuration created successfully', 201);
     } catch (error) {
         console.error('Error creating config:', error);
@@ -22,6 +35,17 @@ const updateConfig = async (req, res) => {
 
         const config = await ReconciliationConfigModel.update(workspaceId, configId, req.body);
         if (!config) return errorResponse(res, 'Configuration not found', 404);
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'UPDATE_RECON_CONFIG',
+            entityType: 'ReconConfig',
+            entityId: config.id,
+            details: { configId },
+            req
+        });
 
         return successResponse(res, config, 'Configuration updated successfully');
     } catch (error) {

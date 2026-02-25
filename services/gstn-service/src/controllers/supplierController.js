@@ -1,6 +1,7 @@
 const Supplier = require('../models/supplier');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const createSupplier = async (req, res) => {
     try {
@@ -32,6 +33,17 @@ const createSupplier = async (req, res) => {
             is_active: true,
             created_at: new Date(),
             updated_at: new Date()
+        });
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'ADD_SUPPLIER',
+            entityType: 'Supplier',
+            entityId: newSupplier.id,
+            details: { supplierName: supplier_name, gstin: gstin },
+            req
         });
 
         return successResponse(res, newSupplier, 'Supplier created successfully');
@@ -79,6 +91,17 @@ const updateSupplier = async (req, res) => {
 
         const updated = await Supplier.update(id, updates);
         if (!updated) return res.status(404).json({ error: 'Supplier not found' });
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId: req.headers['x-workspace-id'] || null,
+            actionType: 'UPDATE_SUPPLIER',
+            entityType: 'Supplier',
+            entityId: id,
+            details: { supplierName: updated.supplier_name },
+            req
+        });
 
         return successResponse(res, updated, 'Supplier updated successfully');
     } catch (error) {

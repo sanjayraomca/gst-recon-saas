@@ -1,6 +1,7 @@
 const SavedReportModel = require('../models/savedReportModel');
 const reportGenerator = require('../services/reportGenerator');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const fs = require('fs');
 const path = require('path');
 const db = require('../../../shared/src/db/connection');
@@ -194,6 +195,17 @@ exports.generateSavedReport = async (req, res) => {
 
         // 3. Queue Generation
         await reportGenerator.queueReport(newRun.id, workspaceId, newRun.report_type, runData.parameters);
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'GENERATE_REPORT',
+            entityType: 'Report',
+            entityId: newRun.id,
+            details: { reportType: newRun.report_type },
+            req
+        });
 
         return successResponse(res, { generation_id: newRun.id, status: 'PENDING' }, 'Report generation started');
     } catch (error) {

@@ -1,5 +1,6 @@
 const ItcDecisionModel = require('../models/itcDecisionModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 // Get all decisions
 exports.listDecisions = async (req, res) => {
@@ -31,6 +32,17 @@ exports.updateDecision = async (req, res) => {
         if (!decision) {
             return errorResponse(res, 'Decision not found', 404);
         }
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'UPDATE_ITC_DECISION',
+            entityType: 'ItcDecision',
+            entityId: decision.id,
+            details: { decisionId: id },
+            req
+        });
 
         return successResponse(res, decision);
     } catch (error) {

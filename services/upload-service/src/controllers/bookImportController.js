@@ -2,6 +2,7 @@ const GSTRImportModel = require('../models/gstrImportModel');
 const BookModel = require('../models/bookModel');
 const minioClient = require('../utils/minioClient');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const fs = require('fs');
 const xlsx = require('xlsx');
 const { processSalesSheet, processPurchaseSheet } = require('../utils/bookSheetProcessors');
@@ -236,6 +237,16 @@ class BookImportController {
             });
 
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+
+            await logActivity({
+                userId,
+                tenantId: tenantUuid,
+                workspaceId: workspaceUuid,
+                actionType: `${type.toUpperCase()}_IMPORT`,
+                entityType: 'BookData',
+                details: { fileName: req.file.originalname, recordsInserted: result.inserted, period: return_period },
+                req
+            });
 
             const message = `Import Successful: ${result.inserted} records have been added to your ${type.toLowerCase()} register.`;
 

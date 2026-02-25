@@ -1,5 +1,6 @@
 const ReconciliationModel = require('../models/reconciliationModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * Trigger reconciliation for a specific GSTIN and period
@@ -36,6 +37,17 @@ const createRun = async (req, res) => {
         }
 
         const runId = await ReconciliationModel.createRun(workspaceId, runData);
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'RECONCILIATION_RUN',
+            entityType: 'Reconciliation',
+            entityId: runId,
+            details: { gstinId: runData.gstin_id, period: runData.period || runData.period_id },
+            req
+        });
 
         return successResponse(res, { id: runId, status: 'RUNNING' }, 'Reconciliation triggered successfully', 201);
     } catch (error) {

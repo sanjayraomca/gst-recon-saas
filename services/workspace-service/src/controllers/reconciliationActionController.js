@@ -1,5 +1,6 @@
 const ReconciliationActionModel = require('../models/reconciliationActionModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const takeAction = async (req, res) => {
     try {
@@ -12,6 +13,17 @@ const takeAction = async (req, res) => {
 
         // TODO: Verify result belongs to workspace (Model or query constraint)
         const action = await ReconciliationActionModel.createAction(resultId, actionData, userId);
+
+        await logActivity({
+            userId,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'RECON_ACTION',
+            entityType: 'ReconciliationAction',
+            entityId: action.id,
+            details: { resultId, type: actionData.action_type },
+            req
+        });
 
         return successResponse(res, action, 'Action recorded successfully', 201);
     } catch (error) {

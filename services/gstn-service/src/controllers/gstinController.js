@@ -1,6 +1,7 @@
 const GSTIN = require('../models/gstin');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { encrypt } = require('../../../shared/src/utils/encryption');
 
 const createGSTIN = async (req, res) => {
@@ -72,6 +73,17 @@ const createGSTIN = async (req, res) => {
             // Silently fail or use proper logger if available
         }
 
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'ADD_GSTIN',
+            entityType: 'GSTIN',
+            entityId: newGSTIN.id,
+            details: { gstin: newGSTIN.gstin },
+            req
+        });
+
         return successResponse(res, newGSTIN, 'GSTIN registered successfully');
     } catch (error) {
         return errorResponse(res, error);
@@ -113,6 +125,17 @@ const updateGSTIN = async (req, res) => {
 
         const updatedGSTIN = await GSTIN.update(id, updates);
         if (!updatedGSTIN) return res.status(404).json({ error: 'GSTIN not found' });
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId: req.headers['x-workspace-id'] || null,
+            actionType: 'UPDATE_GSTIN',
+            entityType: 'GSTIN',
+            entityId: id,
+            details: { gstin: updatedGSTIN.gstin },
+            req
+        });
 
         return successResponse(res, updatedGSTIN, 'GSTIN updated successfully');
     } catch (error) {
