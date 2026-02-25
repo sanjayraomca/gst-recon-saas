@@ -14,6 +14,7 @@ class GSTRImportModel {
     static async createImportRecord(importData) {
         const {
             tenantUuid,
+            workspaceId = null,
             gstinRecipient,
             returnPeriod,
             financialYear,
@@ -31,6 +32,7 @@ class GSTRImportModel {
         const query = `
             INSERT INTO gstr_import_master (
                 tenant_uuid,
+                workspace_id,
                 gstin_recipient,
                 return_period,
                 financial_year,
@@ -45,12 +47,13 @@ class GSTRImportModel {
                 status,
                 total_record,
                 file_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
         `;
 
         const values = [
             tenantUuid,
+            workspaceId,
             gstinRecipient,
             returnPeriod,
             financialYear,
@@ -66,6 +69,7 @@ class GSTRImportModel {
             0,
             fileHash
         ];
+
 
         try {
             const result = await db.raw(query, values);
@@ -84,20 +88,22 @@ class GSTRImportModel {
      * @param {object} extraInfo - Additional metadata
      */
     static async updateImportStatus(importFilingId, status, totalRecord = null, extraInfo = null) {
-        let query = `
-            UPDATE gstr_import_master 
-            SET status = ?
-        `;
+        let query = `UPDATE gstr_import_master SET status = ?`;
         const values = [status];
 
         if (totalRecord !== null) {
             query += `, total_record = ?`;
             values.push(totalRecord);
         }
-
         if (extraInfo !== null) {
             query += `, extra_info = ?`;
             values.push(JSON.stringify(extraInfo));
+        }
+        if (status === 'Processing') {
+            query += `, started_at = NOW()`;
+        }
+        if (['Completed', 'PartiallyCompleted', 'Failed'].includes(status)) {
+            query += `, completed_at = NOW()`;
         }
 
         query += ` WHERE import_filing_id = ? RETURNING *`;
@@ -109,6 +115,96 @@ class GSTRImportModel {
         } catch (error) {
             console.error('Error updating import status:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Update import master with per-section counters and final status.
+     * @param {string} importFilingId
+     * @param {object} counters - { b2b, b2ba, cdnr, cdnra, impg, isd, normalized }
+     * @param {string} status   - final status string
+     * @param {string} [statusMessage]
+     */
+    static async updateImportStatusWithCounters(importFilingId, counters = {}, status = 'Completed', statusMessage = null) {
+        const {
+            b2b = 0, b2ba = 0, cdnr = 0, cdnra = 0,
+            impg = 0, isd = 0, normalized = 0
+        } = counters;
+
+        const totalRecord = b2b + b2ba + cdnr + cdnra + impg + isd;
+
+        const query = `
+            UPDATE gstr_import_master SET
+                status            = ?,
+                status_message    = ?,
+                total_record      = ?,
+                total_b2b         = ?,
+                total_b2ba        = ?,
+                total_cdnr        = ?,
+                total_cdnra       = ?,
+                total_impg        = ?,
+                total_isd         = ?,
+                total_normalized  = ?,
+                completed_at      = NOW()
+            WHERE import_filing_id = ?
+            RETURNING *
+        `;
+        const values = [
+            status, statusMessage, totalRecord,
+            b2b, b2ba, cdnr, cdnra, impg, isd, normalized,
+            importFilingId
+        ];
+
+        try {
+            const result = await db.raw(query, values);
+            return result.rows[0];
+        } catch (error) {
+            console.error('Error updating import status with counters:', error);
+            throw error;
+        }
+    }
+
+    // ─── Section-level Import Logs ────────────────────────────────────────────
+
+    /**
+     * Open a log entry for a section being processed.
+     */
+    static async createImportLog(importFilingId, section, sheetName = null) {
+        const query = `
+            INSERT INTO gstr_import_logs (import_filing_id, section, sheet_name, status)
+            VALUES (?, ?, ?, 'Processing')
+            RETURNING id
+        `;
+        try {
+            const result = await db.raw(query, [importFilingId, section, sheetName]);
+            return result.rows[0]?.id;
+        } catch (err) {
+            // Logs are best-effort — never break the import
+            console.warn('[importLog] createImportLog error:', err.message);
+            return null;
+        }
+    }
+
+    /**
+     * Close a log entry with final counts.
+     */
+    static async finishImportLog(logId, { rowsFound = 0, rowsInserted = 0, rowsSkipped = 0, rowsNormalized = 0, status = 'Done', errorMessage = null } = {}) {
+        if (!logId) return;
+        const query = `
+            UPDATE gstr_import_logs SET
+                rows_found       = ?,
+                rows_inserted    = ?,
+                rows_skipped     = ?,
+                rows_normalized  = ?,
+                status           = ?,
+                error_message    = ?,
+                completed_at     = NOW()
+            WHERE id = ?
+        `;
+        try {
+            await db.raw(query, [rowsFound, rowsInserted, rowsSkipped, rowsNormalized, status, errorMessage, logId]);
+        } catch (err) {
+            console.warn('[importLog] finishImportLog error:', err.message);
         }
     }
 

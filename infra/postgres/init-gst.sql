@@ -299,15 +299,6 @@ CREATE TABLE state_code_master (
 -- DOMAIN 4.1: GSTR-2B RESTRUCTURED (Partitioned)
 -- ============================================
 
-CREATE TABLE gstr_import_file_master (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    gstin VARCHAR(15) NOT NULL,
-    return_period VARCHAR(255) NOT NULL, -- Format: MMYYYY
-    filing_date DATE,
-    status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PROCESSED, ERROR
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (gstin, return_period)
-);
 
 
 CREATE OR REPLACE FUNCTION clean_invoice_number(inv_num text) RETURNS text AS $$
@@ -553,43 +544,63 @@ ON CONFLICT (state) DO NOTHING;
 CREATE TABLE IF NOT EXISTS gstr_import_master (
     import_filing_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_uuid UUID NOT NULL,
+    workspace_id UUID,                              -- Task 1: workspace association
     gstin_recipient VARCHAR(15) NOT NULL,
     return_period VARCHAR(255) NOT NULL,
     financial_year VARCHAR(50) NOT NULL,
     generation_date DATE NOT NULL,
     upload_timestamp TIMESTAMP DEFAULT NOW(),
-    import_type VARCHAR(20) NOT NULL 
+    import_type VARCHAR(20) NOT NULL
         CHECK (import_type IN ('GSTR1', 'GSTR2A', 'GSTR2B', 'GSTR3B', 'GSTR4', 'GSTR6', 'GSTR7', 'GSTR8', 'GSTR9', 'GSTR9C', 'SALES_REGISTER', 'PURCHASE_REGISTER')),
     original_filename VARCHAR(500),
     uploaded_filepath TEXT,
     uploaded_file_url TEXT,
     extra_info JSONB DEFAULT '{}',
-    total_record INTEGER DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'Pending' 
-        CHECK (status IN ('Pending', 'InProcess', 'Completed', 'Failed')),
+
+    -- Task 7: Upgraded status lifecycle
+    status VARCHAR(20) DEFAULT 'Pending'
+        CHECK (status IN ('Pending', 'Processing', 'Normalizing', 'Completed', 'PartiallyCompleted', 'Failed')),
+    status_message TEXT,                            -- Human-readable status detail
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+
+    -- Task 6: Per-section import summary counters
+    total_record INTEGER DEFAULT 0,                 -- Total records across all sections
+    total_b2b INTEGER DEFAULT 0,
+    total_b2ba INTEGER DEFAULT 0,
+    total_cdnr INTEGER DEFAULT 0,
+    total_cdnra INTEGER DEFAULT 0,
+    total_impg INTEGER DEFAULT 0,
+    total_isd INTEGER DEFAULT 0,
+    total_normalized INTEGER DEFAULT 0,
+
     imported_by UUID,
     user_email VARCHAR(255),
-    file_hash VARCHAR(64)                           -- MD5 hash of uploaded file for exact duplicate detection
+    file_hash VARCHAR(64)                           -- MD5 hash for exact duplicate detection
 );
 
--- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_gstr_import_tenant ON gstr_import_master(tenant_uuid);
-CREATE INDEX IF NOT EXISTS idx_gstr_import_gstin ON gstr_import_master(gstin_recipient);
-CREATE INDEX IF NOT EXISTS idx_gstr_import_period ON gstr_import_master(return_period);
-CREATE INDEX IF NOT EXISTS idx_gstr_import_status ON gstr_import_master(status);
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_gstr_import_tenant    ON gstr_import_master(tenant_uuid);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_workspace ON gstr_import_master(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_gstin     ON gstr_import_master(gstin_recipient);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_period    ON gstr_import_master(return_period);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_status    ON gstr_import_master(status);
 CREATE INDEX IF NOT EXISTS idx_gstr_import_timestamp ON gstr_import_master(upload_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_gstr_import_type ON gstr_import_master(import_type);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_type      ON gstr_import_master(import_type);
+CREATE INDEX IF NOT EXISTS idx_gstr_import_filing_id ON gstr_import_master(import_filing_id);
 
--- Add foreign key constraints
-ALTER TABLE gstr_import_master 
-    ADD CONSTRAINT fk_gstr_import_tenant 
+-- Foreign key constraints
+ALTER TABLE gstr_import_master
+    ADD CONSTRAINT fk_gstr_import_tenant
     FOREIGN KEY (tenant_uuid) REFERENCES tenants(id) ON DELETE CASCADE;
 
-ALTER TABLE gstr_import_master 
-    ADD CONSTRAINT fk_gstr_import_user 
-    FOREIGN KEY (imported_by) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE gstr_import_master
+    ADD CONSTRAINT fk_gstr_import_workspace
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL;
 
-CREATE INDEX IF NOT EXISTS idx_gstr_import_filing_id ON gstr_import_master(import_filing_id);
+ALTER TABLE gstr_import_master
+    ADD CONSTRAINT fk_gstr_import_user
+    FOREIGN KEY (imported_by) REFERENCES users(id) ON DELETE SET NULL;
 
 -- Detail Table for GSTR-2B B2B Invoices
 CREATE TABLE IF NOT EXISTS gstr_2b_b2b_invoices (
@@ -601,7 +612,9 @@ CREATE TABLE IF NOT EXISTS gstr_2b_b2b_invoices (
     trade_name VARCHAR(255),                        -- Supplier Name
     
     -- Invoice Details
-    invoice_number VARCHAR(50) NOT NULL,
+    invoice_number_raw VARCHAR(100),                -- Original invoice number as-is from the Excel sheet
+    invoice_number VARCHAR(50) NOT NULL,            -- Cleaned/normalized for matching
+
     invoice_type VARCHAR(20),                       -- Regular, SEZWP, etc.
     invoice_date DATE NOT NULL,
     return_period VARCHAR(255),                      -- e.g. "122025" — used in duplicate detection unique constraint
@@ -1079,7 +1092,7 @@ CREATE TABLE sales_invoice_items (
 
 
 -- ========================================================
--- 3️⃣ EXPENSE_VOUCHERS
+-- 3️⃣ EXPENSE_VOUCHERS and PURCHASE_INVOICES
 -- ========================================================
 
 CREATE TABLE expense_vouchers (
@@ -1151,7 +1164,7 @@ CREATE TABLE expense_vouchers (
 
 
 -- ========================================================
--- 4️⃣ EXPENSE_ITEMS
+-- 4️⃣ EXPENSE_ITEMS and PURCHASE_INVOICE_ITEMS
 -- ========================================================
 
 CREATE TABLE expense_items (
@@ -1197,79 +1210,281 @@ COMMIT;
 -- ========================================================
 
 
+
 -- ========================================================
--- DOMAIN 13: PURCHASE REGISTER (BOOKS)
+-- DOMAIN 14: NORMALIZED GSTR-2B INVOICES
+-- Single unified table across all GSTR-2B sections
+-- (B2B / B2BA / CDNR / CDNRA / IMPG / IMPGSEZ / ISD / ISDA)
 -- ========================================================
 
-CREATE TABLE IF NOT EXISTS purchase_invoices (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    gstin_id UUID, -- Optional link to gstin_master
-    supplier_id UUID, -- Optional link to supplier_master
-    
-    -- Invoice Details from CSV
-    invoice_number VARCHAR(100) NOT NULL, -- vchr_no
-    invoice_date DATE NOT NULL,           -- vchr_date
-    posting_date DATE,
-    invoice_type VARCHAR(50),             -- vchr_type (EXP)
-    
-    -- Supplier Details
-    supplier_gstin VARCHAR(15),           -- party_gstn_no
-    supplier_name VARCHAR(500),           -- party_name
-    supplier_state_code VARCHAR(10),      -- party_state
-    
-    -- Tax & Amounts
-    taxable_value NUMERIC(15, 2) DEFAULT 0, -- total_taxable_amount
-    cgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cgst_tax_amount
-    sgst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_sgst_tax_amount
-    igst_amount NUMERIC(15, 2) DEFAULT 0,   -- total_igst_tax_amount
-    cess_amount NUMERIC(15, 2) DEFAULT 0,   -- total_cess_tax_amount
-    
-    invoice_amount NUMERIC(15, 2) DEFAULT 0, -- invoice_amount
-    round_off_amount NUMERIC(8, 2) DEFAULT 0, -- round_off_amount
-    
-    -- Meta from CSV
-    place_of_supply_code VARCHAR(10),
-    supply_type VARCHAR(50),              -- gstr_category
-    reverse_charge BOOLEAN DEFAULT FALSE, -- reverse_charge
-    is_interstate BOOLEAN DEFAULT FALSE,  -- inter_state
-    is_amendment BOOLEAN DEFAULT FALSE,   -- is_amendment
-    filing_period VARCHAR(20),            -- filing_period
-    tax_rate NUMERIC(5, 2),               -- tax_per
-    
-    -- Fields in Model but missing in CSV (will be nullable)
-    ecommerce_gstin VARCHAR(15),
-    hsn_sac_code VARCHAR(10),
-    hsn_sac_description TEXT,
-    item_description TEXT,
-    quantity NUMERIC(15, 3),
-    unit_price NUMERIC(15, 2),
-    discount_amount NUMERIC(15, 2) DEFAULT 0,
-    
-    -- System Fields
-    itc_eligibility_status VARCHAR(50) DEFAULT 'ELIGIBLE',
-    itc_claimed BOOLEAN DEFAULT FALSE,
-    payment_status VARCHAR(20) DEFAULT 'UNPAID',
-    payment_date DATE,
-    payment_amount NUMERIC(15, 2),
-    source_system VARCHAR(50) DEFAULT 'MANUAL',
-    source_file_id UUID,
-    raw_data_hash VARCHAR(64),
-    
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS normalized_gstr2b_invoices (
+
+    -- ==============================
+    -- PRIMARY INFO
+    -- ==============================
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+
+    workspace_id UUID NOT NULL,
+    tenant_id UUID,
+    import_filing_id UUID NOT NULL,
+
+    -- Source tracking
+    source_section VARCHAR(30) NOT NULL,
+    source_table VARCHAR(50),
+    source_row_id UUID,
+    source_sheet_name VARCHAR(50),
+    source_row_number INTEGER,
+
+    -- ==============================
+    -- DOCUMENT CLASSIFICATION
+    -- ==============================
+    document_category VARCHAR(30),
+    document_type VARCHAR(30),
+    is_amendment BOOLEAN DEFAULT FALSE,
+    amended_document_number TEXT,
+    amended_document_date DATE,
+    is_active BOOLEAN DEFAULT TRUE,
+
+    -- ==============================
+    -- PARTY INFORMATION
+    -- ==============================
+    supplier_gstin VARCHAR(15),
+    supplier_name TEXT,
+    recipient_gstin VARCHAR(15),
+    place_of_supply VARCHAR(100),
+    reverse_charge BOOLEAN DEFAULT FALSE,
+
+    -- ==============================
+    -- DOCUMENT DETAILS
+    -- ==============================
+    document_number_raw TEXT,
+    document_number_clean TEXT,
+    document_date DATE,
+    document_value NUMERIC(18,2),
+    invoice_type VARCHAR(30),
+
+    -- For import / BOE
+    port_code VARCHAR(20),
+    boe_number TEXT,
+    boe_date DATE,
+    icegate_reference_date DATE,
+
+    -- For ISD
+    isd_document_number TEXT,
+    isd_document_date DATE,
+    original_invoice_number TEXT,
+    original_invoice_date DATE,
+
+    -- ==============================
+    -- TAX VALUES
+    -- ==============================
+    taxable_value NUMERIC(18,2) DEFAULT 0,
+    igst NUMERIC(18,2) DEFAULT 0,
+    cgst NUMERIC(18,2) DEFAULT 0,
+    sgst NUMERIC(18,2) DEFAULT 0,
+    cess NUMERIC(18,2) DEFAULT 0,
+    total_tax NUMERIC(18,2),
+
+    -- ==============================
+    -- ITC INFORMATION
+    -- ==============================
+    itc_available BOOLEAN,
+    itc_eligibility VARCHAR(50),
+    itc_reason TEXT,
+    applicable_tax_rate_percent NUMERIC(10,2),
+
+    -- ==============================
+    -- GST FILING INFO
+    -- ==============================
+    return_period VARCHAR(10),
+    filing_period VARCHAR(10),
+    filing_date DATE,
+    source_type VARCHAR(20) DEFAULT 'PORTAL',
+
+    -- ==============================
+    -- RECONCILIATION SUPPORT
+    -- ==============================
+    match_key TEXT,
+    match_key_v2 TEXT,
+    reconciliation_status VARCHAR(30),
+    reconciliation_run_id UUID,
+
+    -- ==============================
+    -- E-INVOICE INFO
+    -- ==============================
+    irn TEXT,
+    irn_date DATE,
+
+    -- ==============================
+    -- AUDIT & DEBUG
+    -- ==============================
+    payload_json JSONB,
+
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP,
+
+    -- Foreign Keys
+    CONSTRAINT fk_norm_gstr2b_workspace
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    CONSTRAINT fk_norm_gstr2b_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    CONSTRAINT fk_norm_gstr2b_import
+        FOREIGN KEY (import_filing_id) REFERENCES gstr_import_master(import_filing_id) ON DELETE CASCADE
 );
 
--- Indexes for Purchase Invoices
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_workspace ON purchase_invoices(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_gstin ON purchase_invoices(supplier_gstin);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date);
-CREATE INDEX IF NOT EXISTS idx_purchase_invoices_number ON purchase_invoices(invoice_number);
+-- Indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_tenant     ON normalized_gstr2b_invoices(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_workspace  ON normalized_gstr2b_invoices(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_import     ON normalized_gstr2b_invoices(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_period     ON normalized_gstr2b_invoices(return_period);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_supplier   ON normalized_gstr2b_invoices(supplier_gstin);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_section    ON normalized_gstr2b_invoices(source_section);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_recon      ON normalized_gstr2b_invoices(reconciliation_status);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_match_key  ON normalized_gstr2b_invoices(match_key);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_active     ON normalized_gstr2b_invoices(is_active) WHERE is_active = TRUE;
 
--- Trigger for updated_at
-DROP TRIGGER IF EXISTS update_purchase_invoices_updated_at ON purchase_invoices;
-CREATE TRIGGER update_purchase_invoices_updated_at
-BEFORE UPDATE ON purchase_invoices
+-- Auto-update trigger for updated_at
+DROP TRIGGER IF EXISTS update_normalized_gstr2b_invoices_updated_at ON normalized_gstr2b_invoices;
+CREATE TRIGGER update_normalized_gstr2b_invoices_updated_at
+BEFORE UPDATE ON normalized_gstr2b_invoices
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+-- ========================================================
+-- END OF DOMAIN 14
+-- ========================================================
+
+-- ========================================================
+-- DOMAIN 15: IMPORT LOGS (Task 2)
+-- Per-section detailed logging for each import run
+-- ========================================================
+
+CREATE TABLE IF NOT EXISTS gstr_import_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    import_filing_id UUID NOT NULL,
+
+    -- Section being processed
+    section VARCHAR(30) NOT NULL,          -- B2B / B2BA / CDNR / CDNRA / IMPG / ISD
+    sheet_name VARCHAR(100),               -- Exact Excel sheet name
+
+    -- Counts
+    rows_found INTEGER DEFAULT 0,          -- Total rows parsed from sheet
+    rows_inserted INTEGER DEFAULT 0,       -- Rows actually written to section table
+    rows_skipped INTEGER DEFAULT 0,        -- Skipped (duplicate / invalid)
+    rows_normalized INTEGER DEFAULT 0,     -- Rows written to normalized table
+
+    -- Status of this section's processing
+    status VARCHAR(20) DEFAULT 'Pending'
+        CHECK (status IN ('Pending', 'Processing', 'Done', 'Failed')),
+    error_message TEXT,
+
+    started_at TIMESTAMP DEFAULT NOW(),
+    completed_at TIMESTAMP,
+
+    CONSTRAINT fk_import_log_filing
+        FOREIGN KEY (import_filing_id) REFERENCES gstr_import_master(import_filing_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_logs_filing  ON gstr_import_logs(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_import_logs_section ON gstr_import_logs(section);
+
+-- ========================================================
+-- END OF DOMAIN 15
+-- ========================================================
+
+
+-- ========================================================
+-- DOMAIN 14 ADDITIONS: Unique constraint + composite index
+-- ========================================================
+
+-- Named UNIQUE constraint for idempotent normalization.
+-- ON CONFLICT (import_filing_id, source_section, source_row_id) in batchInsert targets this.
+ALTER TABLE normalized_gstr2b_invoices
+    DROP CONSTRAINT IF EXISTS uq_norm_source,
+    ADD CONSTRAINT uq_norm_source
+    UNIQUE (import_filing_id, source_section, source_row_id);
+
+-- Composite index for workspace listing + match_key lookups
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_ws_matchkey
+    ON normalized_gstr2b_invoices(workspace_id, match_key);
+
+-- ========================================================
+-- DOMAIN 16: LISTING VIEW (Task 5)
+-- v_gstr2b_listing — optimized read model for UI listing
+-- ========================================================
+
+CREATE OR REPLACE VIEW v_gstr2b_listing AS
+SELECT
+    n.id,
+    n.workspace_id,
+    n.tenant_id,
+    n.import_filing_id,
+    n.source_section,
+    n.document_category,
+    n.document_type,
+    n.is_amendment,
+    n.is_active,
+
+    -- Supplier
+    n.supplier_gstin,
+    n.supplier_name,
+    n.recipient_gstin,
+    n.place_of_supply,
+    n.reverse_charge,
+
+    -- Document
+    n.document_number_raw,
+    n.document_number_clean,
+    n.document_date,
+    n.document_value,
+
+    -- Amendments
+    n.amended_document_number,
+    n.amended_document_date,
+    n.original_invoice_number,
+    n.original_invoice_date,
+
+    -- Tax
+    n.taxable_value,
+    n.igst,
+    n.cgst,
+    n.sgst,
+    n.cess,
+    COALESCE(n.total_tax, n.igst + n.cgst + n.sgst + n.cess) AS total_tax,
+
+    -- ITC
+    n.itc_available,
+    n.itc_eligibility,
+    n.applicable_tax_rate_percent,
+
+    -- Period
+    n.return_period,
+    n.filing_period,
+    n.filing_date,
+
+    -- E-Invoice
+    n.irn,
+    n.irn_date,
+
+    -- Import metadata
+    m.original_filename,
+    m.upload_timestamp,
+    m.import_type,
+
+    n.created_at
+
+FROM normalized_gstr2b_invoices n
+JOIN gstr_import_master m USING (import_filing_id)
+WHERE n.is_active = TRUE
+  AND n.deleted_at IS NULL;
+
+-- ========================================================
+-- END OF DOMAIN 16
+-- ========================================================
+
+-- Task 4: Composite listing index for fast frontend queries
+-- (workspace + period + section + date — covers the main listing sort/filter pattern)
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_listing
+    ON normalized_gstr2b_invoices(workspace_id, return_period, source_section, document_date DESC)
+    WHERE is_active = TRUE AND deleted_at IS NULL;

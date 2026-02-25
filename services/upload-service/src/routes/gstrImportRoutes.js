@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const GSTRImportController = require('../controllers/gstrImportController');
+const GSTR2BController = require('../controllers/gstr2bController');
+const BookImportController = require('../controllers/bookImportController');
 const { verifyToken } = require('../../../shared/src/middleware/authMiddleware');
 const multer = require('multer');
 const fs = require('fs');
@@ -51,6 +53,27 @@ const upload = multer({
 });
 
 /**
+ * Configure Multer for GSTR-2B specific legacy flow
+ */
+const gstr2bStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = '/app/uploads/gstr2b';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'gstr2b-' + uniqueSuffix + '-' + file.originalname);
+    }
+});
+const gstr2bUpload = multer({
+    storage: gstr2bStorage,
+    limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+/**
  * Routes for GSTR Import
  */
 
@@ -79,4 +102,21 @@ router.get('/import/history', verifyToken, GSTRImportController.getImportHistory
 // Get specific import details
 router.get('/import/:import_filing_id', verifyToken, GSTRImportController.getImportById);
 
+// ─── GSTR-2B Normalized Listing ─────────────────────────────────────────────
+// Paginated invoice listing: GET /gst-import/gstr2b/list
+//   Query: return_period, section, supplier_gstin, document_number, itc_available, page, page_size
+router.get('/gstr2b/list', verifyToken, GSTRImportController.listGstr2bInvoices);
+
+// Section-level totals: GET /gst-import/gstr2b/summary
+//   Query: return_period
+router.get('/gstr2b/summary', verifyToken, GSTRImportController.getGstr2bSummary);
+
+// Legacy GSTR-2B upload
+router.post('/gstr2b/upload', verifyToken, gstr2bUpload.single('file'), GSTR2BController.uploadGSTR2B);
+
+// Book Data (Sales/Purchase)
+router.post('/book/sales/upload', verifyToken, upload.single('file'), BookImportController.uploadSalesBook);
+router.post('/book/purchase/upload', verifyToken, upload.single('file'), BookImportController.uploadPurchaseBook);
+
 module.exports = router;
+

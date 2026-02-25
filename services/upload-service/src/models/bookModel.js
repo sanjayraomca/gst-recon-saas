@@ -1,4 +1,5 @@
 const db = require('../../../shared/src/db/connection');
+const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
 
 /**
  * Model for Book Data operations (Sales & Purchase)
@@ -90,6 +91,15 @@ class BookModel {
             let totalInserted = 0;
             for (const v of vouchers) {
                 const { header, items } = v;
+
+                // Ensure supplier GSTIN exists in gstin_master (via shared reusable service)
+                if (header.supplier_gstin) {
+                    await GstinMasterService.ensureGstin(
+                        header.supplier_gstin,
+                        { legal_name: header.supplier_name },
+                        trx
+                    );
+                }
 
                 // Insert/Update Header
                 // Inconsistency note: init-gst.sql doesn't show a unique constraint for expense_vouchers

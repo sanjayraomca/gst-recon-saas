@@ -23,8 +23,6 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/uploads', uploadRoutes);
-app.use('/gst-import/gstr2b', gstr2bRoutes);
-app.use('/gst-import/book', bookImportRoutes);
 app.use('/gst-import', gstrImportRoutes);
 
 // Error Handler

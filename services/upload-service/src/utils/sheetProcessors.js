@@ -224,6 +224,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
             const b2bRecord = {
                 ...commonData,
                 target_table: 'gstr_2b_b2b_invoices',
+                invoice_number_raw: invNumRaw?.toString().trim() || null,
                 invoice_number: invNum,
                 invoice_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'Regular',
                 invoice_date: parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null),

@@ -1,4 +1,6 @@
 const GSTRImportModel = require('../models/gstrImportModel');
+const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
+const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
 const minioClient = require('../utils/minioClient');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const fs = require('fs');
@@ -228,6 +230,7 @@ class GSTRImportController {
             // Create database record (always create a new master record per upload)
             const importRecord = await GSTRImportModel.createImportRecord({
                 tenantUuid,
+                workspaceId,
                 gstinRecipient,
                 returnPeriod: return_period,
                 financialYear,
@@ -246,9 +249,16 @@ class GSTRImportController {
                 fileHash
             });
 
-            // PROCESS FILE — insert only new invoices (ON CONFLICT DO NOTHING handles duplicates)
+
+            // PROCESS FILE
             let totalInserted = 0;
             let totalSkipped = 0;
+
+            // Per-section counters (Task 6)
+            const sectionCounters = { b2b: 0, b2ba: 0, cdnr: 0, cdnra: 0, impg: 0, isd: 0, normalized: 0 };
+
+            // Mark as Processing (Task 7)
+            await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Processing');
 
             try {
                 const xlsx = require('xlsx');
@@ -257,6 +267,15 @@ class GSTRImportController {
                 let totalRecords = 0;
 
                 if (['GSTR2B', 'GSTR-2B', 'GSTR2A', 'GSTR-2A'].includes(gstr_type.toUpperCase())) {
+
+                    // Shared context passed to every normalizer mapper
+                    const normCtx = {
+                        tenantId: tenantUuid,
+                        workspaceId,
+                        importFilingId: importRecord.import_filing_id,
+                        returnPeriod: return_period
+                    };
+
                     for (const sheetName of workbook.SheetNames) {
                         const sheet = workbook.Sheets[sheetName];
                         const jsonRows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
@@ -277,6 +296,7 @@ class GSTRImportController {
                                     workspace_id: workspaceId,
                                     gstin_supplier: r.gstin_supplier,
                                     trade_name: r.trade_name,
+                                    invoice_number_raw: r.invoice_number_raw,
                                     invoice_number: r.invoice_number,
                                     invoice_type: r.invoice_type,
                                     invoice_date: r.invoice_date,
@@ -390,28 +410,57 @@ class GSTRImportController {
                                 }));
 
                             if (b2bInvoices.length > 0) {
+                                // Upsert supplier GSTINs into gstin_master
+                                const supplierGstins = b2bInvoices.map(r => r.gstin_supplier).filter(Boolean);
+                                if (supplierGstins.length > 0) {
+                                    await GstinMasterService.ensureMultiple(supplierGstins);
+                                }
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2B', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertB2BInvoices(b2bInvoices);
+                                const normRows = NormalizedGstr2bModel.mapB2B(b2bInvoices, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.b2b += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (b2bInvoices.length - inserted);
+                                totalSkipped += b2bInvoices.length - inserted;
                                 totalRecords += b2bInvoices.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: b2bInvoices.length, rowsInserted: inserted, rowsSkipped: b2bInvoices.length - inserted, rowsNormalized: normIns });
                             }
                             if (b2baInvoices.length > 0) {
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2BA', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertB2BAInvoices(b2baInvoices);
+                                const normRows = NormalizedGstr2bModel.mapB2BA(b2baInvoices, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.b2ba += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (b2baInvoices.length - inserted);
+                                totalSkipped += b2baInvoices.length - inserted;
                                 totalRecords += b2baInvoices.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: b2baInvoices.length, rowsInserted: inserted, rowsSkipped: b2baInvoices.length - inserted, rowsNormalized: normIns });
                             }
                             if (cdnrNotes.length > 0) {
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNR', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertCDNR(cdnrNotes);
+                                const normRows = NormalizedGstr2bModel.mapCDNR(cdnrNotes, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.cdnr += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (cdnrNotes.length - inserted);
+                                totalSkipped += cdnrNotes.length - inserted;
                                 totalRecords += cdnrNotes.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnrNotes.length, rowsInserted: inserted, rowsSkipped: cdnrNotes.length - inserted, rowsNormalized: normIns });
                             }
                             if (cdnraNotes.length > 0) {
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNRA', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertCDNRA(cdnraNotes);
+                                const normRows = NormalizedGstr2bModel.mapCDNRA(cdnraNotes, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.cdnra += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (cdnraNotes.length - inserted);
+                                totalSkipped += cdnraNotes.length - inserted;
                                 totalRecords += cdnraNotes.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnraNotes.length, rowsInserted: inserted, rowsSkipped: cdnraNotes.length - inserted, rowsNormalized: normIns });
                             }
                         }
                         else if (sName.includes('IMPG') || sName.includes('IMPS')) {
@@ -434,10 +483,16 @@ class GSTRImportController {
                             }));
 
                             if (impgRecords.length > 0) {
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'IMPG', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertIMPG(impgRecords);
+                                const normRows = NormalizedGstr2bModel.mapIMPG(impgRecords, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.impg += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (impgRecords.length - inserted);
+                                totalSkipped += impgRecords.length - inserted;
                                 totalRecords += impgRecords.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: impgRecords.length, rowsInserted: inserted, rowsSkipped: impgRecords.length - inserted, rowsNormalized: normIns });
                             }
                         }
                         else if (sName.includes('ISD')) {
@@ -463,10 +518,16 @@ class GSTRImportController {
                             }));
 
                             if (isdRecords.length > 0) {
+                                const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'ISD', sheetName);
                                 const { inserted } = await GSTRImportModel.batchInsertISD(isdRecords);
+                                const normRows = NormalizedGstr2bModel.mapISD(isdRecords, normCtx);
+                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                sectionCounters.isd += inserted;
+                                sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += (isdRecords.length - inserted);
+                                totalSkipped += isdRecords.length - inserted;
                                 totalRecords += isdRecords.length;
+                                await GSTRImportModel.finishImportLog(logId, { rowsFound: isdRecords.length, rowsInserted: inserted, rowsSkipped: isdRecords.length - inserted, rowsNormalized: normIns });
                             }
                         }
                     }
@@ -484,25 +545,18 @@ class GSTRImportController {
                     throw new Error('No valid records found in the uploaded file. Please ensure the file format is correct and contains data.');
                 }
 
-                // Update status to Completed
-                // Update status to Completed with detailed stats
-                await GSTRImportModel.updateImportStatus(
+                // Mark as Normalizing then finalize with counters (Tasks 6 & 7)
+                await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Normalizing');
+
+                const finalStatus = totalInserted > 0 ? 'Completed' : 'PartiallyCompleted';
+                await GSTRImportModel.updateImportStatusWithCounters(
                     importRecord.import_filing_id,
-                    'Completed',
-                    totalInserted,   // store inserted count as main record count
-                    {
-                        minioPath: minioResult.objectPath,
-                        isUpdate,
-                        previousImportFilingId: previousImport?.import_filing_id || null,
-                        summary: {
-                            total_processed: totalRecords,
-                            inserted: totalInserted,
-                            skipped: totalSkipped
-                        }
-                    }
+                    sectionCounters,
+                    finalStatus,
+                    `${totalInserted} inserted, ${totalSkipped} skipped across all sections`
                 );
 
-                importRecord.status = 'Completed';
+                importRecord.status = finalStatus;
                 importRecord.total_record = totalInserted;
 
             } catch (processError) {
@@ -628,6 +682,129 @@ class GSTRImportController {
         } catch (error) {
             console.error('Get Import By ID Error:', error);
             return errorResponse(res, error);
+        }
+    }
+
+    /**
+     * List normalized GSTR-2B invoices (paginated, filterable)
+     * GET /gst-import/gstr2b/list
+     *
+     * Query params:
+     *   return_period    MMYYYY
+     *   section          B2B | B2BA | CDNR | CDNRA | IMPG | ISD | ISDA
+     *   supplier_gstin
+     *   document_number
+     *   itc_available    true | false
+     *   page             default 1
+     *   page_size        default 50 (max 500)
+     */
+    static async listGstr2bInvoices(req, res) {
+        try {
+            const workspaceId = req.headers['x-workspace-id'];
+            if (!workspaceId) {
+                return errorResponse(res, { message: 'x-workspace-id header is required', isCustom: true }, 400);
+            }
+
+            const {
+                return_period,
+                section,
+                supplier_gstin,
+                document_number,
+                itc_available,
+                from_date,
+                to_date,
+                min_amount,
+                max_amount,
+                state_codes,
+                sort_by,
+                sort_order,
+                page,
+                page_size,
+            } = req.query;
+
+            console.log(`[listGstr2bInvoices] Workspace: ${workspaceId}, Period: ${return_period}, Section: ${section}`);
+
+
+            const result = await NormalizedGstr2bModel.listInvoices({
+                workspaceId,
+                returnPeriod: return_period,
+                sourceSection: section,
+                supplierGstin: supplier_gstin,
+                documentNumber: document_number,
+                itcAvailable: itc_available,
+                fromDate: from_date,
+                toDate: to_date,
+                minAmount: min_amount,
+                maxAmount: max_amount,
+                stateCodes: state_codes,
+                sortBy: sort_by,
+                sortOrder: sort_order,
+                page,
+                pageSize: page_size,
+            });
+
+            return successResponse(res, result, 'Invoices retrieved successfully');
+
+        } catch (error) {
+            console.error('[listGstr2bInvoices] Error:', error);
+            return errorResponse(res, {
+                message: error.message || 'Internal Server Error',
+                isCustom: error.message?.includes('required'),
+            }, error.message?.includes('required') ? 400 : 500);
+        }
+    }
+
+    /**
+     * Aggregated summary of normalized GSTR-2B invoices grouped by section
+     * GET /gst-import/gstr2b/summary
+     *
+     * Query params:
+     *   return_period  MMYYYY
+     */
+    static async getGstr2bSummary(req, res) {
+        try {
+            const workspaceId = req.headers['x-workspace-id'];
+            if (!workspaceId) {
+                return errorResponse(res, { message: 'x-workspace-id header is required', isCustom: true }, 400);
+            }
+
+            const {
+                return_period,
+                section,
+                supplier_gstin,
+                document_number,
+                itc_available,
+                from_date,
+                to_date,
+                min_amount,
+                max_amount,
+                state_codes
+            } = req.query;
+
+            console.log(`[getGstr2bSummary] Workspace: ${workspaceId}, Period: ${return_period}`);
+
+            const rows = await NormalizedGstr2bModel.getListingSummary({
+                workspaceId,
+                returnPeriod: return_period,
+                sourceSection: section,
+                supplierGstin: supplier_gstin,
+                documentNumber: document_number,
+                itcAvailable: itc_available,
+                fromDate: from_date,
+                toDate: to_date,
+                minAmount: min_amount,
+                maxAmount: max_amount,
+                stateCodes: state_codes,
+            });
+
+            return successResponse(res, rows, 'Summary retrieved successfully');
+
+        } catch (error) {
+            console.error('[getGstr2bSummary] Error:', error);
+            return errorResponse(res, {
+                message: error.message || 'Internal Server Error',
+                isCustom: error.message?.includes('required'),
+            }, error.message?.includes('required') ? 400 : 500);
         }
     }
 
