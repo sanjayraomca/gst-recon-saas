@@ -74,12 +74,26 @@ class BookDataModel {
                         .orWhere('si.customer_gstin', 'ilike', `%${search}%`);
                 });
             }
-            if (gstin) q = q.whereRaw(`trim(si.customer_gstin) ilike ?`, [`%${gstin.trim()}%`]);
+            if (gstin) {
+                q = q.where(function () {
+                    this.whereRaw(`trim(si.customer_gstin) ilike ?`, [`%${gstin.trim()}%`])
+                        .orWhere('si.customer_name', 'ilike', `%${gstin.trim()}%`);
+                });
+            }
             if (date_from) q = q.whereRaw(`si.invoice_date >= ?::date`, [date_from]);
             if (date_to) q = q.whereRaw(`si.invoice_date <= ?::date`, [date_to]);
             if (amt_min) q = q.whereRaw(`si.total_taxable_value >= ?`, [parseFloat(amt_min)]);
             if (amt_max) q = q.whereRaw(`si.total_taxable_value <= ?`, [parseFloat(amt_max)]);
-            if (place_of_supply) q = q.where('si.place_of_supply', 'ilike', `%${place_of_supply}%`);
+            if (place_of_supply) {
+                const codes = place_of_supply.split(',').filter(Boolean);
+                if (codes.length > 0) {
+                    q = q.where(function () {
+                        codes.forEach(code => {
+                            this.orWhere('si.place_of_supply', 'ilike', `${code}%`);
+                        });
+                    });
+                }
+            }
             // sales_invoices has filing_status, not status
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
@@ -127,12 +141,26 @@ class BookDataModel {
                         .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
                 });
             }
-            if (gstin) q = q.where('ev.supplier_gstin', 'ilike', `%${gstin.trim()}%`);
+            if (gstin) {
+                q = q.where(function () {
+                    this.where('ev.supplier_gstin', 'ilike', `%${gstin.trim()}%`)
+                        .orWhere('ev.supplier_name', 'ilike', `%${gstin.trim()}%`);
+                });
+            }
             if (date_from) q = q.whereRaw(`ev.supplier_invoice_date >= ?::date`, [date_from]);
             if (date_to) q = q.whereRaw(`ev.supplier_invoice_date <= ?::date`, [date_to]);
             if (amt_min) q = q.whereRaw(`ev.taxable_total >= ?`, [parseFloat(amt_min)]);
             if (amt_max) q = q.whereRaw(`ev.taxable_total <= ?`, [parseFloat(amt_max)]);
-            if (place_of_supply) q = q.where('ev.place_of_supply', 'ilike', `%${place_of_supply}%`);
+            if (place_of_supply) {
+                const codes = place_of_supply.split(',').filter(Boolean);
+                if (codes.length > 0) {
+                    q = q.where(function () {
+                        codes.forEach(code => {
+                            this.orWhere('ev.place_of_supply', 'ilike', `${code}%`);
+                        });
+                    });
+                }
+            }
             // purchase_vouchers has a plain 'status' column
             if (status && status !== 'all') q = q.where('ev.status', status);
 

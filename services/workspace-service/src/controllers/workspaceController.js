@@ -1,5 +1,6 @@
 const Workspace = require('../models/workspace');
 const TenantWorkspace = require('../models/tenantWorkspace');
+const DashboardModel = require('../models/dashboardModel');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const knex = require('../../../shared/src/db/connection');
@@ -635,10 +636,22 @@ const inviteUser = async (req, res) => {
     }
 };
 
+const getDashboardMetrics = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const metrics = await DashboardModel.getMetrics(id);
+        return successResponse(res, metrics, 'Dashboard metrics fetched successfully');
+    } catch (error) {
+        console.error('getDashboardMetrics Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 module.exports = {
     createWorkspace,
     listWorkspaces,
     getWorkspace,
     listWorkspaceUsers,
-    inviteUser
+    inviteUser,
+    getDashboardMetrics
 };
