@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 const crypto = require('crypto');
 
 /**
@@ -24,7 +24,7 @@ class PurchaseInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('purchase_invoices')
+        let query = knex('purchase_invoices')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
@@ -64,7 +64,7 @@ class PurchaseInvoiceModel {
      * Get single purchase invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await db('purchase_invoices')
+        return await knex('purchase_invoices')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId
@@ -81,9 +81,9 @@ class PurchaseInvoiceModel {
             .update(JSON.stringify(invoiceData))
             .digest('hex');
 
-        const [invoice] = await db('purchase_invoices')
+        const [invoice] = await knex('purchase_invoices')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 gstin_id: invoiceData.gstin_id,
                 supplier_id: invoiceData.supplier_id,
@@ -117,8 +117,8 @@ class PurchaseInvoiceModel {
                 source_system: invoiceData.source_system || 'MANUAL',
                 source_file_id: invoiceData.source_file_id,
                 raw_data_hash: hash,
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -145,9 +145,9 @@ class PurchaseInvoiceModel {
             }
         });
 
-        filteredData.updated_at = db.fn.now();
+        filteredData.updated_at = knex.fn.now();
 
-        const [invoice] = await db('purchase_invoices')
+        const [invoice] = await knex('purchase_invoices')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId

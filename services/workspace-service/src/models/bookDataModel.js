@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * BookDataModel
@@ -57,7 +57,7 @@ class BookDataModel {
 
         if (resolved.table === 'sales') {
             // --- sales_invoices ---
-            let q = db('sales_invoices as si')
+            let q = knex('sales_invoices as si')
                 .where('si.workspace_id', workspaceId);
 
             if (resolved.invoiceTypes) q = q.whereIn('si.invoice_type', resolved.invoiceTypes);
@@ -111,9 +111,9 @@ class BookDataModel {
                 .select(
                     'si.id',
                     'si.invoice_number as invoiceNo',
-                    db.raw("to_char(si.invoice_date, 'DD-MM-YYYY') as date"),
+                    knex.raw("to_char(si.invoice_date, 'DD-MM-YYYY') as date"),
                     'si.customer_name as party',
-                    db.raw("trim(si.customer_gstin) as gstin"),
+                    knex.raw("trim(si.customer_gstin) as gstin"),
                     'si.total_taxable_value as taxableAmt',
                     'si.total_cgst as cgst',
                     'si.total_sgst as sgst',
@@ -121,7 +121,7 @@ class BookDataModel {
                     'si.total_cess as cess',
                     'si.total_invoice_value as totalAmt',
                     'si.place_of_supply as placeOfSupply',
-                    db.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
+                    knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
                     'si.filing_status as status',
                     'si.invoice_type as docType'
                 )
@@ -131,7 +131,7 @@ class BookDataModel {
 
         } else if (resolved.table === 'purchase') {
             // --- purchase_vouchers ---
-            let q = db('purchase_vouchers as ev')
+            let q = knex('purchase_vouchers as ev')
                 .where('ev.workspace_id', workspaceId);
 
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
@@ -185,7 +185,7 @@ class BookDataModel {
                 .select(
                     'ev.id',
                     'ev.supplier_invoice_no as invoiceNo',
-                    db.raw("to_char(ev.supplier_invoice_date, 'DD-MM-YYYY') as date"),
+                    knex.raw("to_char(ev.supplier_invoice_date, 'DD-MM-YYYY') as date"),
                     'ev.supplier_name as party',
                     'ev.supplier_gstin as gstin',
                     'ev.taxable_total as taxableAmt',
@@ -222,7 +222,7 @@ class BookDataModel {
         const periodFilter = (alias, col) => {
             if (!period) return '';
             // period = 'YYYY-MM' OR 'YYYY-QN' handled client-side; backend expects YYYY-MM
-            return db.raw(`AND to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
+            return knex.raw(`AND to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
         };
 
         // Helper to parse period into SQL condition
@@ -240,18 +240,18 @@ class BookDataModel {
         ];
         const salesResults = {};
         for (const t of salesTypes) {
-            let q = db('sales_invoices as si').where('si.workspace_id', workspaceId);
+            let q = knex('sales_invoices as si').where('si.workspace_id', workspaceId);
             if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
             if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
             q = addPeriod(q, 'si', 'invoice_date');
             const [row] = await q.select(
-                db.raw('COUNT(*) as total'),
-                db.raw('COALESCE(SUM(si.total_taxable_value),0) as taxable'),
-                db.raw('COALESCE(SUM(si.total_igst),0) as igst'),
-                db.raw('COALESCE(SUM(si.total_cgst),0) as cgst'),
-                db.raw('COALESCE(SUM(si.total_sgst),0) as sgst'),
-                db.raw('COALESCE(SUM(si.total_cess),0) as cess'),
-                db.raw('COALESCE(SUM(si.total_invoice_value),0) as invoice_value')
+                knex.raw('COUNT(*) as total'),
+                knex.raw('COALESCE(SUM(si.total_taxable_value),0) as taxable'),
+                knex.raw('COALESCE(SUM(si.total_igst),0) as igst'),
+                knex.raw('COALESCE(SUM(si.total_cgst),0) as cgst'),
+                knex.raw('COALESCE(SUM(si.total_sgst),0) as sgst'),
+                knex.raw('COALESCE(SUM(si.total_cess),0) as cess'),
+                knex.raw('COALESCE(SUM(si.total_invoice_value),0) as invoice_value')
             );
             salesResults[t.id] = {
                 total: parseInt(row.total),
@@ -274,18 +274,18 @@ class BookDataModel {
         ];
         const purchaseResults = {};
         for (const t of purchaseTypes) {
-            let q = db('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
+            let q = knex('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
             if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
             if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
             q = addPeriod(q, 'ev', 'supplier_invoice_date');
             const [row] = await q.select(
-                db.raw('COUNT(*) as total'),
-                db.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),
-                db.raw('COALESCE(SUM(ev.total_igst_amount),0) as igst'),
-                db.raw('COALESCE(SUM(ev.total_cgst_amount),0) as cgst'),
-                db.raw('COALESCE(SUM(ev.total_sgst_amount),0) as sgst'),
-                db.raw('COALESCE(SUM(ev.total_cess_amount),0) as cess'),
-                db.raw('COALESCE(SUM(ev.net_amount),0) as invoice_value')
+                knex.raw('COUNT(*) as total'),
+                knex.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),
+                knex.raw('COALESCE(SUM(ev.total_igst_amount),0) as igst'),
+                knex.raw('COALESCE(SUM(ev.total_cgst_amount),0) as cgst'),
+                knex.raw('COALESCE(SUM(ev.total_sgst_amount),0) as sgst'),
+                knex.raw('COALESCE(SUM(ev.total_cess_amount),0) as cess'),
+                knex.raw('COALESCE(SUM(ev.net_amount),0) as invoice_value')
             );
             purchaseResults[t.id] = {
                 total: parseInt(row.total),

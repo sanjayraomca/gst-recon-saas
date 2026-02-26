@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { connectNats } = require('../../shared/src/nats/client');
-const db = require('../../shared/src/db/connection'); // Use shared DB connection
+const knex = require('../../shared/src/db/connection'); // Use shared DB connection
 
 const app = express();
 const PORT = process.env.PORT || 3002;

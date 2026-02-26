@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * GSTR2B Invoice Model (Read-only)
@@ -21,7 +21,7 @@ class Gstr2bInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('gstr2b_invoices')
+        let query = knex('gstr2b_invoices')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
@@ -56,7 +56,7 @@ class Gstr2bInvoiceModel {
      * Get single GSTR2B invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await db('gstr2b_invoices')
+        return await knex('gstr2b_invoices')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId

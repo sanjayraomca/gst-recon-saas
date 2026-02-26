@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * Reconciliation Model
@@ -12,7 +12,7 @@ class ReconciliationModel {
      * Create a reconciliation run
      */
     static async createRun(workspaceId, runData) {
-        const trx = await db.transaction();
+        const trx = await knex.transaction();
 
         try {
             const { gstin_id, period, period_id, run_type = 'PURCHASE_2B', run_mode = 'MANUAL' } = runData;
@@ -42,7 +42,7 @@ class ReconciliationModel {
             // 1. Create reconciliation run record
             const [reconRun] = await trx('reconciliation_runs')
                 .insert({
-                    id: db.raw('uuid_generate_v4()'),
+                    id: knex.raw('uuid_generate_v4()'),
                     workspace_id: workspaceId,
                     gstin_id: gstin_id,
                     period_id: taxPeriodId,
@@ -51,8 +51,8 @@ class ReconciliationModel {
                     rule_set_version: '1.0.0',
                     rule_set_hash: 'basic_matching_v1',
                     status: 'RUNNING',
-                    started_at: db.fn.now(),
-                    created_at: db.fn.now()
+                    started_at: knex.fn.now(),
+                    created_at: knex.fn.now()
                 })
                 .returning('*');
 
@@ -60,7 +60,7 @@ class ReconciliationModel {
             const purchaseInvoices = await trx('purchase_invoices')
                 .select('purchase_invoices.*')
                 .join('tax_periods', function () {
-                    this.on('tax_periods.id', '=', db.raw('?', [taxPeriodId]))
+                    this.on('tax_periods.id', '=', knex.raw('?', [taxPeriodId]))
                 })
                 .where({
                     'purchase_invoices.workspace_id': workspaceId,
@@ -73,7 +73,7 @@ class ReconciliationModel {
             const gstr2bInvoices = await trx('gstr2b_invoices')
                 .select('gstr2b_invoices.*')
                 .join('tax_periods', function () {
-                    this.on('tax_periods.id', '=', db.raw('?', [taxPeriodId]))
+                    this.on('tax_periods.id', '=', knex.raw('?', [taxPeriodId]))
                 })
                 .where({
                     'gstr2b_invoices.workspace_id': workspaceId,
@@ -115,8 +115,8 @@ class ReconciliationModel {
                         decision_reason: isExactMatch ? 'Exact match found' : 'Amount mismatch',
                         action_required: isExactMatch ? null : 'REVIEW_AMOUNT',
                         action_status: 'PENDING',
-                        created_at: db.fn.now(),
-                        updated_at: db.fn.now()
+                        created_at: knex.fn.now(),
+                        updated_at: knex.fn.now()
                     });
 
                     if (isExactMatch) matchedCount++;
@@ -136,8 +136,8 @@ class ReconciliationModel {
                         action_required: 'VERIFY_SUPPLIER',
                         action_priority: 'HIGH',
                         action_status: 'PENDING',
-                        created_at: db.fn.now(),
-                        updated_at: db.fn.now()
+                        created_at: knex.fn.now(),
+                        updated_at: knex.fn.now()
                     });
                     missingCount++;
                 }
@@ -159,8 +159,8 @@ class ReconciliationModel {
                         action_required: 'ADD_TO_BOOKS',
                         action_priority: 'MEDIUM',
                         action_status: 'PENDING',
-                        created_at: db.fn.now(),
-                        updated_at: db.fn.now()
+                        created_at: knex.fn.now(),
+                        updated_at: knex.fn.now()
                     });
                     missingCount++;
                 }
@@ -178,7 +178,7 @@ class ReconciliationModel {
                     matched_count: matchedCount,
                     mismatched_count: mismatchedCount,
                     missing_count: missingCount,
-                    completed_at: db.fn.now(),
+                    completed_at: knex.fn.now(),
                     result_summary: JSON.stringify({
                         purchase_invoices: purchaseInvoices.length,
                         gstr2b_invoices: gstr2bInvoices.length,
@@ -204,7 +204,7 @@ class ReconciliationModel {
         const { page = 1, page_size = 20 } = pagination;
         const offset = (page - 1) * page_size;
 
-        const query = db('reconciliation_runs')
+        const query = knex('reconciliation_runs')
             .where({ workspace_id: workspaceId });
 
         if (gstin_id) query.where({ gstin_id });
@@ -223,7 +223,7 @@ class ReconciliationModel {
      * Get run details
      */
     static async getRunById(workspaceId, runId) {
-        return db('reconciliation_runs')
+        return knex('reconciliation_runs')
             .where({ workspace_id: workspaceId, id: runId })
             .first();
     }
@@ -240,7 +240,7 @@ class ReconciliationModel {
         const run = await this.getRunById(workspaceId, runId);
         if (!run) return null;
 
-        let query = db('reconciliation_results as rr')
+        let query = knex('reconciliation_results as rr')
             .leftJoin('purchase_invoices as pi', 'rr.purchase_invoice_id', 'pi.id')
             .leftJoin('gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .where('rr.recon_run_id', runId);
@@ -253,7 +253,7 @@ class ReconciliationModel {
             'pi.invoice_number as purchase_invoice_number',
             'pi.invoice_total as purchase_invoice_total',
             'gi.invoice_number as gstr2b_invoice_number',
-            db.raw('(gi.taxable_value + gi.total_tax_amount) as gstr2b_invoice_total')
+            knex.raw('(gi.taxable_value + gi.total_tax_amount) as gstr2b_invoice_total')
         )
             .limit(page_size)
             .offset(offset);

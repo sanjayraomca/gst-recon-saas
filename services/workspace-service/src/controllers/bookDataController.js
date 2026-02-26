@@ -1,5 +1,5 @@
 const BookDataModel = require('../models/bookDataModel');
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 
 /**
@@ -29,7 +29,7 @@ const getBookData = async (req, res) => {
 
         if (tenantId) {
             // Verify this workspace belongs to the authenticated tenant
-            const workspace = await db('workspaces')
+            const workspace = await knex('workspaces')
                 .where({ id: workspaceId, tenant_id: tenantId })
                 .select('id')
                 .first();
@@ -68,7 +68,7 @@ const getBookDataSummary = async (req, res) => {
 
         const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
         if (tenantId) {
-            const workspace = await db('workspaces').where({ id: workspaceId, tenant_id: tenantId }).select('id').first();
+            const workspace = await knex('workspaces').where({ id: workspaceId, tenant_id: tenantId }).select('id').first();
             if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
         }
 

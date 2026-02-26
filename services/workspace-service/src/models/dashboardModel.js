@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 class DashboardModel {
     /**
@@ -25,32 +25,32 @@ class DashboardModel {
         // We fetch totals from sales_invoices and purchase_vouchers for the workspace
 
         // 1. Sales query
-        const salesQuery = db('sales_invoices')
+        const salesQuery = knex('sales_invoices')
             .where({ workspace_id: workspaceId })
             .whereIn('book_type', ['SI', 'CN-S', 'DN-S']); // Approximate sales types, filtering returns/notes properly could be complex depending on exact business logic, but total_taxable_value / total_invoice_value generally captures the positive amount. For CN, it's typically negative or handled separately. Assuming standard positive sums for now.
         // Actually, let's just sum across all sales types as per standard GST rules, 
         // CN reduces liability, DN increases it. We'll simplify to just sum all total_taxable_value.
 
         // Getting all relevant sales records for the FY
-        const salesData = await db('sales_invoices')
+        const salesData = await knex('sales_invoices')
             .select(
-                db.raw(`to_char(invoice_date, 'YYYY-MM') as month`),
-                db.raw('SUM(total_taxable_value) as taxable'),
-                db.raw('COUNT(*) as count'),
-                db.raw('SUM(total_igst + total_cgst + total_sgst + total_cess) as tax'),
-                db.raw('SUM(total_invoice_value) as invoice_value')
+                knex.raw(`to_char(invoice_date, 'YYYY-MM') as month`),
+                knex.raw('SUM(total_taxable_value) as taxable'),
+                knex.raw('COUNT(*) as count'),
+                knex.raw('SUM(total_igst + total_cgst + total_sgst + total_cess) as tax'),
+                knex.raw('SUM(total_invoice_value) as invoice_value')
             )
             .where({ workspace_id: workspaceId })
             .where('invoice_date', '>=', fyStartDate)
             .groupByRaw(`to_char(invoice_date, 'YYYY-MM')`);
 
         // Getting all relevant purchase records for the FY
-        const purchaseData = await db('purchase_vouchers')
+        const purchaseData = await knex('purchase_vouchers')
             .select(
-                db.raw(`to_char(supplier_invoice_date, 'YYYY-MM') as month`),
-                db.raw('SUM(taxable_total) as taxable'),
-                db.raw('SUM(total_igst_amount + total_cgst_amount + total_sgst_amount + total_cess_amount) as tax'),
-                db.raw('SUM(net_amount) as invoice_value')
+                knex.raw(`to_char(supplier_invoice_date, 'YYYY-MM') as month`),
+                knex.raw('SUM(taxable_total) as taxable'),
+                knex.raw('SUM(total_igst_amount + total_cgst_amount + total_sgst_amount + total_cess_amount) as tax'),
+                knex.raw('SUM(net_amount) as invoice_value')
             )
             .where({ workspace_id: workspaceId })
             .where('supplier_invoice_date', '>=', fyStartDate)
@@ -144,7 +144,7 @@ class DashboardModel {
         });
 
         // Dynamic Compliance Score based on recent filings
-        const recentImports = await db('gstr_import_master')
+        const recentImports = await knex('gstr_import_master')
             .where({ workspace_id: workspaceId })
             .whereIn('import_type', ['GSTR1', 'GSTR3B', 'GSTR2A', 'GSTR2B', 'SALES_REGISTER', 'PURCHASE_REGISTER', 'SALES_RETURN', 'PURCHASE_RETURN'])
             .orderBy('upload_timestamp', 'desc')

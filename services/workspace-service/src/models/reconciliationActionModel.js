@@ -1,11 +1,11 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 class ReconciliationActionModel {
     /**
      * Create a new action and update the result status
      */
     static async createAction(resultId, actionData, userId) {
-        const trx = await db.transaction();
+        const trx = await knex.transaction();
 
         try {
             const { action_type, decision, decision_reason, notes, action_status } = actionData;
@@ -24,7 +24,7 @@ class ReconciliationActionModel {
 
             // 2. Update the reconciliation result
             const updateData = {
-                updated_at: db.fn.now()
+                updated_at: knex.fn.now()
             };
 
             if (action_status) updateData.action_status = action_status;
@@ -56,7 +56,7 @@ class ReconciliationActionModel {
         const { page = 1, page_size = 20 } = pagination;
         const offset = (page - 1) * page_size;
 
-        const query = db('reconciliation_results as rr')
+        const query = knex('reconciliation_results as rr')
             .join('reconciliation_runs as run', 'rr.recon_run_id', 'run.id')
             .leftJoin('purchase_invoices as pi', 'rr.purchase_invoice_id', 'pi.id')
             .leftJoin('gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
