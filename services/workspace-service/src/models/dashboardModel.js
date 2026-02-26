@@ -68,16 +68,55 @@ class DashboardModel {
             ytdInputTax += Number(row.tax) || 0;
         });
 
+        // Determine the latest month with data
+        let latestDataMonth = currentMonthYM;
+        const allMonthsWithData = [
+            ...salesData.map(r => r.month),
+            ...purchaseData.map(r => r.month)
+        ].sort().reverse();
+
+        if (allMonthsWithData.length > 0) {
+            latestDataMonth = allMonthsWithData[0];
+        }
+
+        const currentYear = parseInt(latestDataMonth.split('-')[0], 10);
+        const currentMonthIndex = parseInt(latestDataMonth.split('-')[1], 10) - 1;
+        const dataDate = new Date(currentYear, currentMonthIndex, 1);
+        const prevDataDate = new Date(currentYear, currentMonthIndex - 1, 1);
+        const previousMonthYMString = `${prevDataDate.getFullYear()}-${String(prevDataDate.getMonth() + 1).padStart(2, '0')}`;
+
         // Process Current Month metrics
-        const currentSalesMonth = salesData.find(r => r.month === currentMonthYM);
-        const currentPurchaseMonth = purchaseData.find(r => r.month === currentMonthYM);
+        const previousSalesMonth = salesData.find(r => r.month === previousMonthYMString);
+        const previousSales = Number(previousSalesMonth?.taxable || 0);
+
+        const currentSalesMonth = salesData.find(r => r.month === latestDataMonth);
+        const currentPurchaseMonth = purchaseData.find(r => r.month === latestDataMonth);
+
+        // Dynamic Growth Calculation
+        const currentSales = Number(currentSalesMonth?.taxable || 0);
+        let salesGrowth = 0;
+        if (previousSales > 0) {
+            salesGrowth = ((currentSales - previousSales) / previousSales) * 100;
+        } else if (currentSales > 0) {
+            salesGrowth = 100;
+        }
+
+        // Dynamic Labels and Dates
+        const currentMonthLabel = dataDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+        const netPayableDueMonth = new Date(currentYear, currentMonthIndex + 1, 20);
+        const netPayableDueDate = netPayableDueMonth.toLocaleString('en-GB', { day: 'numeric', month: 'short' }); // e.g. "20 Dec"
+        const previousMonthLabelName = prevDataDate.toLocaleString('default', { month: 'short' }); // e.g. "Oct"
 
         const currentMonth = {
-            sales: Number(currentSalesMonth?.taxable || 0),
+            sales: currentSales,
             purchases: Number(currentPurchaseMonth?.taxable || 0),
             outputTax: Number(currentSalesMonth?.tax || 0),
             inputTax: Number(currentPurchaseMonth?.tax || 0),
-            netPayable: Math.max(0, Number(currentSalesMonth?.tax || 0) - Number(currentPurchaseMonth?.tax || 0)) // Simplified logic
+            netPayable: Math.max(0, Number(currentSalesMonth?.tax || 0) - Number(currentPurchaseMonth?.tax || 0)), // Simplified logic
+            salesGrowth: salesGrowth,
+            previousMonthLabelName: previousMonthLabelName,
+            currentMonthLabel: currentMonthLabel,
+            netPayableDueDate: netPayableDueDate
         };
 
         const yearToDate = {
@@ -98,13 +137,47 @@ class DashboardModel {
             };
         });
 
-        // Hardcoded Compliance for now (from original UI)
+        // Dynamic Compliance Score based on recent filings
+        const recentImports = await db('gstr_import_master')
+            .where({ workspace_id: workspaceId })
+            .whereIn('import_type', ['GSTR1', 'GSTR3B', 'GSTR2A', 'GSTR2B'])
+            .orderBy('upload_timestamp', 'desc')
+            .limit(20);
+
+        let gstr1Status = 'pending';
+        let gstr3bStatus = 'pending';
+        let gstr2aStatus = 'pending';
+        let complianceScore = 0;
+        let lastFilingDate = null;
+
+        if (recentImports.length > 0) {
+            const latestGSTR1 = recentImports.find(i => i.import_type === 'GSTR1');
+            const latestGSTR3B = recentImports.find(i => i.import_type === 'GSTR3B');
+            const latestGSTR2A = recentImports.find(i => ['GSTR2A', 'GSTR2B'].includes(i.import_type));
+
+            if (latestGSTR1) {
+                gstr1Status = 'filed';
+                complianceScore += 33.33;
+                lastFilingDate = latestGSTR1.upload_timestamp;
+            }
+            if (latestGSTR3B) {
+                gstr3bStatus = 'filed';
+                complianceScore += 33.34;
+                if (!lastFilingDate || latestGSTR3B.upload_timestamp > lastFilingDate) lastFilingDate = latestGSTR3B.upload_timestamp;
+            }
+            if (latestGSTR2A) {
+                gstr2aStatus = 'filed';
+                complianceScore += 33.33;
+                if (!lastFilingDate || latestGSTR2A.upload_timestamp > lastFilingDate) lastFilingDate = latestGSTR2A.upload_timestamp;
+            }
+        }
+
         const compliance = {
-            score: 0,
-            gstr1Status: 'pending',
-            gstr3bStatus: 'pending',
-            gstr2aStatus: 'pending',
-            lastFilingDate: null
+            score: Math.round(complianceScore),
+            gstr1Status,
+            gstr3bStatus,
+            gstr2aStatus,
+            lastFilingDate
         };
 
         return {

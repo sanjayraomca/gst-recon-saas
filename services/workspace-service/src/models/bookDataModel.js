@@ -50,7 +50,7 @@ class BookDataModel {
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
-        const { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply } = filters;
+        const { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir = 'desc' } = filters;
 
         let records = [];
         let total = 0;
@@ -100,6 +100,13 @@ class BookDataModel {
             const [{ count }] = await q.clone().count('* as count');
             total = parseInt(count);
 
+            let sortCol = 'si.invoice_date';
+            if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
+            else if (sort_by === 'party') sortCol = 'si.customer_name';
+            else if (sort_by === 'taxableAmt') sortCol = 'si.total_taxable_value';
+            else if (sort_by === 'totalAmt') sortCol = 'si.total_invoice_value';
+            else if (sort_by === 'date') sortCol = 'si.invoice_date';
+
             records = await q
                 .select(
                     'si.id',
@@ -118,7 +125,7 @@ class BookDataModel {
                     'si.filing_status as status',
                     'si.invoice_type as docType'
                 )
-                .orderBy('si.invoice_date', 'desc')
+                .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                 .limit(page_size)
                 .offset(offset);
 
@@ -167,6 +174,13 @@ class BookDataModel {
             const [{ count }] = await q.clone().count('* as count');
             total = parseInt(count);
 
+            let sortCol = 'ev.supplier_invoice_date';
+            if (sort_by === 'invoiceNo') sortCol = 'ev.supplier_invoice_no';
+            else if (sort_by === 'party') sortCol = 'ev.supplier_name';
+            else if (sort_by === 'taxableAmt') sortCol = 'ev.taxable_total';
+            else if (sort_by === 'totalAmt') sortCol = 'ev.net_amount';
+            else if (sort_by === 'date') sortCol = 'ev.supplier_invoice_date';
+
             records = await q
                 .select(
                     'ev.id',
@@ -185,7 +199,7 @@ class BookDataModel {
                     'ev.status',
                     'ev.book_type as docType'
                 )
-                .orderBy('ev.supplier_invoice_date', 'desc')
+                .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                 .limit(page_size)
                 .offset(offset);
         }

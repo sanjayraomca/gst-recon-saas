@@ -11,5 +11,6 @@ router.get('/:id', verifyToken, workspaceController.getWorkspace);
 router.get('/:id/dashboard-metrics', verifyToken, workspaceController.getDashboardMetrics);
 router.get('/:id/users', verifyToken, workspaceController.listWorkspaceUsers);
 router.post('/:id/users/invite', verifyToken, workspaceController.inviteUser);
+router.put('/:id', verifyToken, workspaceController.updateWorkspace);
 
 module.exports = router;

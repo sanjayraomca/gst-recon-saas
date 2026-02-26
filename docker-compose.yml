@@ -151,15 +151,15 @@ services:
 
   # ==================== STORAGE & CACHE ====================
   
-  redis:
-    image: redis:7-alpine
-    container_name: gst-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - gst-network
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: gst-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - gst-network
 
   minio:
     image: minio/minio:latest
@@ -181,23 +181,23 @@ services:
       - "traefik.http.routers.minio.rule=Host(`minio.gst.local`)"
       - "traefik.http.services.minio.loadbalancer.server.port=9001"
 
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: gst-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: rabbitadmin
-      RABBITMQ_DEFAULT_PASS: RabbitAdmin123
-    ports:
-      - "5672:5672"    # AMQP
-      - "15673:15672"  # Management UI (changed port)
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - gst-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.gst.local`)"
-      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+  # rabbitmq:
+  #   image: rabbitmq:3.12-management-alpine
+  #   container_name: gst-rabbitmq
+  #   environment:
+  #     RABBITMQ_DEFAULT_USER: rabbitadmin
+  #     RABBITMQ_DEFAULT_PASS: RabbitAdmin123
+  #   ports:
+  #     - "5672:5672"    # AMQP
+  #     - "15673:15672"  # Management UI (changed port)
+  #   volumes:
+  #     - rabbitmq_data:/var/lib/rabbitmq
+  #   networks:
+  #     - gst-network
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.gst.local`)"
+  #     - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
 
   nats:
     image: nats:2.10
@@ -496,9 +496,9 @@ volumes:
   postgres_main_data:
   postgres_keycloak_data:
   postgres_kong_data:
-  redis_data:
+  # redis_data:
   minio_data:
-  rabbitmq_data:
+  # rabbitmq_data:
 
 networks:
   gst-network:

@@ -646,6 +646,51 @@ const getDashboardMetrics = async (req, res) => {
         return errorResponse(res, error.message, 500);
     }
 };
+const updateWorkspace = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { settings, name, description } = req.body;
+
+        const trx = await db.transaction();
+
+        try {
+            const workspace = await trx('workspaces').where('id', id).first();
+            if (!workspace) {
+                await trx.rollback();
+                return errorResponse(res, 'Workspace not found', 404);
+            }
+
+            const updateData = { updated_at: new Date() };
+            if (name !== undefined) updateData.name = name;
+            if (description !== undefined) updateData.description = description;
+
+            if (settings !== undefined) {
+                const currentSettings = typeof workspace.settings === 'string'
+                    ? JSON.parse(workspace.settings)
+                    : (workspace.settings || {});
+
+                updateData.settings = {
+                    ...currentSettings,
+                    ...settings
+                };
+            }
+
+            const [updatedWorkspace] = await trx('workspaces')
+                .where('id', id)
+                .update(updateData)
+                .returning('*');
+
+            await trx.commit();
+            return successResponse(res, updatedWorkspace, 'Workspace updated successfully');
+        } catch (error) {
+            await trx.rollback();
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error updating workspace:', error);
+        return errorResponse(res, error.message || 'Failed to update workspace');
+    }
+};
 
 module.exports = {
     createWorkspace,
@@ -653,5 +698,6 @@ module.exports = {
     getWorkspace,
     listWorkspaceUsers,
     inviteUser,
-    getDashboardMetrics
+    getDashboardMetrics,
+    updateWorkspace
 };
