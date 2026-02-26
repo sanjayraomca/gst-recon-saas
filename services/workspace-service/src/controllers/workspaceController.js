@@ -651,7 +651,7 @@ const updateWorkspace = async (req, res) => {
         const { id } = req.params;
         const { settings, name, description } = req.body;
 
-        const trx = await db.transaction();
+        const trx = await knex.transaction();
 
         try {
             const workspace = await trx('workspaces').where('id', id).first();

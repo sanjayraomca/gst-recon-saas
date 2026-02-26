@@ -16,7 +16,7 @@ const getBookData = async (req, res) => {
             return errorResponse(res, 'X-Workspace-ID header is required', 400);
         }
 
-        const { type, search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, page, page_size, sort_by, sort_dir } = req.query;
+        const { type, search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, page, page_size, sort_by, sort_dir, export_mode } = req.query;
         if (!type) {
             return errorResponse(res, 'Query param "type" is required (e.g. sales_invoice, cn_purchase)', 400);
         }
@@ -41,11 +41,15 @@ const getBookData = async (req, res) => {
         // If tenantId is not in token (dev/legacy tokens), skip the check
         // but still filter by workspace_id (still scoped per org)
 
+        const pagination = export_mode === 'true'
+            ? { page: 1, page_size: 50000 }
+            : { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 200) };
+
         const result = await BookDataModel.getByType(
             workspaceId,
             type,
             { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir },
-            { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 200) }
+            pagination
         );
 
         return successResponse(res, result, `${type} records retrieved successfully`);

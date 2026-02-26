@@ -10,7 +10,7 @@ class DashboardModel {
             const d = new Date();
             d.setMonth(d.getMonth() - i);
             return {
-                label: d.toLocaleString('en-US', { month: 'short' }),
+                label: d.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
                 yearMonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
             };
         }).reverse(); // Oldest to newest for the trend graph
@@ -36,6 +36,7 @@ class DashboardModel {
             .select(
                 db.raw(`to_char(invoice_date, 'YYYY-MM') as month`),
                 db.raw('SUM(total_taxable_value) as taxable'),
+                db.raw('COUNT(*) as count'),
                 db.raw('SUM(total_igst + total_cgst + total_sgst + total_cess) as tax'),
                 db.raw('SUM(total_invoice_value) as invoice_value')
             )
@@ -107,6 +108,9 @@ class DashboardModel {
         const netPayableDueDate = netPayableDueMonth.toLocaleString('en-GB', { day: 'numeric', month: 'short' }); // e.g. "20 Dec"
         const previousMonthLabelName = prevDataDate.toLocaleString('default', { month: 'short' }); // e.g. "Oct"
 
+        const transactionCount = Number(currentSalesMonth?.count || 0);
+        const avgInvoiceValue = transactionCount > 0 ? (currentSales / transactionCount) : 0;
+
         const currentMonth = {
             sales: currentSales,
             purchases: Number(currentPurchaseMonth?.taxable || 0),
@@ -116,7 +120,9 @@ class DashboardModel {
             salesGrowth: salesGrowth,
             previousMonthLabelName: previousMonthLabelName,
             currentMonthLabel: currentMonthLabel,
-            netPayableDueDate: netPayableDueDate
+            netPayableDueDate: netPayableDueDate,
+            transactionCount,
+            avgInvoiceValue
         };
 
         const yearToDate = {
@@ -140,7 +146,7 @@ class DashboardModel {
         // Dynamic Compliance Score based on recent filings
         const recentImports = await db('gstr_import_master')
             .where({ workspace_id: workspaceId })
-            .whereIn('import_type', ['GSTR1', 'GSTR3B', 'GSTR2A', 'GSTR2B'])
+            .whereIn('import_type', ['GSTR1', 'GSTR3B', 'GSTR2A', 'GSTR2B', 'SALES_REGISTER', 'PURCHASE_REGISTER', 'SALES_RETURN', 'PURCHASE_RETURN'])
             .orderBy('upload_timestamp', 'desc')
             .limit(20);
 
@@ -180,11 +186,19 @@ class DashboardModel {
             lastFilingDate
         };
 
+        const activities = recentImports.map(item => ({
+            action: `${item.import_type?.replace('_', ' ')} logic import`,
+            date: new Date(item.upload_timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            status: item.status?.toLowerCase() === 'completed' ? 'success' : 'pending',
+            details: item.original_filename || 'System Import'
+        }));
+
         return {
             currentMonth,
             yearToDate,
             monthlyTrend,
-            compliance
+            compliance,
+            recentActivities: activities
         };
     }
 }
