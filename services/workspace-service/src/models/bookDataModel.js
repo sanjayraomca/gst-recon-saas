@@ -123,7 +123,10 @@ class BookDataModel {
                     'si.place_of_supply as placeOfSupply',
                     knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
                     'si.filing_status as status',
-                    'si.invoice_type as docType'
+                    'si.invoice_type as docType',
+                    'si.round_off as roundOff',
+                    knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
+                    knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\"")
                 )
                 .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                 .limit(page_size)
@@ -197,7 +200,10 @@ class BookDataModel {
                     'ev.place_of_supply as placeOfSupply',
                     'ev.is_interstate as isInterstate',
                     'ev.status',
-                    'ev.book_type as docType'
+                    'ev.book_type as docType',
+                    'ev.round_off as roundOff',
+                    knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
+                    knex.raw("(SELECT tax_per FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as \"taxPercent\"")
                 )
                 .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                 .limit(page_size)

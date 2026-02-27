@@ -1095,8 +1095,8 @@ CREATE TABLE purchase_vouchers (
     is_interstate BOOLEAN DEFAULT FALSE,
     is_rcm BOOLEAN DEFAULT FALSE,
     round_off NUMERIC(8, 2) DEFAULT 0,
-    book_type VARCHAR(2) 
-        CHECK (book_type IN ('SA','SR','CN','DN')), 
+    book_type VARCHAR(3) 
+        CHECK (book_type IN ('PA','EXP','CN','DN')), 
     status VARCHAR(20) DEFAULT 'DRAFT' 
         CHECK (status IN ('DRAFT', 'APPROVED', 'POSTED', 'CANCELLED')),
     remarks TEXT,

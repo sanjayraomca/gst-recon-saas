@@ -23,10 +23,10 @@ class BookModel {
                     INSERT INTO sales_invoices (
                         tenant_id, workspace_id, tax_period_id, invoice_type, 
                         invoice_number, invoice_date, book_type, customer_name, customer_gstin,
-                        place_of_supply, reverse_charge, total_taxable_value, 
+                        place_of_supply, reverse_charge, is_amendment, round_off, total_taxable_value, 
                         total_igst, total_cgst, total_sgst, total_cess,
                         total_invoice_value, filing_period, payment_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
                     ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id) 
                     DO UPDATE SET 
                         total_invoice_value = EXCLUDED.total_invoice_value,
@@ -35,12 +35,14 @@ class BookModel {
                         total_cgst = EXCLUDED.total_cgst,
                         total_sgst = EXCLUDED.total_sgst,
                         total_cess = EXCLUDED.total_cess,
+                        is_amendment = EXCLUDED.is_amendment,
+                        round_off = EXCLUDED.round_off,
                         updated_at = NOW()
                     RETURNING id
                 `, [
                     header.tenant_id, header.workspace_id, header.tax_period_id || null, header.invoice_type,
                     header.invoice_number, header.invoice_date, header.book_type || 'SA', header.customer_name || null, header.customer_gstin || null,
-                    header.place_of_supply || null, header.reverse_charge || false, header.total_taxable_value || 0,
+                    header.place_of_supply || null, header.reverse_charge || false, header.is_amendment || false, header.round_off || 0, header.total_taxable_value || 0,
                     header.total_igst || 0, header.total_cgst || 0, header.total_sgst || 0, header.total_cess || 0,
                     header.total_invoice_value || 0, header.filing_period || null
                 ]);
@@ -60,6 +62,7 @@ class BookModel {
                         uom: item.uom,
                         unit_rate: item.unit_rate,
                         taxable_value: item.taxable_value,
+                        gst_rate_percent: item.gst_rate_percent,
                         igst_amount: item.igst_amount,
                         cgst_amount: item.cgst_amount,
                         sgst_amount: item.sgst_amount,
@@ -157,17 +160,18 @@ class BookModel {
                 if (items && items.length > 0) {
                     const itemsToInsert = items.map(item => ({
                         purchase_id: voucherId,
-                        hsn_code: item.hsn_code,
-                        description: item.description,
-                        quantity: item.quantity,
-                        uom: item.uom,
-                        unit_rate: item.unit_rate,
-                        taxable_amount: item.taxable_amount,
-                        igst_amount: item.igst_amount,
-                        cgst_amount: item.cgst_amount,
-                        sgst_amount: item.sgst_amount,
-                        cess_amount: item.cess_amount,
-                        total_amount_with_tax: item.total_amount_with_tax
+                        hsn_code: item.hsn_code || null,
+                        description: item.description || null,
+                        quantity: item.quantity || 0,
+                        uom: item.uom || null,
+                        unit_rate: item.unit_rate || 0,
+                        taxable_amount: item.taxable_amount || 0,
+                        tax_per: item.tax_per || 0,
+                        igst_amount: item.igst_amount || 0,
+                        cgst_amount: item.cgst_amount || 0,
+                        sgst_amount: item.sgst_amount || 0,
+                        cess_amount: item.cess_amount || 0,
+                        total_amount_with_tax: item.total_amount_with_tax || 0
                     }));
                     await trx.batchInsert('purchase_items', itemsToInsert, 200);
                 }

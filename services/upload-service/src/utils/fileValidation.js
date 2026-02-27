@@ -133,26 +133,31 @@ const validateFileType = (workbook, type) => {
 
         if (headerRowIndex !== -1 && vchTypeColIndex !== -1) {
             // Known vchr_type values for each register type
-            const salesVchrTypes = new Set(['SA', 'SR', 'CN', 'DN']);   // SA=standard sale, SR=sales return
-            const purchaseVchrTypes = new Set(['EXP', 'PA', 'PN']);      // EXP=expense, PA=purchase
+            // CN and DN exist in BOTH, so we shouldn't use them to strictly classify
+            const strictSalesVchrTypes = new Set(['SA', 'SR']);
+            const strictPurchaseVchrTypes = new Set(['EXP', 'PA', 'PN']);
 
             let salesTypeCount = 0;
             let purchaseTypeCount = 0;
             const dataStart = headerRowIndex + 1;
 
-            // Sample up to 30 data rows to determine the predominant voucher type
-            for (let i = dataStart; i < Math.min(rows.length, dataStart + 30); i++) {
+            // Sample up to 50 data rows to determine the predominant voucher type
+            for (let i = dataStart; i < Math.min(rows.length, dataStart + 50); i++) {
                 const row = rows[i];
                 if (!row) continue;
                 const vchrType = (row[vchTypeColIndex] || '').toString().toUpperCase().trim();
-                if (salesVchrTypes.has(vchrType)) salesTypeCount++;
-                else if (purchaseVchrTypes.has(vchrType)) purchaseTypeCount++;
+
+                if (strictSalesVchrTypes.has(vchrType)) {
+                    salesTypeCount++;
+                } else if (strictPurchaseVchrTypes.has(vchrType)) {
+                    purchaseTypeCount++;
+                }
             }
 
             const isSalesUpload = typeUpper === 'SALES' || typeUpper === 'SALES_RETURN' || typeUpper === 'SALES_REGISTER';
             const isPurchaseUpload = typeUpper === 'PURCHASE' || typeUpper === 'PURCHASE_RETURN' || typeUpper === 'PURCHASE_REGISTER';
 
-            console.log(`[DEBUG] vchr_type analysis: salesCount=${salesTypeCount}, purchaseCount=${purchaseTypeCount}, uploadType=${typeUpper}`);
+            console.log(`[DEBUG] vchr_type analysis: strictSalesCount=${salesTypeCount}, strictPurchaseCount=${purchaseTypeCount}, uploadType=${typeUpper}`);
 
             // File is clearly a Purchase file but uploaded to the Sales endpoint
             if (isSalesUpload && purchaseTypeCount > 0 && salesTypeCount === 0) {
