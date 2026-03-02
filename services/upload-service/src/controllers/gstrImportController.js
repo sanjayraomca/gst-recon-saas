@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const xlsx = require('xlsx');
+const progressEmitter = require('../utils/progressEmitter');
 
 /**
  * Controller for Generic GSTR Import
@@ -49,8 +50,10 @@ class GSTRImportController {
                 gstr_type,
                 return_period,
                 gstin_id,
-                generation_date
+                generation_date,
             } = req.body;
+
+            await progressEmitter.emitProgress(upload_id, 5, 'Starting validation...');
 
             // Get user info from JWT token (set by auth middleware)
             const userEmail = req.user?.email;
@@ -152,6 +155,8 @@ class GSTRImportController {
 
             // ─── DUPLICATE DETECTION AND VALIDATION ────────────────────────────────────
 
+            await progressEmitter.emitProgress(upload_id, 15, 'Validating File format & GSTIN...');
+
             // 1. Parse & Validate File GSTIN
             const workbook = xlsx.readFile(uploadedFilePath);
             const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
@@ -176,6 +181,8 @@ class GSTRImportController {
             }
 
             // 2. Compute MD5 hash of the uploaded file BEFORE doing anything else
+            await progressEmitter.emitProgress(upload_id, 25, 'Checking for duplicates...');
+
             const fileHash = await computeFileHash(uploadedFilePath);
 
             const { exactDuplicate, previousImport } = await GSTRImportModel.checkDuplicateByHash(
@@ -211,6 +218,8 @@ class GSTRImportController {
 
             // Calculate financial year from return_period (MMYYYY format)
             const financialYear = GSTRImportController.calculateFinancialYear(return_period);
+
+            await progressEmitter.emitProgress(upload_id, 35, 'Uploading to secure storage...');
 
             // Upload to MinIO (always — each upload gets its own timestamped file)
             const minioMetadata = {
@@ -252,6 +261,8 @@ class GSTRImportController {
 
 
             // PROCESS FILE
+            await progressEmitter.emitProgress(upload_id, 50, 'Parsing spreadsheets...');
+
             let totalInserted = 0;
             let totalSkipped = 0;
 
@@ -281,6 +292,8 @@ class GSTRImportController {
                         const sheet = workbook.Sheets[sheetName];
                         const jsonRows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
                         const sName = sheetName.toUpperCase();
+
+                        await progressEmitter.emitProgress(upload_id, 60 + Math.min(25, Math.floor(totalRecords / 1000)), `Processing ${sheetName}...`);
 
                         console.log(`Processing sheet: ${sheetName} (${sName}) - Rows: ${jsonRows.length}`);
 
@@ -585,6 +598,8 @@ class GSTRImportController {
                 ? `File processed as update: ${totalInserted} new records added, ${totalSkipped} already existed.`
                 : `Import Successful: ${totalInserted} records have been added to the system.`;
 
+            await progressEmitter.emitProgress(upload_id, 100, 'Completed');
+
             return successResponse(res, {
                 import_filing_id: importRecord.import_filing_id,
                 status: importRecord.status,
@@ -605,6 +620,8 @@ class GSTRImportController {
                 fs.unlinkSync(uploadedFilePath);
             }
 
+            if (req.body.upload_id) await progressEmitter.emitProgress(req.body.upload_id, 100, 'Import Failed', true);
+
             console.error('GSTR Import Error:', error);
             const isValidationError = error.message && error.message.includes('No valid records');
             return errorResponse(res, {
@@ -612,6 +629,41 @@ class GSTRImportController {
                 isCustom: isValidationError
             }, isValidationError ? 400 : 500);
         }
+    }
+
+    /**
+     * Stream Server-Sent Events (SSE) for upload progress tracking
+     * GET /gst-import/import/progress?upload_id=xxx
+     */
+    static getUploadProgress(req, res) {
+        const uploadId = req.query.upload_id;
+        if (!uploadId) {
+            return res.status(400).json({ success: false, error: 'upload_id is required' });
+        }
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        // Immediately flush headers so fetch connection resolves
+        res.flushHeaders();
+
+        const sendProgress = (data) => {
+            if (data.uploadId === uploadId) {
+                res.write(`data: ${JSON.stringify({ progress: data.progress, message: data.message, error: data.error })}\n\n`);
+
+                if (data.progress >= 100 || data.error) {
+                    // Give frontend time to receive before closing
+                    setTimeout(() => res.end(), 1000);
+                }
+            }
+        };
+
+        progressEmitter.on('progress', sendProgress);
+
+        req.on('close', () => {
+            progressEmitter.removeListener('progress', sendProgress);
+        });
     }
 
     /**

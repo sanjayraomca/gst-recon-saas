@@ -213,6 +213,17 @@ const updateTenant = async (req, res) => {
 
         const tenant = await Tenant.update(id, filteredUpdates);
 
+        const userId = req.user ? req.user.id : null;
+        await logActivity({
+            userId: userId,
+            tenantId: id,
+            actionType: 'UPDATE_TENANT',
+            entityType: 'Tenant',
+            entityId: id,
+            details: { updates: Object.keys(filteredUpdates) },
+            req: req
+        });
+
         return successResponse(res, tenant, 'Tenant updated successfully');
     } catch (error) {
         return errorResponse(res, error);
@@ -247,13 +258,16 @@ const deleteTenant = async (req, res) => {
 
 const registerTenant = async (req, res) => {
     try {
-        const { email, password, full_name, phone, recaptcha_token } = req.body;
+        let { email, password, full_name, phone, recaptcha_token } = req.body;
         const User = require('../models/userModel');
         const axios = require('axios'); // Ensure axios is required
 
         if (!email || !password || !full_name) {
             return errorResponse(res, 'All fields (Email, Password, and Full Name) are required to create your account.', 400);
         }
+
+        // Normalize email
+        email = email.toLowerCase();
 
         // Verify reCAPTCHA
         if (!process.env.RECAPTCHA_SECRET_KEY) {
@@ -324,7 +338,7 @@ const registerTenant = async (req, res) => {
             const nextNum = parseInt(similarTenants[0].count) + 1;
             const tenantCode = `${prefix}${String(nextNum).padStart(5, '0')}`;
 
-            // 3A. Create user first (needed for owner_user_id)
+            // 3A. Create user first (WITHOUT tenant_id to avoid FK violation)
             let userId;
 
             if (user) {
@@ -344,7 +358,6 @@ const registerTenant = async (req, res) => {
                     full_name,
                     phone,
                     designation: 'TENANT_ADMIN',
-                    // NO tenant_id set here - users don't belong to single tenant
                     auth_provider_id: keycloakId,
                     auth_provider_type: 'KEYCLOAK',
                     created_at: new Date(),
@@ -356,7 +369,7 @@ const registerTenant = async (req, res) => {
             // 3B. Create tenant with owner reference
             let [tenant] = await trx('tenants').insert({
                 id: tenantId,
-                owner_user_id: userId, // ← NEW: Set tenant owner
+                owner_user_id: userId,
                 tenant_code: tenantCode,
                 legal_name: full_name, // Use same name as signup full_name
                 subscription_plan: 'STARTER',
@@ -364,6 +377,13 @@ const registerTenant = async (req, res) => {
                 created_at: new Date(),
                 updated_at: new Date()
             }).returning('*');
+
+            // 3C. Now update user with tenant_id (now that tenant exists)
+            await trx('users').where({ id: userId }).update({
+                tenant_id: tenantId,
+                updated_at: new Date()
+            });
+            console.log(`Updated user ${email} (ID: ${userId}) with tenant_id ${tenantId}`);
 
 
 
@@ -433,14 +453,19 @@ const registerTenant = async (req, res) => {
     }
 };
 
+
+
 const provisionUser = async (req, res) => {
     try {
-        const { id: tenantId } = req.params;
-        const { email, full_name, phone_number, role, organization_ids } = req.body;
+        let { email, full_name, phone_number, role, organization_ids } = req.body;
+        const tenantId = req.params.id; // Corrected from req.params.tenantId to match route
 
-        if (!email || !full_name || !role || !organization_ids || organization_ids.length === 0) {
-            return errorResponse(res, 'Email, full name, role, and at least one organization are required', 400);
+        if (!email) {
+            return errorResponse(res, 'Email is required', 400);
         }
+
+        // Normalize email
+        email = email.toLowerCase();
 
         // 1. Check Tenant
         const tenant = await Tenant.findById(tenantId);
@@ -448,86 +473,90 @@ const provisionUser = async (req, res) => {
             return errorResponse(res, 'Tenant not found', 404);
         }
 
-        // 2. Create/Get User in Keycloak
-        let keycloakId;
-        const password = crypto.randomUUID().slice(0, 12); // Generate temp password (will be reset by user)
-        const nameParts = full_name.split(' ');
-        const firstName = nameParts[0];
-        const lastName = nameParts.slice(1).join(' ') || '';
-        let isNewUser = false;
+        const tenantGroupId = tenant.metadata?.keycloak_groups?.tenant_group_id;
+        if (!tenantGroupId) {
+            console.error('Tenant Metadata:', JSON.stringify(tenant.metadata));
+            return errorResponse(res, 'Tenant Keycloak group not configured', 500);
+        }
 
-        try {
-            keycloakId = await keycloakService.createUser({
-                email,
-                password,
-                firstName,
-                lastName
-            });
-            isNewUser = true;
-        } catch (kcError) {
-            if (kcError.message === 'User already exists in Keycloak') {
-                const kcUser = await keycloakService.getUserByEmail(email);
-                if (kcUser) keycloakId = kcUser.id;
-            } else {
+        // 2. Check if user exists in Keycloak or Local DB
+        const User = require('../models/userModel');
+        let localUser = await User.findByEmail(email);
+        let kcUser = await keycloakService.getUserByEmail(email);
+        let keycloakId = kcUser ? kcUser.id : null;
+
+        // A user is "new" only if they don't exist in Keycloak AND don't exist in our DB
+        let isNewUser = !keycloakId && !localUser;
+
+        if (isNewUser) {
+            // Create user in Keycloak with a temp password
+            const tempPassword = crypto.randomUUID().slice(0, 12);
+            const nameParts = full_name.split(' ');
+            const firstName = nameParts[0];
+            const lastName = nameParts.slice(1).join(' ') || 'User';
+
+            try {
+                keycloakId = await keycloakService.createUser({
+                    email,
+                    password: tempPassword,
+                    firstName,
+                    lastName
+                });
+            } catch (kcError) {
+                console.error('Failed to create user in Keycloak:', kcError.message);
                 throw kcError;
             }
         }
 
         if (!keycloakId) {
-            throw new Error('Failed to retrieve Keycloak ID');
+            throw new Error('Failed to resolve Keycloak ID for user');
         }
 
-        // 3. Add User to Tenant's 'users' Subgroup in Keycloak (Always do this)
+        // 3. Ensure User is in Tenant's 'users' group in Keycloak
         let usersSubgroupId = tenant.metadata?.keycloak_groups?.users_subgroup_id;
-        const tenantGroupId = tenant.metadata?.keycloak_groups?.tenant_group_id;
-        // ... (existing subgroup finding logic logic implied/kept if not changing, but for replace valid block I will simplify or copy)
-
-        // Simulating the block for brevity in diff, assume standard group addition
         if (tenantGroupId && !usersSubgroupId) {
             try {
                 const existingUsersGroup = await keycloakService.getSubgroupByName(tenantGroupId, 'users');
-                usersSubgroupId = existingUsersGroup ? existingUsersGroup.id : (await keycloakService.createSubgroup(tenantGroupId, 'users', { description: 'All users' })).id;
-            } catch (e) { console.warn('Group check failed', e.message); }
+                usersSubgroupId = existingUsersGroup ? existingUsersGroup.id : null;
+            } catch (e) { console.warn('Subgroup check failed', e.message); }
         }
 
         if (usersSubgroupId) {
-            try { await keycloakService.addUserToGroup(keycloakId, usersSubgroupId); } catch (e) { }
+            await keycloakService.addUserToGroup(keycloakId, usersSubgroupId);
         }
 
-        // 4. Create/Update User in Local DB
-        const knex = require('../../../shared/src/db/connection');
-        let user = await User.findByEmail(email);
-
-        // Invitation Logic
-        const invitationToken = isNewUser ? crypto.randomUUID() : null;
-        const invitationExpiresAt = isNewUser ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null; // 24 hours
+        // 4. Update/Create Local User
+        // ALWAYS generate token for invitations (both new and existing users)
+        const invitationToken = crypto.randomUUID();
+        // For testing: set expiry to 10 seconds
+        const invitationExpiresAt = new Date(Date.now() + 10 * 1000);
 
         const userData = {
             full_name,
             phone: phone_number,
             designation: role,
             auth_provider_id: keycloakId,
-            // If new user, set inactive until they accept
-            is_active: !isNewUser,
+            auth_provider_type: 'KEYCLOAK',
+            // CRITICAL: New users are INACTIVE until they accept invite. Existing users stay as they are.
+            is_active: localUser ? localUser.is_active : false,
+            invitation_token: invitationToken,
+            invitation_expires_at: invitationExpiresAt,
             updated_at: new Date()
         };
 
-        if (isNewUser) {
-            userData.invitation_token = invitationToken;
-            userData.invitation_expires_at = invitationExpiresAt;
-        }
-
-        if (user) {
-            user = await User.update(user.id, userData);
+        let user;
+        if (localUser) {
+            user = await User.update(localUser.id, userData);
         } else {
             userData.id = crypto.randomUUID();
             userData.email = email;
-            userData.auth_provider_type = 'KEYCLOAK';
             userData.created_at = new Date();
             user = await User.create(userData);
         }
 
-        // 5. Link to Selected Organizations
+        // 5. Link to Workspaces and Assign Keycloak Groups
+        const knex = require('../../../shared/src/db/connection');
+
         let workspaceRole = 'VIEWER';
         switch (role) {
             case 'Super Admin': workspaceRole = 'SUPER_ADMIN'; break;
@@ -550,7 +579,7 @@ const provisionUser = async (req, res) => {
                 workspace_id: ws.id,
                 user_id: user.id,
                 role: workspaceRole,
-                invitation_status: 'INVITED',
+                invitation_status: 'INVITED', // Always 'INVITED' initially
                 joined_at: new Date()
             }));
 
@@ -559,88 +588,91 @@ const provisionUser = async (req, res) => {
                 .onConflict(['workspace_id', 'user_id'])
                 .merge();
 
-            // 6. Connect Keycloak Groups (Existing Logic)
+            // Keycloak Group Assignment for each organization
             for (const workspace of workspaces) {
-                // ... (Keycloak group linking logic - keeping it even for pending users so permissions exist when they login)
-                // Simplifying the replace block by not removing existing Keycloak logic if possible, 
-                // but I have to replace the whole function in this tool.
-                // I will copy the minimal necessary Keycloak logic.
-
-                // [Original Keycloak Linking Logic Block Reduced]
                 try {
-                    const gstinMaster = await knex('gstin_master').where({ workspace_id: workspace.id }).first();
-                    if (gstinMaster && tenantGroupId) {
-                        let orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstinMaster.gstin);
-                        if (!orgGroup) orgGroup = await keycloakService.createSubgroup(tenantGroupId, gstinMaster.gstin, { tenant_id: tenantId, gstin: gstinMaster.gstin });
+                    if (tenantGroupId) {
+                        // Find or create Org Subgroup (GSTIN)
+                        let orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, workspace.workspace_code); // workspace_code is GSTIN
+                        if (!orgGroup) {
+                            // Attempt to create if missing (though it should exist from workspace creation)
+                            orgGroup = await keycloakService.createSubgroup(tenantGroupId, workspace.workspace_code, {
+                                type: 'ORGANIZATION',
+                                workspace_id: workspace.id
+                            });
+                        }
 
                         if (orgGroup) {
+                            // Find or create Role Subgroup under Org
                             let roleGroup = await keycloakService.getSubgroupByName(orgGroup.id, role);
-                            if (!roleGroup) roleGroup = await keycloakService.createSubgroup(orgGroup.id, role, { description: role });
-                            if (roleGroup) await keycloakService.addUserToGroup(keycloakId, roleGroup.id);
+                            if (!roleGroup) {
+                                roleGroup = await keycloakService.createSubgroup(orgGroup.id, role, {
+                                    type: 'ROLE',
+                                    organization: workspace.workspace_code
+                                });
+                            }
+
+                            if (roleGroup) {
+                                await keycloakService.addUserToGroup(keycloakId, roleGroup.id);
+                                console.log(`Added user ${email} to Keycloak group: ${workspace.workspace_code} > ${role}`);
+                            }
                         }
                     }
-                } catch (e) {
-                    console.warn('Keycloak linking failed for workspace', workspace.id, e.message);
+                } catch (kcGroupErr) {
+                    console.warn(`Keycloak group assignment failed for workspace ${workspace.id}:`, kcGroupErr.message);
                 }
             }
         }
 
-        // 7. Send Email Notification
-        if (isNewUser) {
-            // New users: Send invitation email with password creation link
-            const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/accept-invite?token=${invitationToken}`;
+        // 6. Send Notifications
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const inviteLink = `${frontendUrl}/accept-invite?token=${invitationToken}`;
 
-            publishMessage('USER_INVITED', {
-                email: user.email,
-                user_name: user.full_name,
-                inviter_name: req.user ? (req.user.name || 'Tenant Admin') : 'Tenant Admin',
-                tenant_name: tenant.legal_name,
-                org_names: workspaces.map(w => w.name),
-                role: role,
-                invite_link: inviteLink
-            });
-            console.log(`Published USER_INVITED for new user ${user.email}`);
-        } else {
-            // Existing users: Send confirmation email (no password creation needed)
-            const loginLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-
-            publishMessage('USER_ADDED_TO_ORG', {
-                email: user.email,
-                user_name: user.full_name,
-                inviter_name: req.user ? (req.user.name || 'Tenant Admin') : 'Tenant Admin',
-                tenant_name: tenant.legal_name,
-                org_names: workspaces.map(w => w.name),
-                role: role,
-                login_link: loginLink
-            });
-            console.log(`Published USER_ADDED_TO_ORG for existing user ${user.email}`);
-        }
-
-
-        // Log Activity
-        const performer = req.user ? await User.findByEmail(req.user.email) : null;
-        await logActivity({
-            userId: performer ? performer.id : null,
-            tenantId: tenantId,
-            actionType: 'user_created',
-            entityType: 'User',
-            entityId: user.id,
-            details: {
-                target_user_email: email,
-                role: role,
-                org_count: organization_ids.length
-            },
-            req
+        // ALWAYS send invitation (even for existing users) as per request
+        publishMessage('USER_INVITED', {
+            email: user.email,
+            user_name: user.full_name,
+            inviter_name: req.user ? (req.user.name || 'Admin') : 'Admin',
+            tenant_name: tenant.legal_name,
+            org_names: workspaces.map(w => w.name),
+            role: role,
+            invite_link: inviteLink,
+            is_existing_user: !isNewUser
         });
 
-        // Return appropriate response
-        if (isNewUser) {
-            return successResponse(res, { user, status: 'invited' }, 'User invited successfully. Email sent.');
-        } else {
-            return successResponse(res, { user, status: 'linked' }, 'Existing user linked to organizations.');
+
+        // 7. Log Activity (Per Workspace for isolation)
+        // Resolve inviter's internal UUID for logging
+        let inviterId = null;
+        if (req.user && req.user.sub) {
+            const inviter = await knex('users').where('auth_provider_id', req.user.sub).first();
+            if (inviter) inviterId = inviter.id;
         }
 
+        for (const workspace of workspaces) {
+            await logActivity({
+                userId: inviterId,
+                tenantId: tenantId,
+                workspaceId: workspace.id,
+                actionType: isNewUser ? 'user_invited' : 'user_added_to_org',
+                entityType: 'User',
+                entityId: user.id,
+                details: {
+                    target_user_email: email,
+                    role: role
+                },
+                req
+            });
+        }
+
+        return successResponse(res, {
+            user,
+            status: isNewUser ? 'invited' : 'linked',
+            invitation_token: invitationToken
+        }, isNewUser ? 'User invited successfully' : 'Existing user added to organizations');
+
     } catch (error) {
+        console.error('ProvisionUser Error:', error);
         return errorResponse(res, error);
     }
 };
@@ -648,6 +680,7 @@ const provisionUser = async (req, res) => {
 const listTenantUsers = async (req, res) => {
     try {
         const { id: tenantId } = req.params;
+        const { workspaceId } = req.query;
 
         // 1. Check Tenant
         const tenant = await Tenant.findById(tenantId);
@@ -656,33 +689,64 @@ const listTenantUsers = async (req, res) => {
         }
 
         let users = [];
-        // 2. Fetch users directly from DB for this tenant using Join
         const knex = require('../../../shared/src/db/connection');
 
-        users = await knex('users')
-            .select(
-                'users.id',
-                'users.full_name',
-                'users.email',
-                'users.phone',
-                // Only return designation if the user is the owner of THIS tenant
-                knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
-                'users.is_active',
-                'users.last_login_at',
-                // SCOPE FIX: Only count organizations belonging to THIS tenant
-                knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspace_users.workspace_id END) AS INTEGER) as organization_count', [tenantId]),
-                knex.raw('MAX(workspace_users.role) as role')
-            )
-            .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
-            .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .where(function () {
-                this.where('users.id', tenant.owner_user_id)
-                    .orWhere('workspaces.tenant_id', tenantId);
-            })
-            .whereNot('users.email', 'superadmin.dev@gmail.com')
-            .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
+        let rawQuery;
+        if (workspaceId) {
+            // 1. WORKSPACE-SPECIFIC LIST (Strict isolation)
+            rawQuery = knex('users')
+                .select(
+                    'users.id',
+                    'users.full_name',
+                    'users.email',
+                    'users.phone',
+                    knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
+                    'users.is_active',
+                    'users.last_login_at',
+                    'workspace_users.invitation_status as invitation_status',
+                    knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
+                    knex.raw('MAX(workspace_users.role) as role')
+                )
+                .join('workspace_users', 'users.id', 'workspace_users.user_id')
+                .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                .where('workspaces.id', workspaceId)
+                .whereNot('users.email', 'superadmin.dev@gmail.com')
+                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'workspace_users.invitation_status');
+        } else {
+            // 2. ALL-TENANT LIST (Anyone linked to any workspace in this tenant, plus the owner)
+            rawQuery = knex('users')
+                .select(
+                    'users.id',
+                    'users.full_name',
+                    'users.email',
+                    'users.phone',
+                    knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
+                    'users.is_active',
+                    'users.last_login_at',
+                    // Aggregate status: Active if ALREADY accepted ANY invite in this tenant, else Pending
+                    knex.raw("CASE WHEN bool_or(workspace_users.invitation_status = 'ACTIVE') THEN 'ACTIVE' ELSE 'INVITED' END as invitation_status"),
+                    knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
+                    knex.raw('MAX(workspace_users.role) as role')
+                )
+                .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
+                .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                .whereNot('users.email', 'superadmin.dev@gmail.com')
+                .where(function () {
+                    this.where('workspaces.tenant_id', tenantId)
+                        .orWhere('users.id', tenant.owner_user_id);
+                })
+                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
+        }
 
-        return successResponse(res, users, 'Tenant users retrieved successfully');
+        users = await rawQuery;
+
+        // Map internal status to 'Active'/ 'Pending' for frontend
+        const formattedUsers = users.map(u => ({
+            ...u,
+            status: u.invitation_status === 'ACTIVE' ? 'Active' : (u.invitation_status === 'INVITED' ? 'Pending' : 'Inactive')
+        }));
+
+        return successResponse(res, formattedUsers, 'Tenant users retrieved successfully');
 
     } catch (error) {
         return errorResponse(res, error);
@@ -692,7 +756,7 @@ const listTenantUsers = async (req, res) => {
 const getTenantActivities = async (req, res) => {
     try {
         const { tenantId } = req.params;
-        const { limit = 50, offset = 0 } = req.query;
+        const { limit = 50, offset = 0, workspaceId } = req.query;
 
         if (!tenantId) {
             return res.status(400).json({ error: 'Tenant ID is required' });
@@ -700,9 +764,15 @@ const getTenantActivities = async (req, res) => {
 
         // Fetch activity logs for this tenant with user information
         const database = require('../../../shared/src/db/connection');
-        const activities = await database('activity_logs')
+        let query = database('activity_logs')
             .leftJoin('users', 'activity_logs.user_id', 'users.id')
-            .where('activity_logs.tenant_id', tenantId)
+            .where('activity_logs.tenant_id', tenantId);
+
+        if (workspaceId) {
+            query = query.where('activity_logs.workspace_id', workspaceId);
+        }
+
+        const activities = await query
             .select(
                 'activity_logs.id',
                 'activity_logs.user_id',
@@ -731,7 +801,12 @@ const getTenantActivities = async (req, res) => {
             // Generate human-readable descriptions based on action_type
             switch (actionType) {
                 case 'user_created':
-                    actionDescription = `Created new user: ${activity.details?.target_user_email || activity.user_name || activity.user_email}`;
+                case 'user_invited':
+                    actionDescription = `Created new user: ${activity.details?.target_user_email || 'New User'}`;
+                    entityType = 'user management';
+                    break;
+                case 'user_added_to_org':
+                    actionDescription = `User added to org: ${activity.details?.target_user_email || 'Existing User'}`;
                     entityType = 'user management';
                     break;
                 case 'user_login':
@@ -800,8 +875,8 @@ const getTenantStats = async (req, res) => {
             .first();
 
         // 3. Get User Stats
-        // Total users for this tenant
-        const totalUsers = await knex('users')
+        // Total unique users for this tenant
+        const totalUsersResult = await knex('users')
             .join('workspace_users', 'users.id', 'workspace_users.user_id')
             .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
             .where('workspaces.tenant_id', tenantId)
@@ -809,8 +884,34 @@ const getTenantStats = async (req, res) => {
             .countDistinct('users.id as count')
             .first();
 
+        // Active users: Those who have status 'ACTIVE' in at least one workspace of the tenant
+        const activeUsersResult = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspaces.tenant_id', tenantId)
+            .where('workspace_users.invitation_status', 'ACTIVE')
+            .whereNull('workspaces.deleted_at')
+            .countDistinct('workspace_users.user_id as count')
+            .first();
+
+        // Pending users: Those who have 'INVITED' status but NO 'ACTIVE' status in any workspace of this tenant
+        // (Simplified: count distinct users who are currently 'INVITED' in any workspace of the tenant)
+        const pendingUsersResult = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspaces.tenant_id', tenantId)
+            .where('workspace_users.invitation_status', 'INVITED')
+            .whereNull('workspaces.deleted_at')
+            .whereNotIn('workspace_users.user_id',
+                knex('workspace_users')
+                    .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                    .where('workspaces.tenant_id', tenantId)
+                    .where('workspace_users.invitation_status', 'ACTIVE')
+                    .select('workspace_users.user_id')
+            )
+            .countDistinct('workspace_users.user_id as count')
+            .first();
+
         // Admin users (SUPER_ADMIN, TENANT_ADMIN, WORKSPACE_ADMIN)
-        const adminUsers = await knex('users')
+        const adminUsersResult = await knex('users')
             .join('workspace_users', 'users.id', 'workspace_users.user_id')
             .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
             .where('workspaces.tenant_id', tenantId)
@@ -827,9 +928,11 @@ const getTenantStats = async (req, res) => {
                 plan: tenant.subscription_plan || 'STARTER'
             },
             userManagement: {
-                totalUsers: parseInt(totalUsers.count || 0),
-                adminUsers: parseInt(adminUsers.count || 0),
-                organizationUsers: Math.max(0, parseInt(totalUsers.count || 0) - parseInt(adminUsers.count || 0)),
+                totalUsers: parseInt(totalUsersResult.count || 0),
+                activeUsers: parseInt(activeUsersResult.count || 0),
+                pendingUsers: parseInt(pendingUsersResult.count || 0),
+                adminUsers: parseInt(adminUsersResult.count || 0),
+                organizationUsers: Math.max(0, parseInt(totalUsersResult.count || 0) - parseInt(adminUsersResult.count || 0)),
                 ssoIntegration: 'Available'
             }
         };
@@ -838,6 +941,167 @@ const getTenantStats = async (req, res) => {
     } catch (error) {
         return errorResponse(res, error);
     }
+};
+
+const resendInvite = async (req, res) => {
+    try {
+        const { id, userId } = req.params;
+        const knex = require("../../../shared/src/db/connection");
+        const crypto = require("crypto");
+        const { publishMessage } = require("../../../shared/src/nats/client");
+
+        const user = await knex("users").where("id", userId).first();
+        if (!user) return errorResponse(res, "User not found", 404);
+
+        const workspaces = await knex("workspace_users")
+            .join("workspaces", "workspace_users.workspace_id", "workspaces.id")
+            .where("workspace_users.user_id", user.id)
+            .where("workspaces.tenant_id", id)
+            .where("workspace_users.invitation_status", "INVITED")
+            .select("workspaces.name", "workspaces.id");
+
+        if (workspaces.length === 0) return errorResponse(res, "No pending invitations", 400);
+
+        const invitationToken = crypto.randomUUID();
+        const invitationExpiresAt = new Date(Date.now() + 10 * 1000);
+
+        await knex("users").where("id", user.id).update({
+            invitation_token: invitationToken,
+            invitation_expires_at: invitationExpiresAt,
+            updated_at: new Date()
+        });
+
+        const tenant = await knex("tenants").where("id", id).first();
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        const inviteLink = `${frontendUrl}/accept-invite?token=${invitationToken}`;
+
+        publishMessage("USER_INVITED", {
+            email: user.email,
+            user_name: user.full_name,
+            inviter_name: req.user ? (req.user.name || "Admin") : "Admin",
+            tenant_name: tenant.legal_name,
+            org_names: workspaces.map(w => w.name),
+            invite_link: inviteLink,
+            is_existing_user: user.is_active
+        });
+
+        return successResponse(res, { invitation_token: invitationToken }, "Invitation resent");
+    } catch (error) { return errorResponse(res, error); }
+};
+
+const updateUserRole = async (req, res) => {
+    try {
+        const { id, userId } = req.params;
+        const { role, workspace_id } = req.body;
+        const knex = require("../../../shared/src/db/connection");
+
+        if (!role || !workspace_id) return errorResponse(res, "Role and workspace_id required", 400);
+
+        let workspaceRole = "VIEWER";
+        switch (role) {
+            case "Super Admin": workspaceRole = "SUPER_ADMIN"; break;
+            case "Tenant Admin": workspaceRole = "TENANT_ADMIN"; break;
+            case "Organization Admin": workspaceRole = "WORKSPACE_ADMIN"; break;
+            case "Accountant": workspaceRole = "ACCOUNTANT"; break;
+            case "Viewer": workspaceRole = "VIEWER"; break;
+            case "Auditor": workspaceRole = "AUDITOR"; break;
+            case "GST Practitioner": workspaceRole = "GST_PRACTITIONER"; break;
+            default: workspaceRole = "VIEWER";
+        }
+
+        const updated = await knex("workspace_users")
+            .where({ user_id: userId, workspace_id: workspace_id })
+            .update({ role: workspaceRole }); // removed updated_at: new Date() as column doesn't exist
+
+        if (updated) {
+            try {
+                // Keycloak Sync for updated role
+                const user = await knex("users").where({ id: userId }).first();
+                const workspace = await knex("workspaces").where({ id: workspace_id }).first();
+                const tenant = await knex("tenants").where({ id: id }).first();
+
+                if (user && workspace && tenant && user.auth_provider_id && tenant.metadata?.keycloak_groups?.tenant_group_id) {
+                    const tenantGroupId = tenant.metadata.keycloak_groups.tenant_group_id;
+                    const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, workspace.workspace_code);
+
+                    if (orgGroup) {
+                        // We need to fetch user's current groups and remove them from other role groups under this org
+                        const userGroups = await keycloakService.getUserGroups(user.auth_provider_id);
+                        if (userGroups) {
+                            for (const group of userGroups) {
+                                // If the group is a child of the orgGroup, it's a role group. Remove user from it.
+                                if (group.path.includes(orgGroup.path) && group.id !== orgGroup.id) {
+                                    await keycloakService.removeUserFromGroup(user.auth_provider_id, group.id);
+                                }
+                            }
+                        }
+
+                        // Now add to the new role group
+                        let roleGroup = await keycloakService.getSubgroupByName(orgGroup.id, role);
+                        if (!roleGroup) {
+                            roleGroup = await keycloakService.createSubgroup(orgGroup.id, role, {
+                                type: 'ROLE',
+                                organization: workspace.workspace_code
+                            });
+                        }
+                        if (roleGroup) {
+                            await keycloakService.addUserToGroup(user.auth_provider_id, roleGroup.id);
+                        }
+                    }
+                }
+            } catch (kcErr) {
+                console.warn(`Keycloak role update failed for user ${userId}:`, kcErr.message);
+            }
+        }
+
+        if (!updated) return errorResponse(res, "User mapping not found", 404);
+        return successResponse(res, null, "User role updated");
+    } catch (error) { return errorResponse(res, error); }
+};
+
+const deleteUserRole = async (req, res) => {
+    try {
+        const { id, userId } = req.params;
+        const { workspace_id } = req.query;
+        const knex = require("../../../shared/src/db/connection");
+        if (!workspace_id) return errorResponse(res, "workspace_id required", 400);
+
+        const deleted = await knex("workspace_users")
+            .where({ user_id: userId, workspace_id: workspace_id })
+            .delete();
+
+        if (deleted) {
+            try {
+                // Keycloak Sync: Remove user from organization groups
+                const user = await knex("users").where({ id: userId }).first();
+                const workspace = await knex("workspaces").where({ id: workspace_id }).first();
+                const tenant = await knex("tenants").where({ id: id }).first();
+
+                if (user && workspace && tenant && user.auth_provider_id && tenant.metadata?.keycloak_groups?.tenant_group_id) {
+                    const tenantGroupId = tenant.metadata.keycloak_groups.tenant_group_id;
+                    const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, workspace.workspace_code);
+
+                    if (orgGroup) {
+                        // Fetch user's current groups and remove them from all groups under this org
+                        const userGroups = await keycloakService.getUserGroups(user.auth_provider_id);
+                        if (userGroups) {
+                            for (const group of userGroups) {
+                                // If the group is the orgGroup or a child of the orgGroup, remove user from it
+                                if (group.path.includes(orgGroup.path)) {
+                                    await keycloakService.removeUserFromGroup(user.auth_provider_id, group.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (kcErr) {
+                console.warn(`Keycloak delete role failed for user ${userId}:`, kcErr.message);
+            }
+        }
+
+        if (!deleted) return errorResponse(res, "User mapping not found", 404);
+        return successResponse(res, null, "User removed from organization");
+    } catch (error) { return errorResponse(res, error); }
 };
 
 module.exports = {
@@ -850,5 +1114,8 @@ module.exports = {
     provisionUser,
     listTenantUsers,
     getTenantActivities,
-    getTenantStats
+    getTenantStats,
+    resendInvite,
+    updateUserRole,
+    deleteUserRole
 };

@@ -8,6 +8,7 @@ const xlsx = require('xlsx');
 const { processSalesSheet, processPurchaseSheet } = require('../utils/bookSheetProcessors');
 const crypto = require('crypto');
 const db = require('../../../shared/src/db/connection');
+const progressEmitter = require('../utils/progressEmitter');
 
 async function computeFileHash(filePath) {
     return new Promise((resolve, reject) => {
@@ -31,11 +32,14 @@ class BookImportController {
             }
             uploadedFilePath = req.file.path;
 
-            const { return_period, workspace_id, gstin_id } = req.body;
+            const { return_period, workspace_id, gstin_id, upload_id } = req.body;
             if (!return_period) {
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                if (upload_id) await progressEmitter.emitProgress(upload_id, 100, 'Missing return_period', true);
                 return errorResponse(res, { message: 'return_period is required (MMYYYY)', isCustom: true }, 400);
             }
+
+            await progressEmitter.emitProgress(upload_id, 5, 'Validating organization matching...');
 
             const activeGstinId = gstin_id || null;
             const activeWorkspaceId = workspace_id || null;
@@ -133,6 +137,11 @@ class BookImportController {
             }
 
             // 7. Parse & Validate File GSTIN
+            await progressEmitter.emitProgress(upload_id, 20, 'Validating File format & GSTIN...');
+
+            // Yield event loop to ensure SSE connects if fired simultaneously
+            await new Promise(resolve => setTimeout(resolve, 100));
+
             console.log(`[DEBUG] Reading workbook from ${uploadedFilePath}`);
             const workbook = xlsx.readFile(uploadedFilePath);
             const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
@@ -159,6 +168,8 @@ class BookImportController {
 
 
             // 8. Upload to MinIO
+            await progressEmitter.emitProgress(upload_id, 35, 'Uploading to secure storage...');
+
             console.log(`[DEBUG] Calculating financial year for ${return_period}`);
             const financialYear = BookImportController.calculateFinancialYear(return_period);
             const minioMetadata = {
@@ -200,21 +211,29 @@ class BookImportController {
             }
 
             // 10. Process
+            await progressEmitter.emitProgress(upload_id, 45, 'Extracting sheets...');
+
             const sheetName = workbook.SheetNames[0];
             console.log(`[DEBUG] Processing first sheet: ${sheetName}`);
             const jsonRows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
             console.log(`[DEBUG] Total rows read from sheet: ${jsonRows.length}`);
+
+            await progressEmitter.emitProgress(upload_id, 60, 'Validating & formatting records...');
 
             let result;
             if (type === 'SALES' || type === 'SALES_RETURN') {
                 console.log(`[DEBUG] Starting processSalesSheet for ` + type);
                 const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
                 console.log(`[DEBUG] processSalesSheet completed. Count=${invoices.length}`);
+
+                await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
                 result = await BookModel.bulkInsertSales(invoices);
             } else if (type === 'PURCHASE' || type === 'PURCHASE_RETURN') {
                 console.log(`[DEBUG] Starting processPurchaseSheet for ` + type);
                 const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
                 console.log(`[DEBUG] processPurchaseSheet completed. Count=${vouchers.length}`);
+
+                await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
                 result = await BookModel.bulkInsertPurchase(vouchers);
             }
             console.log(`[DEBUG] DB insertion completed. inserted=${result.inserted}`);
@@ -250,6 +269,8 @@ class BookImportController {
 
             const message = `Import Successful: ${result.inserted} records have been added to your ${type.toLowerCase()} register.`;
 
+            await progressEmitter.emitProgress(upload_id, 100, 'Completed');
+
             return successResponse(res, {
                 message,
                 total_records: result.inserted,
@@ -257,6 +278,7 @@ class BookImportController {
             }, message);
 
         } catch (error) {
+            if (req.body.upload_id) await progressEmitter.emitProgress(req.body.upload_id, 100, 'Import Failed', true);
             console.error('Book Import Error:', error);
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
             const isCustom = error.message && error.message.includes('No valid records');

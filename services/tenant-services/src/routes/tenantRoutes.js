@@ -18,6 +18,9 @@ router.delete('/:id', tenantController.deleteTenant);
 // User Management Routes
 router.post('/:id/users', tenantController.provisionUser);
 router.get('/:id/users', tenantController.listTenantUsers);
+router.post('/:id/users/:userId/resend', tenantController.resendInvite);
+router.put('/:id/users/:userId/role', tenantController.updateUserRole);
+router.delete('/:id/users/:userId', tenantController.deleteUserRole);
 
 // Activity Logs Route
 router.get('/:tenantId/activities', tenantController.getTenantActivities);

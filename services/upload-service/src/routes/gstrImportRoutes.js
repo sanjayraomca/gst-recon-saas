@@ -96,6 +96,9 @@ const uploadMiddleware = (req, res, next) => {
 // Upload GSTR file (any type)
 router.post('/import/upload', verifyToken, uploadMiddleware, GSTRImportController.uploadGSTRFile);
 
+// Stream Server-Sent Events (SSE) for upload progress tracking
+router.get('/import/progress', verifyToken, GSTRImportController.getUploadProgress);
+
 // Get import history
 router.get('/import/history', verifyToken, GSTRImportController.getImportHistory);
 

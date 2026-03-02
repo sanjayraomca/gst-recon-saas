@@ -9,7 +9,9 @@ router.post('/refresh', authController.refresh);
 router.get('/profile', verifyToken, authController.getProfile);
 router.put('/profile', verifyToken, authController.updateProfile);
 router.post('/accept-invite', authController.acceptInvite);
+router.get('/verify-invite/:token', authController.verifyInvite);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
+router.put('/change-password', verifyToken, authController.changePassword);
 
 module.exports = router;

@@ -81,7 +81,7 @@ const sendOrganizationCreatedEmail = async (email, fullName = 'User', orgName, g
     return transporter.sendMail(mailOptions);
 };
 
-const sendUserInviteEmail = async (email, userName, inviterName, tenantName, orgNames, role, inviteLink) => {
+const sendUserInviteEmail = async (email, userName, inviterName, tenantName, orgNames, role, inviteLink, isExistingUser = false) => {
     // Check if orgNames is array, if so join them
     const orgsList = Array.isArray(orgNames) ? orgNames.join(', ') : orgNames;
     const formattedUserName = (userName || 'User')
@@ -96,10 +96,15 @@ const sendUserInviteEmail = async (email, userName, inviterName, tenantName, org
         .map(word => word.charAt(0).toUpperCase() + word.slice(1))
         .join(' ');
 
+    const buttonText = isExistingUser ? 'Accept Invitation' : 'Accept Invitation & Complete Setup';
+    const bodyText = isExistingUser
+        ? `You have been invited to join the <strong>${formattedTenantName}</strong> workspace. Since you already have an account, you can simply click the button below to accept the invitation and gain access to the specified organizations.`
+        : `As an ${role}, you will have the authority to manage tax reconciliations, oversee organizational configurations, and coordinate team workflows. To finalize your onboarding and activate your administrative dashboard, please select the button below:`;
+
     const mailOptions = {
         from: '"The ADESK Team" <no-reply@gsttool.local>',
         to: email,
-        subject: `Invitation to Join Enterprise Workspace: ${formattedTenantName} | ADESK GST`,
+        subject: `Invitation to Join Workspace: ${formattedTenantName} | ADESK GST`,
         html: `
             <div style="font-family: Arial, sans-serif; color: #333;">
                 <p>Dear ${formattedUserName},</p>
@@ -111,9 +116,9 @@ const sendUserInviteEmail = async (email, userName, inviterName, tenantName, org
                 <p><strong>Organizations:</strong> ${orgsList}</p>
                 <p><strong>Your Role as:</strong> ${role}</p>
                 <br>
-                <p>As an ${role}, you will have the authority to manage tax reconciliations, oversee organizational configurations, and coordinate team workflows. To finalize your onboarding and activate your administrative dashboard, please select the button below:</p>
+                <p>${bodyText}</p>
                 <br>
-                <a href="${inviteLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Accept Invitation & Complete Setup</a>
+                <a href="${inviteLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">${buttonText}</a>
                 <br><br>
                 <p><strong>Security Note:</strong> For your protection, this invitation link is unique to your email address. If you were not expecting this request, no further action is required; the invitation will expire automatically.</p>
                 <br>
@@ -158,9 +163,48 @@ const sendPasswordResetEmail = async (email, fullName, otp) => {
     return transporter.sendMail(mailOptions);
 };
 
+const sendUserAddedToOrgEmail = async (email, userName, inviterName, tenantName, orgNames, role, loginLink) => {
+    const orgsList = Array.isArray(orgNames) ? orgNames.join(', ') : orgNames;
+    const formattedUserName = (userName || 'User')
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+    const formattedTenantName = (tenantName || 'Organization')
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+    const mailOptions = {
+        from: '"The ADESK Team" <no-reply@gsttool.local>',
+        to: email,
+        subject: `You've been added to ${formattedTenantName} | ADESK GST`,
+        html: `
+            <div style="font-family: Arial, sans-serif; color: #333;">
+                <p>Dear ${formattedUserName},</p>
+                <p>You have been added to the <strong>${formattedTenantName}</strong> tenant on the ADESK GST platform by ${inviterName}.</p>
+                <p>You now have access to the following organizations:</p>
+                <p><strong>Organizations:</strong> ${orgsList}</p>
+                <p><strong>Role:</strong> ${role}</p>
+                <br>
+                <p>You can now log in to your account and start collaborating.</p>
+                <br>
+                <a href="${loginLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Login to Your Account</a>
+                <br><br>
+                <p>Best regards,</p>
+                <p>The ADESK Team</p>
+            </div>
+        `
+    };
+    return transporter.sendMail(mailOptions);
+};
+
 module.exports = {
     sendWelcomeEmail,
     sendOrganizationCreatedEmail,
     sendUserInviteEmail,
+    sendUserAddedToOrgEmail,
     sendPasswordResetEmail
 };

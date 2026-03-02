@@ -177,6 +177,16 @@ const updateProfile = async (req, res) => {
         }
 
         const updatedUser = await User.update(user.id, updates);
+
+        await logActivity({
+            userId: user.id,
+            actionType: 'UPDATE_PROFILE',
+            entityType: 'User',
+            entityId: user.id,
+            details: { updates: Object.keys(updates) },
+            req: req
+        });
+
         return successResponse(res, updatedUser, 'Profile updated');
     } catch (error) {
         return errorResponse(res, error);
@@ -380,8 +390,8 @@ const acceptInvite = async (req, res) => {
         const User = require('../models/userModel');
         const knex = require('../../../shared/src/db/connection');
 
-        if (!token || !password) {
-            return errorResponse(res, 'Token and password are required', 400);
+        if (!token) {
+            return errorResponse(res, 'Token is required', 400);
         }
 
         // 1. Find User by Token
@@ -395,12 +405,19 @@ const acceptInvite = async (req, res) => {
             return errorResponse(res, 'Invitation token has expired', 400);
         }
 
-        // 2. Update Keycloak Password
-        try {
-            await keycloakService.resetPassword(user.auth_provider_id, password);
-        } catch (kcError) {
-            console.error('Failed to set password in Keycloak:', kcError);
-            return errorResponse(res, 'Failed to set password. Please try again.', 500);
+        // 2. Update Keycloak Password (ONLY for new/inactive users)
+        if (!user.is_active) {
+            if (!password) {
+                return errorResponse(res, 'Password is required for new account activation', 400);
+            }
+            try {
+                await keycloakService.resetPassword(user.auth_provider_id, password);
+            } catch (kcError) {
+                console.error('Failed to set password in Keycloak:', kcError);
+                return errorResponse(res, 'Failed to set password. Please try again.', 500);
+            }
+        } else {
+            console.log(`User ${user.email} is already active, skipping password reset during invitation acceptance.`);
         }
 
         // 3. Activate User in DB
@@ -421,14 +438,38 @@ const acceptInvite = async (req, res) => {
 
         await User.update(user.id, updateData);
 
-        // 4. Activate Workspace Links
+        // 4. Activate Workspace Links and Log Activities
+        const workspacesToActivate = await knex('workspace_users')
+            .where('user_id', user.id)
+            .where('invitation_status', 'INVITED')
+            .select('workspace_id');
+
         await knex('workspace_users')
             .where('user_id', user.id)
             .update({ invitation_status: 'ACTIVE' });
 
-        // 5. Login User (Generate Token)
+        for (const ws of workspacesToActivate) {
+            await logActivity({
+                userId: user.id,
+                tenantId: user.tenant_id, // Primary tenant or derived
+                workspaceId: ws.workspace_id,
+                actionType: 'user_activated',
+                entityType: 'User',
+                entityId: user.id,
+                details: {
+                    email: user.email,
+                    status: 'ACTIVE'
+                },
+                req
+            });
+        }
+
+        // 5. Login User (Generate Token) - Only if password is provided or skip if already active (frontend will handle redirect)
         try {
-            const tokenData = await keycloakService.login(user.email, password);
+            let tokenData = null;
+            if (password) {
+                tokenData = await keycloakService.login(user.email, password);
+            }
 
             // Fetch Tenants for this user
             const userTenants = await knex('tenants')
@@ -455,12 +496,55 @@ const acceptInvite = async (req, res) => {
                 }
             };
 
-            return successResponse(res, responsePayload, 'Invitation accepted and logged in successfully');
+            return successResponse(res, responsePayload, 'Invitation accepted successfully');
 
         } catch (loginError) {
             console.error('Auto-login failed after accept invite:', loginError);
             return successResponse(res, { message: 'Invitation accepted. Please login.' }, 'Invitation accepted successfully');
         }
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const verifyInvite = async (req, res) => {
+    try {
+        const { token } = req.params;
+        const User = require('../models/userModel');
+        const knex = require('../../../shared/src/db/connection');
+
+        if (!token) {
+            return errorResponse(res, 'Token is required', 400);
+        }
+
+        const user = await User.findByInvitationToken(token);
+        if (!user) {
+            return errorResponse(res, 'Invalid or expired invitation token', 404);
+        }
+
+        if (new Date() > new Date(user.invitation_expires_at)) {
+            return errorResponse(res, 'Invitation token has expired', 400);
+        }
+
+        // Fetch organizations being invited to with full details
+        const workspaces = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspace_users.user_id', user.id)
+            .where('workspace_users.invitation_status', 'INVITED')
+            .select(
+                'workspaces.name',
+                'workspaces.id',
+                'workspaces.gstn',
+                'workspaces.workspace_type',
+                'workspaces.address'
+            );
+
+        return successResponse(res, {
+            email: user.email,
+            full_name: user.full_name,
+            is_active: !!user.is_active,
+            organizations: workspaces
+        }, 'Invitation verified');
 
     } catch (error) {
         return errorResponse(res, error);
@@ -548,6 +632,54 @@ const resetPassword = async (req, res) => {
     }
 };
 
+const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const email = req.user.email; // From token verification
+
+        if (!email || !currentPassword || !newPassword) {
+            return errorResponse(res, 'Email, current password, and new password are required', 400);
+        }
+
+        // 1. Verify current password by attempting to login
+        try {
+            await keycloakService.login(email, currentPassword);
+        } catch (authError) {
+            console.error('Change Password - Auth Error:', authError.message);
+            return errorResponse(res, 'Invalid current password', 400);
+        }
+
+        // 2. Locate user to get auth_provider_id
+        const user = await User.findByEmail(email);
+        if (!user || !user.auth_provider_id) {
+            return errorResponse(res, 'User identity not fully configured', 500);
+        }
+
+        // 3. Update password in Keycloak
+        try {
+            await keycloakService.resetPassword(user.auth_provider_id, newPassword);
+        } catch (kcError) {
+            console.error('Change Password - Keycloak Update Error:', kcError.message);
+            return errorResponse(res, kcError.message || 'Failed to update password in identity provider', 400);
+        }
+
+        // 4. Log Activity
+        await logActivity({
+            userId: user.id,
+            actionType: 'CHANGE_PASSWORD',
+            entityType: 'User',
+            entityId: user.id,
+            details: { action: 'User changed their password' },
+            req: req
+        });
+
+        return successResponse(res, { message: 'Password changed successfully' }, 'Password changed successfully');
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     login,
     register,
@@ -555,6 +687,8 @@ module.exports = {
     getProfile,
     updateProfile,
     acceptInvite,
+    verifyInvite,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    changePassword
 };

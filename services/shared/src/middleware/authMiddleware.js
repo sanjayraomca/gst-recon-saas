@@ -25,19 +25,27 @@ const verifyToken = (req, res, next) => {
         // we'll trust the token structure if we are in a trusted env.
         // WARNING: In PROD, we must fetch the certs from JWKS endpoint.
         const decoded = jwt.decode(token);
-
         if (!decoded) {
             throw new Error("Invalid token structure");
         }
 
         // Manual Expiry Check
         if (Date.now() >= decoded.exp * 1000) {
-            console.error(`Token expired: Now=${Date.now()}, Exp=${decoded.exp * 1000}, Diff=${Date.now() - (decoded.exp * 1000)}ms`);
+            console.error(`Token expired: Now=${Date.now()}, Exp=${decoded.exp * 1000}`);
             throw new Error("Token expired");
         }
 
-        req.user = decoded;
-        console.log(`verifyToken: Success, sub=${decoded.sub}, email=${decoded.email}`);
+        // Keycloak uses 'sub' for the unique user ID.
+        // We ensure it's available as req.user.sub for consistency across services.
+        const sub = decoded.sub || decoded.sid || decoded.id;
+        req.user = {
+            ...decoded,
+            sub: sub,
+            id: sub,
+            email: (decoded.email || decoded.preferred_username || '').toLowerCase() // Normalize email casing
+        };
+
+        console.log(`verifyToken: Success, sub=${req.user.sub}, email=${req.user.email}`);
         next();
     } catch (err) {
         console.error('Token verification failed:', err.message);

@@ -239,13 +239,26 @@ const createWorkspace = async (req, res) => {
 
         // 7. Link User
         const userId = req.user ? (req.user.sub || req.user.id) : null;
-        const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        let userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
         const userFullName = (req.user && (req.user.name || req.user.full_name)) || 'User';
+
+        if (userEmail) userEmail = userEmail.toLowerCase();
+
+        const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
         if (userId || userEmail) {
             let query = trx('users');
-            if (userId) query = query.where('auth_provider_id', userId).orWhere('id', userId);
-            if (userEmail) query = query.orWhere('email', userEmail);
+            query = query.where(function () {
+                if (userId) {
+                    this.where('auth_provider_id', userId);
+                    if (isUuid(userId)) {
+                        this.orWhere('id', userId);
+                    }
+                }
+                if (userEmail) {
+                    this.orWhere('email', userEmail);
+                }
+            });
             let localUser = await query.first();
 
             if (localUser) {
@@ -411,11 +424,14 @@ const createWorkspace = async (req, res) => {
         let logUserId = null;
         if (req.user) {
             const authId = req.user.sub || req.user.id;
+            const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
             if (authId) {
-                const localUserRecord = await knex('users')
-                    .where('auth_provider_id', authId)
-                    .orWhere('id', authId)
-                    .first();
+                let query = knex('users').where('auth_provider_id', authId);
+                if (isUuid(authId)) {
+                    query = query.orWhere('id', authId);
+                }
+                const localUserRecord = await query.first();
                 if (localUserRecord) {
                     logUserId = localUserRecord.id;
                 }
@@ -453,7 +469,8 @@ const listWorkspaces = async (req, res) => {
         const { tenant_id } = req.query; // Support explicit tenant filtering
 
         const userId = req.user ? (req.user.sub || req.user.id) : null;
-        const userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        let userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        if (userEmail) userEmail = userEmail.toLowerCase();
 
         if (!userId && !userEmail) {
             console.warn('listWorkspaces: No user identity found in request');
@@ -462,19 +479,21 @@ const listWorkspaces = async (req, res) => {
 
         console.log(`listWorkspaces: Looking up user ID=${userId}, Email=${userEmail}`);
 
+        const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
         // 1. Get Local User and their Tenant Context - Safely
         let userQuery = knex('users');
-        if (userId && userEmail) {
-            userQuery = userQuery.where(function () {
-                this.where('auth_provider_id', userId).orWhere('email', userEmail);
-            });
-        } else if (userId) {
-            userQuery = userQuery.where('auth_provider_id', userId);
-        } else if (userEmail) {
-            userQuery = userQuery.where('email', userEmail);
-        } else {
-            return successResponse(res, [], 'No user identity provided');
-        }
+        userQuery = userQuery.where(function () {
+            if (userId) {
+                this.where('auth_provider_id', userId);
+                if (isUuid(userId)) {
+                    this.orWhere('id', userId);
+                }
+            }
+            if (userEmail) {
+                this.orWhere('email', userEmail);
+            }
+        });
 
         const localUser = await userQuery.first();
         console.log(`listWorkspaces: localUser found=${!!localUser}, tenant_id=${localUser?.tenant_id}`);
