@@ -1,4 +1,5 @@
 const knex = require('../../../shared/src/db/connection');
+const { findAIMatches, AI_MATCHING_ENABLED } = require('../services/aiMatchingService');
 
 /**
  * Reconciliation Model
@@ -89,6 +90,7 @@ class ReconciliationModel {
             // 4. Perform matching
             const matchResults = [];
             const matchedGstr2bIds = new Set();
+            const unmatchedPurchases = []; // Collected for AI matching
             let matchedCount = 0;
             let mismatchedCount = 0;
             let missingCount = 0;
@@ -129,28 +131,83 @@ class ReconciliationModel {
                     if (isExactMatch) matchedCount++;
                     else mismatchedCount++;
                 } else {
-                    const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
-                    matchResults.push({
-                        recon_run_id: reconRun.id,
-                        workspace_id: workspaceId,
-                        purchase_invoice_id: purchaseInv.id,
-                        match_status: 'MISSING', // Purchase present, GSTR2B missing
-                        match_score: 0.00,
-                        match_confidence: 'HIGH',
-                        books_value: pTotal,
-                        variance_amount: pTotal,
-                        itc_decision: 'INELIGIBLE', // Can't claim if not in 2B
-                        decision_reason: 'Not found in GSTR2B',
-                        action_required: 'VERIFY_SUPPLIER',
-                        action_priority: 'HIGH',
-                        action_status: 'PENDING',
-                        created_at: knex.fn.now(),
-                        updated_at: knex.fn.now()
-                    });
-                    missingCount++;
+                    // Collect for AI matching instead of immediately marking as MISSING
+                    unmatchedPurchases.push(purchaseInv);
                 }
             }
 
+            // 4b. AI Fuzzy Matching — run on unmatched purchase invoices
+            let aiMatchMap = new Map();
+            if (AI_MATCHING_ENABLED && unmatchedPurchases.length > 0) {
+                const unmatchedGstr2b = gstr2bInvoices.filter(g => !matchedGstr2bIds.has(g.id));
+                aiMatchMap = await findAIMatches(unmatchedPurchases, unmatchedGstr2b);
+            }
+
+            // 4c. Process unmatched purchases (with AI results if available)
+            for (const purchaseInv of unmatchedPurchases) {
+                const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
+                const aiResult = aiMatchMap.get(purchaseInv.id);
+
+                if (aiResult && aiResult.matched && aiResult.gstr2b_id) {
+                    // AI found a match — look up the GSTR2B invoice
+                    const aiGstr2bInv = gstr2bInvoices.find(g => g.id === aiResult.gstr2b_id);
+                    if (aiGstr2bInv && !matchedGstr2bIds.has(aiGstr2bInv.id)) {
+                        matchedGstr2bIds.add(aiGstr2bInv.id);
+                        const gTotal = isNaN(parseFloat(aiGstr2bInv.document_value)) ? 0 : parseFloat(aiGstr2bInv.document_value);
+                        const amountDiff = Math.abs(pTotal - gTotal);
+                        const isExactAmount = amountDiff <= 1.00;
+
+                        matchResults.push({
+                            recon_run_id: reconRun.id,
+                            workspace_id: workspaceId,
+                            purchase_invoice_id: purchaseInv.id,
+                            gstr2b_invoice_id: aiGstr2bInv.id,
+                            match_status: isExactAmount ? 'AI_MATCHED' : 'AI_PARTIAL',
+                            match_score: aiResult.confidence_score,
+                            match_confidence: aiResult.confidence_score >= 90 ? 'HIGH' : 'MEDIUM',
+                            matched_by: 'AI',
+                            ai_confidence_score: aiResult.confidence_score,
+                            ai_match_reason: aiResult.reason,
+                            books_value: pTotal,
+                            portal_value: gTotal,
+                            variance_amount: pTotal - gTotal,
+                            itc_decision: isExactAmount ? 'ELIGIBLE' : 'PENDING',
+                            decision_reason: `AI Match: ${aiResult.reason}`,
+                            action_required: isExactAmount ? null : 'REVIEW_AMOUNT',
+                            action_status: 'PENDING',
+                            created_at: knex.fn.now(),
+                            updated_at: knex.fn.now()
+                        });
+
+                        if (isExactAmount) matchedCount++;
+                        else mismatchedCount++;
+                        continue;
+                    }
+                }
+
+                // No AI match — mark as MISSING
+                matchResults.push({
+                    recon_run_id: reconRun.id,
+                    workspace_id: workspaceId,
+                    purchase_invoice_id: purchaseInv.id,
+                    match_status: 'MISSING',
+                    match_score: 0.00,
+                    match_confidence: 'HIGH',
+                    matched_by: 'RULE',
+                    books_value: pTotal,
+                    variance_amount: pTotal,
+                    itc_decision: 'INELIGIBLE',
+                    decision_reason: 'Not found in GSTR2B',
+                    action_required: 'VERIFY_SUPPLIER',
+                    action_priority: 'HIGH',
+                    action_status: 'PENDING',
+                    created_at: knex.fn.now(),
+                    updated_at: knex.fn.now()
+                });
+                missingCount++;
+            }
+
+            // 4d. Unmatched GSTR-2B invoices (in portal but not in books)
             for (const gstr2bInv of gstr2bInvoices) {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
                     const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
@@ -158,9 +215,10 @@ class ReconciliationModel {
                         recon_run_id: reconRun.id,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
-                        match_status: 'MISSING', // GSTR2B present, Purchase missing
+                        match_status: 'MISSING',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
+                        matched_by: 'RULE',
                         portal_value: gTotal,
                         variance_amount: -gTotal,
                         itc_decision: 'PENDING',
@@ -238,12 +296,23 @@ class ReconciliationModel {
     }
 
     /**
-     * Get run results
+     * Get run results with pagination and advanced filtering
      */
-    static async getRunResults(workspaceId, runId, filters = {}, pagination = {}) {
-        const { match_status, action_required } = filters;
-        const { page = 1, page_size = 50 } = pagination;
-        const offset = (page - 1) * page_size;
+    static async getRunResults(workspaceId, runId, filters = {}) {
+        const {
+            match_status,
+            action_required,
+            search,
+            min_amount,
+            max_amount,
+            has_variance,
+            supplier_gstin,
+            page = 1,
+            page_size = 50
+        } = filters;
+
+        const limit = parseInt(page_size);
+        const offset = (parseInt(page) - 1) * limit;
 
         // Verify run belongs to workspace
         const run = await this.getRunById(workspaceId, runId);
@@ -254,20 +323,92 @@ class ReconciliationModel {
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .where('rr.recon_run_id', runId);
 
-        if (match_status) query.where('rr.match_status', match_status);
-        if (action_required) query.whereNotNull('rr.action_required');
+        // --- Apply Filters ---
+        if (match_status && match_status !== 'all') {
+            query.where('rr.match_status', match_status);
+        }
 
+        if (action_required && action_required !== 'false') {
+            query.whereNotNull('rr.action_required');
+        }
+
+        if (supplier_gstin) {
+            query.where(function () {
+                this.where('pi.supplier_gstin', supplier_gstin)
+                    .orWhere('gi.supplier_gstin', supplier_gstin);
+            });
+        }
+
+        if (min_amount) {
+            query.where(function () {
+                this.where('pi.net_amount', '>=', min_amount)
+                    .orWhere('gi.document_value', '>=', min_amount);
+            });
+        }
+
+        if (max_amount) {
+            query.where(function () {
+                this.where('pi.net_amount', '<=', max_amount)
+                    .orWhere('gi.document_value', '<=', max_amount);
+            });
+        }
+
+        if (has_variance === 'true') {
+            query.where('rr.variance_amount', '!=', 0);
+        }
+
+        if (search) {
+            query.where(function () {
+                this.where('pi.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_invoice_no', 'ilike', `%${search}%`)
+                    .orWhere('gi.document_number_clean', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('gi.supplier_gstin', 'ilike', `%${search}%`);
+            });
+        }
+
+        // --- Calculate Totals before limit/offset ---
+        const countQuery = query.clone().clearSelect().count('* as total');
+        const countResult = await countQuery.first();
+        const total = parseInt(countResult.total);
+
+        // --- Execute Paged Query ---
         const results = await query.select(
             'rr.*',
+            // Supplier mapping
+            knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
+            knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
+
+            // Purchase/Books mapping
             'pi.supplier_invoice_no as purchase_invoice_number',
+            'pi.due_date as purchase_invoice_date',
             'pi.net_amount as purchase_invoice_total',
+            'pi.taxable_total as purchase_taxable',
+            knex.raw('COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0) as purchase_tax'),
+            knex.raw('CASE WHEN pi.taxable_total > 0 THEN ROUND(((COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0)) / pi.taxable_total) * 100) ELSE 0 END as purchase_tax_rate'),
+
+            // GSTR-2B mapping
             'gi.document_number_clean as gstr2b_invoice_number',
-            'gi.document_value as gstr2b_invoice_total'
+            'gi.document_date as gstr2b_invoice_date',
+            'gi.document_value as gstr2b_invoice_total',
+            'gi.taxable_value as gstr2b_taxable',
+            'gi.total_tax as gstr2b_tax',
+            'gi.applicable_tax_rate_percent as gstr2b_tax_rate'
         )
-            .limit(page_size)
+            .orderBy('rr.created_at', 'desc')
+            .limit(limit)
             .offset(offset);
 
-        return results;
+        return {
+            data: results,
+            pagination: {
+                total,
+                page: parseInt(page),
+                page_size: limit,
+                total_pages: Math.ceil(total / limit)
+            }
+        };
     }
 
     static normalizeInvoiceNumber(num) {

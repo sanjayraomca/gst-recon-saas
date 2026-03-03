@@ -92,10 +92,12 @@ const getRunResults = async (req, res) => {
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        const results = await ReconciliationModel.getRunResults(workspaceId, runId, req.query);
-        if (!results) return errorResponse(res, 'Run not found', 404);
+        const result = await ReconciliationModel.getRunResults(workspaceId, runId, req.query);
+        if (!result) return errorResponse(res, 'Run not found', 404);
 
-        return successResponse(res, results, 'Run results retrieved successfully');
+        return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
+            pagination: result.pagination
+        });
     } catch (error) {
         console.error('Error fetching results:', error);
         return errorResponse(res, error.message, 500);

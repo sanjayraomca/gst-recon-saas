@@ -295,6 +295,9 @@ services:
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - NATS_URL=nats://nats:4222
       - PORT=3002
+      # ---- AI Reconciliation (set GEMINI_API_KEY to enable) ----
+      - AI_MATCHING_ENABLED=true
+      - GEMINI_API_KEY=AIzaSyCbyQgj688c2S_ztNDGofuY--MnDfxtTnM
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`)"
