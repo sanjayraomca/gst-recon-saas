@@ -53,7 +53,10 @@ class GSTRImportController {
                 generation_date,
             } = req.body;
 
-            await progressEmitter.emitProgress(upload_id, 5, 'Starting validation...');
+            const upload_id = req.body.upload_id || null;
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 5, 'Starting validation...');
+            }
 
             // Get user info from JWT token (set by auth middleware)
             const userEmail = req.user?.email;
@@ -155,7 +158,9 @@ class GSTRImportController {
 
             // ─── DUPLICATE DETECTION AND VALIDATION ────────────────────────────────────
 
-            await progressEmitter.emitProgress(upload_id, 15, 'Validating File format & GSTIN...');
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 15, 'Validating File format & GSTIN...');
+            }
 
             // 1. Parse & Validate File GSTIN
             const workbook = xlsx.readFile(uploadedFilePath);
@@ -181,7 +186,9 @@ class GSTRImportController {
             }
 
             // 2. Compute MD5 hash of the uploaded file BEFORE doing anything else
-            await progressEmitter.emitProgress(upload_id, 25, 'Checking for duplicates...');
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 25, 'Checking for duplicates...');
+            }
 
             const fileHash = await computeFileHash(uploadedFilePath);
 
@@ -219,7 +226,9 @@ class GSTRImportController {
             // Calculate financial year from return_period (MMYYYY format)
             const financialYear = GSTRImportController.calculateFinancialYear(return_period);
 
-            await progressEmitter.emitProgress(upload_id, 35, 'Uploading to secure storage...');
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 35, 'Uploading to secure storage...');
+            }
 
             // Upload to MinIO (always — each upload gets its own timestamped file)
             const minioMetadata = {
@@ -261,7 +270,9 @@ class GSTRImportController {
 
 
             // PROCESS FILE
-            await progressEmitter.emitProgress(upload_id, 50, 'Parsing spreadsheets...');
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 50, 'Parsing spreadsheets...');
+            }
 
             let totalInserted = 0;
             let totalSkipped = 0;
@@ -293,7 +304,9 @@ class GSTRImportController {
                         const jsonRows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
                         const sName = sheetName.toUpperCase();
 
-                        await progressEmitter.emitProgress(upload_id, 60 + Math.min(25, Math.floor(totalRecords / 1000)), `Processing ${sheetName}...`);
+                        if (upload_id) {
+                            await progressEmitter.emitProgress(upload_id, 60 + Math.min(25, Math.floor(totalRecords / 1000)), `Processing ${sheetName}...`);
+                        }
 
                         console.log(`Processing sheet: ${sheetName} (${sName}) - Rows: ${jsonRows.length}`);
 
@@ -598,7 +611,9 @@ class GSTRImportController {
                 ? `File processed as update: ${totalInserted} new records added, ${totalSkipped} already existed.`
                 : `Import Successful: ${totalInserted} records have been added to the system.`;
 
-            await progressEmitter.emitProgress(upload_id, 100, 'Completed');
+            if (upload_id) {
+                await progressEmitter.emitProgress(upload_id, 100, 'Completed');
+            }
 
             return successResponse(res, {
                 import_filing_id: importRecord.import_filing_id,
