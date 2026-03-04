@@ -1,5 +1,6 @@
 const knex = require('../../../shared/src/db/connection');
 const { findAIMatches, AI_MATCHING_ENABLED } = require('../services/aiMatchingService');
+const progressEmitter = require('../utils/progressEmitter');
 
 /**
  * Reconciliation Model
@@ -57,7 +58,34 @@ class ReconciliationModel {
                 })
                 .returning('*');
 
+            await trx.commit();
+
+            const runId = reconRun.id;
+
+            // Trigger the matching task in the background (no await)
+            this.runMatchingTask(workspaceId, runId, taxPeriodId, runData).catch(err => {
+                console.error(`[AI Matching Error] Background task failed for run ${runId}:`, err);
+            });
+
+            return runId;
+        } catch (error) {
+            await trx.rollback();
+            throw error;
+        }
+    }
+
+    /**
+     * Background task to perform the actual reconciliation matching
+     */
+    static async runMatchingTask(workspaceId, runId, taxPeriodId, runData) {
+        try {
+            await progressEmitter.emitProgress(runId, 5, 'Starting reconciliation run...');
+
+            const trx = await knex.transaction();
+            // ... rest of the logic ...
+
             // 2. Fetch purchase vouchers
+            await progressEmitter.emitProgress(runId, 15, 'Fetching purchase invoices...');
             const purchaseInvoices = await trx('purchase_vouchers')
                 .select('purchase_vouchers.*')
                 .join('tax_periods', function () {
@@ -76,6 +104,7 @@ class ReconciliationModel {
             // Since we don't have gstin_id on purchase_vouchers, we will filter in memory if needed.
 
             // 3. Fetch GSTR2B invoices
+            await progressEmitter.emitProgress(runId, 30, 'Fetching GSTR-2B invoices...');
             const gstr2bInvoices = await trx('normalized_gstr2b_invoices')
                 .select('normalized_gstr2b_invoices.*')
                 .join('tax_periods', function () {
@@ -88,6 +117,7 @@ class ReconciliationModel {
                 .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = tax_periods.year');
 
             // 4. Perform matching
+            await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
             const matchResults = [];
             const matchedGstr2bIds = new Set();
             const unmatchedPurchases = []; // Collected for AI matching
@@ -110,7 +140,7 @@ class ReconciliationModel {
                     const isExactMatch = amountDiff <= 1.00;
 
                     matchResults.push({
-                        recon_run_id: reconRun.id,
+                        recon_run_id: runId,
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
@@ -139,6 +169,7 @@ class ReconciliationModel {
             // 4b. AI Fuzzy Matching — run on unmatched purchase invoices
             let aiMatchMap = new Map();
             if (AI_MATCHING_ENABLED && unmatchedPurchases.length > 0) {
+                await progressEmitter.emitProgress(runId, 70, `Running AI matching for ${unmatchedPurchases.length} invoices...`);
                 const unmatchedGstr2b = gstr2bInvoices.filter(g => !matchedGstr2bIds.has(g.id));
                 aiMatchMap = await findAIMatches(unmatchedPurchases, unmatchedGstr2b);
             }
@@ -158,7 +189,7 @@ class ReconciliationModel {
                         const isExactAmount = amountDiff <= 1.00;
 
                         matchResults.push({
-                            recon_run_id: reconRun.id,
+                            recon_run_id: runId,
                             workspace_id: workspaceId,
                             purchase_invoice_id: purchaseInv.id,
                             gstr2b_invoice_id: aiGstr2bInv.id,
@@ -187,7 +218,7 @@ class ReconciliationModel {
 
                 // No AI match — mark as MISSING
                 matchResults.push({
-                    recon_run_id: reconRun.id,
+                    recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
                     match_status: 'MISSING',
@@ -212,7 +243,7 @@ class ReconciliationModel {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
                     const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     matchResults.push({
-                        recon_run_id: reconRun.id,
+                        recon_run_id: runId,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
                         match_status: 'MISSING',
@@ -234,11 +265,12 @@ class ReconciliationModel {
             }
 
             if (matchResults.length > 0) {
+                await progressEmitter.emitProgress(runId, 85, 'Saving reconciliation results...');
                 await trx('reconciliation_results').insert(matchResults);
             }
 
             await trx('reconciliation_runs')
-                .where({ id: reconRun.id })
+                .where({ id: runId })
                 .update({
                     status: 'COMPLETED',
                     total_invoices: purchaseInvoices.length + gstr2bInvoices.length,
@@ -256,10 +288,11 @@ class ReconciliationModel {
                 });
 
             await trx.commit();
-            return reconRun.id;
+            await progressEmitter.emitProgress(runId, 100, 'Reconciliation completed successfully');
         } catch (error) {
             await trx.rollback();
-            throw error;
+            console.error(`[Recon Task] Run ${runId} failed:`, error.message);
+            await progressEmitter.emitProgress(runId, 0, `Failed: ${error.message}`, true);
         }
     }
 

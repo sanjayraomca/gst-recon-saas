@@ -1,6 +1,7 @@
 const ReconciliationModel = require('../models/reconciliationModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const progressEmitter = require('../utils/progressEmitter');
 
 /**
  * Trigger reconciliation for a specific GSTIN and period
@@ -104,9 +105,45 @@ const getRunResults = async (req, res) => {
     }
 };
 
+/**
+ * Stream Server-Sent Events (SSE) for reconciliation progress tracking
+ */
+const getRunProgress = (req, res) => {
+    const runId = req.query.run_id || req.params.run_id;
+
+    if (!runId) {
+        return res.status(400).json({ success: false, error: 'run_id is required' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Immediately flush headers so fetch connection resolves
+    res.flushHeaders();
+
+    const sendProgress = (data) => {
+        if (data.runId === runId) {
+            res.write(`data: ${JSON.stringify({ progress: data.progress, message: data.message, error: data.error })}\n\n`);
+
+            if (data.progress >= 100 || data.error) {
+                // Give frontend time to receive before closing
+                setTimeout(() => res.end(), 1000);
+            }
+        }
+    };
+
+    progressEmitter.on('progress', sendProgress);
+
+    req.on('close', () => {
+        progressEmitter.removeListener('progress', sendProgress);
+    });
+};
+
 module.exports = {
     createRun,
     getRuns,
     getRun,
-    getRunResults
+    getRunResults,
+    getRunProgress
 };

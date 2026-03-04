@@ -1,33 +1,32 @@
 /**
- * AI Matching Service — Google Gemini Integration
+ * AI Matching Service — Groq Integration
  * 
  * HOW TO DISABLE: Set AI_MATCHING_ENABLED=false in docker-compose.yml
- * HOW TO REMOVE:  Delete this file + revert the 3 lines added to reconciliationModel.js
  */
 const https = require('https');
 
 const AI_MATCHING_ENABLED = process.env.AI_MATCHING_ENABLED === 'true';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-1.5-flash';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// How many unmatched pairs to send per Gemini API call (reduced for free tier)
+// How many unmatched pairs to send per AI API call
 const BATCH_SIZE = 5;
 
 /**
  * Given a list of unmatched purchase invoices and all GSTR-2B invoices,
- * uses Gemini to try to find fuzzy matches.
+ * uses Groq to try to find fuzzy matches.
  * 
  * @param {Array} unmatchedPurchases - purchase invoices with no exact GSTR-2B match
  * @param {Array} allGstr2bInvoices  - all GSTR-2B invoices from the run
  * @returns {Map} purchaseId => { gstr2b_invoice, confidence_score, reason }
  */
 async function findAIMatches(unmatchedPurchases, allGstr2bInvoices) {
-    if (!AI_MATCHING_ENABLED || !GEMINI_API_KEY || unmatchedPurchases.length === 0 || allGstr2bInvoices.length === 0) {
+    if (!AI_MATCHING_ENABLED || !GROQ_API_KEY || unmatchedPurchases.length === 0 || allGstr2bInvoices.length === 0) {
         return new Map();
     }
 
-    console.log(`[AI Matching] Starting AI matching for ${unmatchedPurchases.length} unmatched purchase invoices...`);
+    console.log(`[AI Matching] Starting AI matching for ${unmatchedPurchases.length} unmatched purchase invoices using Groq...`);
 
     const aiMatchMap = new Map(); // purchaseId => match result
 
@@ -36,7 +35,7 @@ async function findAIMatches(unmatchedPurchases, allGstr2bInvoices) {
         const batch = unmatchedPurchases.slice(i, i + BATCH_SIZE);
 
         try {
-            const batchResults = await matchBatchWithGemini(batch, allGstr2bInvoices);
+            const batchResults = await matchBatchWithGroq(batch, allGstr2bInvoices);
             for (const [purchaseId, result] of batchResults) {
                 aiMatchMap.set(purchaseId, result);
             }
@@ -58,16 +57,16 @@ async function findAIMatches(unmatchedPurchases, allGstr2bInvoices) {
 }
 
 /**
- * Send one batch of unmatched purchase invoices to Gemini for matching
+ * Send one batch of unmatched purchase invoices to Groq for matching
  */
-async function matchBatchWithGemini(purchaseBatch, allGstr2bInvoices) {
+async function matchBatchWithGroq(purchaseBatch, allGstr2bInvoices) {
     const prompt = buildPrompt(purchaseBatch, allGstr2bInvoices);
-    const responseText = await callGeminiAPI(prompt);
-    return parseGeminiResponse(responseText, purchaseBatch);
+    const responseText = await callGroqAPI(prompt);
+    return parseGroqResponse(responseText, purchaseBatch);
 }
 
 /**
- * Build the Gemini prompt
+ * Build the prompt
  */
 function buildPrompt(purchaseBatch, gstr2bInvoices) {
     const purchaseList = purchaseBatch.map((p, idx) =>
@@ -117,44 +116,53 @@ Format:
   ]
 }
 
-Only return the JSON object. Do not add any conversational text.`;
+Only return the JSON object. Do not add any conversational text. Use JSON mode if possible.`;
 }
 
 /**
- * Call the Gemini API
+ * Call the Groq API
  */
-function callGeminiAPI(prompt) {
+function callGroqAPI(prompt) {
     return new Promise((resolve, reject) => {
         const body = JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-                temperature: 0.1, // Low temperature for consistent structured output
-                maxOutputTokens: 2048
-            }
+            model: GROQ_MODEL,
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a GST reconciliation expert that only responds in JSON.'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' }
         });
 
         const options = {
             method: 'POST',
             headers: {
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(body)
             }
         };
 
-        const req = https.request(GEMINI_URL, options, (res) => {
+        const req = https.request(GROQ_URL, options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
                 if (res.statusCode !== 200) {
-                    reject(new Error(`Gemini API error ${res.statusCode}: ${data}`));
+                    reject(new Error(`Groq API error ${res.statusCode}: ${data}`));
                     return;
                 }
                 try {
                     const parsed = JSON.parse(data);
-                    const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    const text = parsed?.choices?.[0]?.message?.content || '';
                     resolve(text);
                 } catch (e) {
-                    reject(new Error('Failed to parse Gemini response: ' + e.message));
+                    reject(new Error('Failed to parse Groq response: ' + e.message));
                 }
             });
         });
@@ -166,43 +174,30 @@ function callGeminiAPI(prompt) {
 }
 
 /**
- * Parse Gemini's JSON response into a Map of purchaseId => match result
+ * Parse the JSON response into a Map of purchaseId => match result
  */
-function parseGeminiResponse(responseText, purchaseBatch) {
+function parseGroqResponse(responseText, purchaseBatch) {
     const resultMap = new Map();
 
     try {
-        // Extract JSON from the response (handle markdown code fences ```json ... ```)
-        let cleanJson = responseText.trim();
-        if (cleanJson.startsWith('```')) {
-            cleanJson = cleanJson.replace(/^```(json)?/, '').replace(/```$/, '').trim();
-        }
-
-        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            console.warn('[AI Matching] No JSON object found in response text');
-            return resultMap;
-        }
-
-        const parsed = JSON.parse(jsonMatch[0]);
+        const parsed = JSON.parse(responseText);
         const matches = parsed?.matches || [];
 
         for (const match of matches) {
             const { purchase_id, gstr2b_id, confidence, reason } = match;
 
-            // Validate that purchase_id exists in our batch
             const purchaseInv = purchaseBatch.find(p => p.id === purchase_id);
             if (!purchaseInv) continue;
 
             resultMap.set(purchase_id, {
-                matched: !!(gstr2b_id && confidence >= 70), // Only trust high-confidence matches
+                matched: !!(gstr2b_id && confidence >= 70),
                 gstr2b_id: confidence >= 70 ? gstr2b_id : null,
                 confidence_score: parseFloat(confidence) || 0,
                 reason: reason || 'AI-assisted match'
             });
         }
     } catch (err) {
-        console.error('[AI Matching] Failed to parse Gemini response:', err.message);
+        console.error('[AI Matching] Failed to parse Groq response:', err.message);
     }
 
     return resultMap;

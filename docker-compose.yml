@@ -297,7 +297,12 @@ services:
       - PORT=3002
       # ---- AI Reconciliation (set GEMINI_API_KEY to enable) ----
       - AI_MATCHING_ENABLED=true
-      - GEMINI_API_KEY=AIzaSyCbyQgj688c2S_ztNDGofuY--MnDfxtTnM
+      - AI_MATCHING_PROVIDER=groq
+      - GROQ_API_KEY=your_groq_api_key_here
+    command: npm run dev
+    volumes:
+      - ./services/workspace-service/src:/app/services/workspace-service/src
+      - ./services/shared:/app/services/shared
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`)"

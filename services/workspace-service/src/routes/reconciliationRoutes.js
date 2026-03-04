@@ -5,7 +5,8 @@ const {
     createRun,
     getRuns,
     getRun,
-    getRunResults
+    getRunResults,
+    getRunProgress
 } = require('../controllers/reconciliationController');
 
 const {
@@ -41,6 +42,12 @@ router.get('/runs', getRuns);
 
 // GET /reconciliation/runs/:run_id - Get run details
 router.get('/runs/:run_id', getRun);
+
+// GET /reconciliation/runs/:run_id/progress - Stream run progress (SSE)
+router.get('/runs/:run_id/progress', getRunProgress);
+
+// GET /reconciliation/progress?run_id=... - Alternative SSE route
+router.get('/progress', getRunProgress);
 
 // --- Phase 4.3: Actions ---
 const {
