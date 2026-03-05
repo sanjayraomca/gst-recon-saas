@@ -341,11 +341,9 @@ class ReconciliationModel {
             has_variance,
             supplier_gstin,
             page = 1,
-            page_size = 50
+            page_size = 50,
+            export_mode
         } = filters;
-
-        const limit = parseInt(page_size);
-        const offset = (parseInt(page) - 1) * limit;
 
         // Verify run belongs to workspace
         const run = await this.getRunById(workspaceId, runId);
@@ -372,17 +370,22 @@ class ReconciliationModel {
             });
         }
 
-        if (min_amount) {
+        // Robust numeric filter handling to prevent 500 errors with "undefined" strings
+        const isValidNumeric = (val) => val !== undefined && val !== null && val !== '' && !isNaN(parseFloat(val)) && isFinite(val);
+
+        if (isValidNumeric(min_amount)) {
+            const min = parseFloat(min_amount);
             query.where(function () {
-                this.where('pi.net_amount', '>=', min_amount)
-                    .orWhere('gi.document_value', '>=', min_amount);
+                this.where('pi.net_amount', '>=', min)
+                    .orWhere('gi.document_value', '>=', min);
             });
         }
 
-        if (max_amount) {
+        if (isValidNumeric(max_amount)) {
+            const max = parseFloat(max_amount);
             query.where(function () {
-                this.where('pi.net_amount', '<=', max_amount)
-                    .orWhere('gi.document_value', '<=', max_amount);
+                this.where('pi.net_amount', '<=', max)
+                    .orWhere('gi.document_value', '<=', max);
             });
         }
 
@@ -406,8 +409,8 @@ class ReconciliationModel {
         const countResult = await countQuery.first();
         const total = parseInt(countResult.total);
 
-        // --- Execute Paged Query ---
-        const results = await query.select(
+        // --- Prepare Main Query ---
+        query.select(
             'rr.*',
             // Supplier mapping
             knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
@@ -428,18 +431,26 @@ class ReconciliationModel {
             'gi.taxable_value as gstr2b_taxable',
             'gi.total_tax as gstr2b_tax',
             'gi.applicable_tax_rate_percent as gstr2b_tax_rate'
-        )
-            .orderBy('rr.created_at', 'desc')
-            .limit(limit)
-            .offset(offset);
+        ).orderBy('rr.created_at', 'desc');
+
+        // --- Apply Pagination/Export Mode ---
+        let results;
+        if (export_mode === 'true' || export_mode === true) {
+            // No limit/offset for export mode
+            results = await query;
+        } else {
+            const limit = parseInt(page_size) || 50;
+            const offset = (parseInt(page) - 1) * limit;
+            results = await query.limit(limit).offset(offset);
+        }
 
         return {
             data: results,
             pagination: {
                 total,
                 page: parseInt(page),
-                page_size: limit,
-                total_pages: Math.ceil(total / limit)
+                page_size: export_mode ? total : parseInt(page_size),
+                total_pages: export_mode ? 1 : Math.ceil(total / parseInt(page_size))
             }
         };
     }
