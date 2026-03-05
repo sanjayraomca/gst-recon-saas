@@ -295,10 +295,6 @@ services:
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - NATS_URL=nats://nats:4222
       - PORT=3002
-      # ---- AI Reconciliation (set GEMINI_API_KEY to enable) ----
-      - AI_MATCHING_ENABLED=true
-      - AI_MATCHING_PROVIDER=groq
-      - GROQ_API_KEY=your_groq_api_key_here
     command: npm run dev
     volumes:
       - ./services/workspace-service/src:/app/services/workspace-service/src

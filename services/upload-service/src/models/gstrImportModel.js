@@ -255,6 +255,11 @@ class GSTRImportModel {
             values.push(filters.status);
         }
 
+        if (filters.workspaceId) {
+            query += ` AND workspace_id = ?`;
+            values.push(filters.workspaceId);
+        }
+
         query += ` ORDER BY upload_timestamp DESC LIMIT ?`;
         values.push(limit);
 
@@ -383,6 +388,50 @@ class GSTRImportModel {
      */
     static async batchInsertISD(records) {
         return this.batchInsertToTable('gstr_2b_isd', records, '(tenant_id, gstin_isd, document_number, return_period)');
+    }
+
+    // ─── GSTR-2A Section ──────────────────────────────────────────────────
+
+    /**
+     * Batch insert GSTR-2A B2B invoices
+     */
+    static async batchInsertB2BInvoices2A(invoices) {
+        return this.batchInsertToTable('gstr_2a_b2b_invoices', invoices, '(tenant_id, invoice_number, return_period)');
+    }
+
+    /**
+     * Batch insert GSTR-2A B2BA invoices
+     */
+    static async batchInsertB2BAInvoices2A(invoices) {
+        return this.batchInsertToTable('gstr_2a_b2ba_invoices', invoices, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)');
+    }
+
+    /**
+     * Batch insert GSTR-2A CDNR
+     */
+    static async batchInsertCDNR2A(notes) {
+        return this.batchInsertToTable('gstr_2a_cdnr', notes, '(tenant_id, note_number, return_period)');
+    }
+
+    /**
+     * Batch insert GSTR-2A CDNRA
+     */
+    static async batchInsertCDNRA2A(notes) {
+        return this.batchInsertToTable('gstr_2a_cdnra', notes, '(tenant_id, original_note_number, revised_note_number, return_period)');
+    }
+
+    /**
+     * Batch insert GSTR-2A IMPG
+     */
+    static async batchInsertIMPG2A(imports) {
+        return this.batchInsertToTable('gstr_2a_impg', imports, '(tenant_id, boe_number, port_code, return_period)');
+    }
+
+    /**
+     * Batch insert GSTR-2A ISD
+     */
+    static async batchInsertISD2A(records) {
+        return this.batchInsertToTable('gstr_2a_isd', records, '(tenant_id, gstin_isd, document_number, return_period)');
     }
 
     /**

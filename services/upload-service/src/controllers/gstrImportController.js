@@ -134,6 +134,9 @@ class GSTRImportController {
             let gstinRecipient = null;
             let workspaceId = null;
 
+            // Ensure Tax Period exists
+            await GSTRImportController.ensureTaxPeriodExists(return_period.toString(), db);
+
             try {
                 const gstinQuery = await db.raw(
                     'SELECT gm.gstin, w.id as workspace_id FROM gstin_master gm LEFT JOIN workspaces w ON w.gstin_id = gm.id WHERE gm.id = ?',
@@ -290,6 +293,7 @@ class GSTRImportController {
                 let totalRecords = 0;
 
                 if (['GSTR2B', 'GSTR-2B', 'GSTR2A', 'GSTR-2A'].includes(gstr_type.toUpperCase())) {
+                    const isGstr2a = ['GSTR2A', 'GSTR-2A'].includes(gstr_type.toUpperCase());
 
                     // Shared context passed to every normalizer mapper
                     const normCtx = {
@@ -311,12 +315,11 @@ class GSTRImportController {
                         console.log(`Processing sheet: ${sheetName} (${sName}) - Rows: ${jsonRows.length}`);
 
                         if (sName.includes('B2B')) {
-                            const sheetRecords = processB2BSheet(jsonRows, null, return_period, sheetName);
+                            const sheetRecords = processB2BSheet(jsonRows, null, return_period, sheetName, gstr_type);
                             console.log(`[DEBUG] Extracted ${sheetRecords.length} records from processor for ${sheetName}`);
 
-                            // Separate records by target table
                             const b2bInvoices = sheetRecords
-                                .filter(r => r.target_table === 'gstr_2b_b2b_invoices' && r.invoice_number && r.invoice_date)
+                                .filter(r => (r.target_table === 'gstr_2b_b2b_invoices' || r.target_table === 'gstr_2a_b2b_invoices') && r.invoice_number && r.invoice_date)
                                 .map(r => ({
                                     import_filing_id: importRecord.import_filing_id,
                                     tenant_id: tenantUuid,
@@ -347,7 +350,7 @@ class GSTRImportController {
                                 }));
 
                             const b2baInvoices = sheetRecords
-                                .filter(r => r.target_table === 'gstr_2b_b2ba_invoices')
+                                .filter(r => (r.target_table === 'gstr_2b_b2ba_invoices' || r.target_table === 'gstr_2a_b2ba_invoices'))
                                 .map(r => ({
                                     import_filing_id: importRecord.import_filing_id,
                                     tenant_id: tenantUuid,
@@ -377,7 +380,7 @@ class GSTRImportController {
                                 }));
 
                             const cdnrNotes = sheetRecords
-                                .filter(r => r.target_table === 'gstr_2b_cdnr')
+                                .filter(r => (r.target_table === 'gstr_2b_cdnr' || r.target_table === 'gstr_2a_cdnr'))
                                 .map(r => ({
                                     import_filing_id: importRecord.import_filing_id,
                                     tenant_id: tenantUuid,
@@ -406,7 +409,7 @@ class GSTRImportController {
                                 }));
 
                             const cdnraNotes = sheetRecords
-                                .filter(r => r.target_table === 'gstr_2b_cdnra')
+                                .filter(r => (r.target_table === 'gstr_2b_cdnra' || r.target_table === 'gstr_2a_cdnra'))
                                 .map(r => ({
                                     import_filing_id: importRecord.import_filing_id,
                                     tenant_id: tenantUuid,
@@ -443,8 +446,13 @@ class GSTRImportController {
                                     await GstinMasterService.ensureMultiple(supplierGstins);
                                 }
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2B', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertB2BInvoices(b2bInvoices);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertB2BInvoices2A(b2bInvoices)
+                                    : await GSTRImportModel.batchInsertB2BInvoices(b2bInvoices);
+
                                 const normRows = NormalizedGstr2bModel.mapB2B(b2bInvoices, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_b2b_invoices');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.b2b += inserted;
                                 sectionCounters.normalized += normIns;
@@ -455,8 +463,13 @@ class GSTRImportController {
                             }
                             if (b2baInvoices.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2BA', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertB2BAInvoices(b2baInvoices);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertB2BAInvoices2A(b2baInvoices)
+                                    : await GSTRImportModel.batchInsertB2BAInvoices(b2baInvoices);
+
                                 const normRows = NormalizedGstr2bModel.mapB2BA(b2baInvoices, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_b2ba_invoices');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.b2ba += inserted;
                                 sectionCounters.normalized += normIns;
@@ -467,8 +480,13 @@ class GSTRImportController {
                             }
                             if (cdnrNotes.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNR', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertCDNR(cdnrNotes);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertCDNR2A(cdnrNotes)
+                                    : await GSTRImportModel.batchInsertCDNR(cdnrNotes);
+
                                 const normRows = NormalizedGstr2bModel.mapCDNR(cdnrNotes, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_cdnr');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.cdnr += inserted;
                                 sectionCounters.normalized += normIns;
@@ -479,8 +497,13 @@ class GSTRImportController {
                             }
                             if (cdnraNotes.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNRA', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertCDNRA(cdnraNotes);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertCDNRA2A(cdnraNotes)
+                                    : await GSTRImportModel.batchInsertCDNRA(cdnraNotes);
+
                                 const normRows = NormalizedGstr2bModel.mapCDNRA(cdnraNotes, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_cdnra');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.cdnra += inserted;
                                 sectionCounters.normalized += normIns;
@@ -491,7 +514,7 @@ class GSTRImportController {
                             }
                         }
                         else if (sName.includes('IMPG') || sName.includes('IMPS')) {
-                            const sheetRecords = processImportSheet(jsonRows, null, return_period);
+                            const sheetRecords = processImportSheet(jsonRows, null, return_period, gstr_type);
                             const impgRecords = sheetRecords.map(r => ({
                                 import_filing_id: importRecord.import_filing_id,
                                 tenant_id: tenantUuid,
@@ -511,8 +534,13 @@ class GSTRImportController {
 
                             if (impgRecords.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'IMPG', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertIMPG(impgRecords);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertIMPG2A(impgRecords)
+                                    : await GSTRImportModel.batchInsertIMPG(impgRecords);
+
                                 const normRows = NormalizedGstr2bModel.mapIMPG(impgRecords, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_impg');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.impg += inserted;
                                 sectionCounters.normalized += normIns;
@@ -523,7 +551,7 @@ class GSTRImportController {
                             }
                         }
                         else if (sName.includes('ISD')) {
-                            const sheetRecords = processISDSheet(jsonRows, null, return_period, sheetName);
+                            const sheetRecords = processISDSheet(jsonRows, null, return_period, sheetName, gstr_type);
                             const isdRecords = sheetRecords.map(r => ({
                                 import_filing_id: importRecord.import_filing_id,
                                 tenant_id: tenantUuid,
@@ -546,8 +574,13 @@ class GSTRImportController {
 
                             if (isdRecords.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'ISD', sheetName);
-                                const { inserted } = await GSTRImportModel.batchInsertISD(isdRecords);
+                                const { inserted } = isGstr2a
+                                    ? await GSTRImportModel.batchInsertISD2A(isdRecords)
+                                    : await GSTRImportModel.batchInsertISD(isdRecords);
+
                                 const normRows = NormalizedGstr2bModel.mapISD(isdRecords, normCtx);
+                                if (isGstr2a) normRows.forEach(row => row.source_table = 'gstr_2a_isd');
+
                                 const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
                                 sectionCounters.isd += inserted;
                                 sectionCounters.normalized += normIns;
@@ -715,12 +748,19 @@ class GSTRImportController {
                 return errorResponse(res, { message: 'User not associated with any tenant' }, 403);
             }
 
-            const { gstin, import_type, status, limit = 50 } = req.query;
+            const { gstin, import_type, status, limit = 50, workspace_id } = req.query;
 
             const filters = {};
             if (gstin) filters.gstinRecipient = gstin;
             if (import_type) filters.importType = import_type.toUpperCase();
             if (status) filters.status = status;
+            if (workspace_id) filters.workspaceId = workspace_id;
+
+            // Allow workspace_id from headers as well for consistency
+            const headerWorkspaceId = req.headers['x-workspace-id'];
+            if (!filters.workspaceId && headerWorkspaceId) {
+                filters.workspaceId = headerWorkspaceId;
+            }
 
             const history = await GSTRImportModel.getImportHistory(
                 tenantUuid,
@@ -898,6 +938,53 @@ class GSTRImportController {
         } else {
             return `${year - 1}-${year.toString().substring(2)}`;
         }
+    }
+
+    /**
+     * Ensure tax period exists in the database, creating it if necessary.
+     */
+    static async ensureTaxPeriodExists(returnPeriod, db) {
+        const periodMatch = await db.raw('SELECT id FROM tax_periods WHERE period_code = ? LIMIT 1', [returnPeriod]);
+        if (periodMatch.rows.length) {
+            return periodMatch.rows[0].id;
+        }
+
+        console.log(`[ensureTaxPeriodExists] Creating missing tax period: ${returnPeriod}`);
+        const month = parseInt(returnPeriod.substring(0, 2));
+        const year = parseInt(returnPeriod.substring(2));
+        const fyCode = GSTRImportController.calculateFinancialYear(returnPeriod);
+
+        // 1. Get or Create Financial Year
+        let fyId;
+        const fyMatch = await db.raw('SELECT id FROM financial_years WHERE fy_code = ? LIMIT 1', [fyCode]);
+        if (fyMatch.rows.length) {
+            fyId = fyMatch.rows[0].id;
+        } else {
+            const startYear = parseInt(fyCode.split('-')[0]);
+            const startDate = `${startYear}-04-01`;
+            const endDate = `${startYear + 1}-03-31`;
+            const fyInsert = await db.raw(
+                `INSERT INTO financial_years (fy_code, display_name, start_date, end_date) 
+                 VALUES (?, ?, ?, ?) RETURNING id`,
+                [fyCode, `FY ${fyCode}`, startDate, endDate]
+            );
+            fyId = fyInsert.rows[0].id;
+        }
+
+        // 2. Create Tax Period
+        const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
+        const dateObj = new Date(year, month, 0); // Last day of month
+        const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
+        const quarter = Math.ceil(month / 3);
+        const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        const periodInsert = await db.raw(
+            `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?) RETURNING id`,
+            [fyId, month, year, returnPeriod, displayName, startDate, endDate, quarter]
+        );
+
+        return periodInsert.rows[0].id;
     }
 }
 

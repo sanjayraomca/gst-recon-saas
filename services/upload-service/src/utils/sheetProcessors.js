@@ -139,7 +139,9 @@ const processedDataFactory = () => ({
 /**
  * Process B2B, B2BA, CDNR, CDNRA, ECO Sheets
  */
-const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
+const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 'GSTR2B') => {
+    const isGstr2a = gstrType.toUpperCase().includes('2A');
+    const tablePrefix = isGstr2a ? 'gstr_2a' : 'gstr_2b';
     const isAmended = sheetName.endsWith('A');
     const isCDNR = sheetName.includes('CDNR') || sheetName.includes('DN');
     // const results = processedDataFactory(); // We return flat array here, controller sorts it? No, let's return structured if possible?
@@ -238,7 +240,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
 
             results.push({
                 ...commonData,
-                target_table: isAmended ? 'gstr_2b_cdnra' : 'gstr_2b_cdnr',
+                target_table: isAmended ? `${tablePrefix}_cdnra` : `${tablePrefix}_cdnr`,
                 note_number: noteNum,
                 note_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'C', // Credit/Debit
                 note_date: parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null),
@@ -260,7 +262,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
 
             const b2bRecord = {
                 ...commonData,
-                target_table: 'gstr_2b_b2b_invoices',
+                target_table: `${tablePrefix}_b2b_invoices`,
                 invoice_number_raw: invNumRaw?.toString().trim() || null,
                 invoice_number: invNum,
                 invoice_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'Regular',
@@ -274,7 +276,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
                 const originalInv = originalInvRaw ? normalizeInvoiceNumber(originalInvRaw.toString()) : null;
                 results.push({
                     ...commonData,
-                    target_table: 'gstr_2b_b2ba_invoices',
+                    target_table: `${tablePrefix}_b2ba_invoices`,
                     original_invoice_number: originalInv || invNum, // fallback to current if not provided
                     original_invoice_date: parseExcelDate(colMap['original_invoice_date'] !== undefined ? row[colMap['original_invoice_date']] : null),
                     revised_invoice_number: invNum,
@@ -291,7 +293,9 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
     return results;
 };
 
-const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
+const processImportSheet = (rows, gstinId, fileReturnPeriod, gstrType = 'GSTR2B') => {
+    const isGstr2a = gstrType.toUpperCase().includes('2A');
+    const tablePrefix = isGstr2a ? 'gstr_2a' : 'gstr_2b';
     const results = [];
     const headerRowIndex = getHeaderIndex(rows, ['BOE NUMBER', 'PORT CODE']);
     if (headerRowIndex === -1) return [];
@@ -324,7 +328,7 @@ const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
         if (!boeNum) continue;
 
         results.push({
-            target_table: 'gstr_2b_impg',
+            target_table: `${tablePrefix}_impg`,
             gstin_id: gstinId,
             return_period: fileReturnPeriod,
             port_code: portCode,
@@ -342,7 +346,9 @@ const processImportSheet = (rows, gstinId, fileReturnPeriod) => {
     return results;
 };
 
-const processISDSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
+const processISDSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 'GSTR2B') => {
+    const isGstr2a = gstrType.toUpperCase().includes('2A');
+    const tablePrefix = isGstr2a ? 'gstr_2a' : 'gstr_2b';
     const isAmended = sheetName.endsWith('A');
     const results = [];
     const headerRowIndex = getHeaderIndex(rows, ['GSTIN OF ISD', 'ISD DOCUMENT NUMBER']);
@@ -375,7 +381,7 @@ const processISDSheet = (rows, gstinId, fileReturnPeriod, sheetName) => {
         if (!gstinIsd || gstinIsd.toUpperCase().includes('TOTAL') || !isValidGSTIN(gstinIsd)) continue;
 
         results.push({
-            target_table: 'gstr_2b_isd',
+            target_table: `${tablePrefix}_isd`,
             gstin_id: gstinId,
             return_period: fileReturnPeriod,
             gstin_isd: gstinIsd,

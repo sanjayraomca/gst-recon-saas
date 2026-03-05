@@ -1,5 +1,4 @@
 const knex = require('../../../shared/src/db/connection');
-const { findAIMatches, AI_MATCHING_ENABLED } = require('../services/aiMatchingService');
 const progressEmitter = require('../utils/progressEmitter');
 
 /**
@@ -21,20 +20,9 @@ class ReconciliationModel {
 
             let taxPeriodId = period_id;
 
-            // If period (MMYYYY) provided, look up ID
+            // If period (MMYYYY) provided, look up or create ID
             if (!taxPeriodId && period) {
-                const month = parseInt(period.substring(0, 2));
-                const year = parseInt(period.substring(2, 6));
-
-                const taxPeriod = await trx('tax_periods')
-                    .select('id')
-                    .where({ month, year })
-                    .first();
-
-                if (!taxPeriod) {
-                    throw new Error(`Tax period ${period} not found`);
-                }
-                taxPeriodId = taxPeriod.id;
+                taxPeriodId = await this.ensureTaxPeriodExists(period, trx);
             }
 
             if (!taxPeriodId) {
@@ -82,39 +70,48 @@ class ReconciliationModel {
             await progressEmitter.emitProgress(runId, 5, 'Starting reconciliation run...');
 
             const trx = await knex.transaction();
-            // ... rest of the logic ...
 
-            // 2. Fetch purchase vouchers
+            // Extract run_type from runData (fix for undefined variable bug)
+            const run_type = runData.run_type || 'PURCHASE_2B';
+
+            // Fetch the tax period details (month/year) so we can filter invoice dates
+            const taxPeriod = await trx('tax_periods').where({ id: taxPeriodId }).first();
+
+            // 2. Fetch purchase vouchers for this workspace/period
             await progressEmitter.emitProgress(runId, 15, 'Fetching purchase invoices...');
-            const purchaseInvoices = await trx('purchase_vouchers')
+            let purchaseQuery = trx('purchase_vouchers')
                 .select('purchase_vouchers.*')
-                .join('tax_periods', function () {
-                    this.on('tax_periods.id', '=', knex.raw('?', [taxPeriodId]))
-                })
-                .where({
-                    'purchase_vouchers.workspace_id': workspaceId,
-                    'purchase_vouchers.tenant_id': runData.tenant_id || knex.raw('purchase_vouchers.tenant_id') // Avoid undefined error if not passed
-                })
-                .whereRaw('EXTRACT(MONTH FROM purchase_vouchers.supplier_invoice_date) = tax_periods.month')
-                .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = tax_periods.year');
+                .where({ 'purchase_vouchers.workspace_id': workspaceId });
 
-            // Handle optional gstin filter for purchase_vouchers if the schema has it. 
-            // the schema has supplier_gstin, not gstin_id. Let's just pull all for the workspace/period 
-            // or filter by supplier_gstin if runData.gstin is passed.
-            // Since we don't have gstin_id on purchase_vouchers, we will filter in memory if needed.
+            // Filter by invoice date if we have the period details
+            if (taxPeriod) {
+                purchaseQuery = purchaseQuery
+                    .whereRaw('EXTRACT(MONTH FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.month])
+                    .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.year]);
+            }
 
-            // 3. Fetch GSTR2B invoices
-            await progressEmitter.emitProgress(runId, 30, 'Fetching GSTR-2B invoices...');
-            const gstr2bInvoices = await trx('normalized_gstr2b_invoices')
+            const purchaseInvoices = await purchaseQuery;
+
+            // 3. Fetch GSTR (2A or 2B) invoices
+            const is2a = run_type === 'PURCHASE_2A';
+            const portalTypeLabel = is2a ? 'GSTR-2A' : 'GSTR-2B';
+            const sourcePrefix = is2a ? 'gstr_2a_%' : 'gstr_2b_%';
+
+            await progressEmitter.emitProgress(runId, 30, `Fetching ${portalTypeLabel} invoices...`);
+            let gstrQuery = trx('normalized_gstr2b_invoices')
                 .select('normalized_gstr2b_invoices.*')
-                .join('tax_periods', function () {
-                    this.on('tax_periods.id', '=', knex.raw('?', [taxPeriodId]))
-                })
-                .where({
-                    'normalized_gstr2b_invoices.workspace_id': workspaceId
-                })
-                .whereRaw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date) = tax_periods.month')
-                .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = tax_periods.year');
+                .where({ 'normalized_gstr2b_invoices.workspace_id': workspaceId })
+                .where('normalized_gstr2b_invoices.source_table', 'like', sourcePrefix);
+
+            // Filter by document date if we have the period details
+            if (taxPeriod) {
+                gstrQuery = gstrQuery
+                    .whereRaw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.month])
+                    .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+            }
+
+            const gstr2bInvoices = await gstrQuery;
+
 
             // 4. Perform matching
             await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
@@ -166,57 +163,9 @@ class ReconciliationModel {
                 }
             }
 
-            // 4b. AI Fuzzy Matching — run on unmatched purchase invoices
-            let aiMatchMap = new Map();
-            if (AI_MATCHING_ENABLED && unmatchedPurchases.length > 0) {
-                await progressEmitter.emitProgress(runId, 70, `Running AI matching for ${unmatchedPurchases.length} invoices...`);
-                const unmatchedGstr2b = gstr2bInvoices.filter(g => !matchedGstr2bIds.has(g.id));
-                aiMatchMap = await findAIMatches(unmatchedPurchases, unmatchedGstr2b);
-            }
-
-            // 4c. Process unmatched purchases (with AI results if available)
+            // 4c. Process unmatched purchases
             for (const purchaseInv of unmatchedPurchases) {
                 const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
-                const aiResult = aiMatchMap.get(purchaseInv.id);
-
-                if (aiResult && aiResult.matched && aiResult.gstr2b_id) {
-                    // AI found a match — look up the GSTR2B invoice
-                    const aiGstr2bInv = gstr2bInvoices.find(g => g.id === aiResult.gstr2b_id);
-                    if (aiGstr2bInv && !matchedGstr2bIds.has(aiGstr2bInv.id)) {
-                        matchedGstr2bIds.add(aiGstr2bInv.id);
-                        const gTotal = isNaN(parseFloat(aiGstr2bInv.document_value)) ? 0 : parseFloat(aiGstr2bInv.document_value);
-                        const amountDiff = Math.abs(pTotal - gTotal);
-                        const isExactAmount = amountDiff <= 1.00;
-
-                        matchResults.push({
-                            recon_run_id: runId,
-                            workspace_id: workspaceId,
-                            purchase_invoice_id: purchaseInv.id,
-                            gstr2b_invoice_id: aiGstr2bInv.id,
-                            match_status: isExactAmount ? 'AI_MATCHED' : 'AI_PARTIAL',
-                            match_score: aiResult.confidence_score,
-                            match_confidence: aiResult.confidence_score >= 90 ? 'HIGH' : 'MEDIUM',
-                            matched_by: 'AI',
-                            ai_confidence_score: aiResult.confidence_score,
-                            ai_match_reason: aiResult.reason,
-                            books_value: pTotal,
-                            portal_value: gTotal,
-                            variance_amount: pTotal - gTotal,
-                            itc_decision: isExactAmount ? 'ELIGIBLE' : 'PENDING',
-                            decision_reason: `AI Match: ${aiResult.reason}`,
-                            action_required: isExactAmount ? null : 'REVIEW_AMOUNT',
-                            action_status: 'PENDING',
-                            created_at: knex.fn.now(),
-                            updated_at: knex.fn.now()
-                        });
-
-                        if (isExactAmount) matchedCount++;
-                        else mismatchedCount++;
-                        continue;
-                    }
-                }
-
-                // No AI match — mark as MISSING
                 matchResults.push({
                     recon_run_id: runId,
                     workspace_id: workspaceId,
@@ -340,6 +289,9 @@ class ReconciliationModel {
             max_amount,
             has_variance,
             supplier_gstin,
+            date_from,
+            date_to,
+            place_of_supply,
             page = 1,
             page_size = 50,
             export_mode
@@ -367,6 +319,28 @@ class ReconciliationModel {
             query.where(function () {
                 this.where('pi.supplier_gstin', supplier_gstin)
                     .orWhere('gi.supplier_gstin', supplier_gstin);
+            });
+        }
+
+        if (date_from) {
+            query.where(function () {
+                this.where('pi.due_date', '>=', date_from)
+                    .orWhere('gi.document_date', '>=', date_from);
+            });
+        }
+
+        if (date_to) {
+            query.where(function () {
+                this.where('pi.due_date', '<=', date_to)
+                    .orWhere('gi.document_date', '<=', date_to);
+            });
+        }
+
+        if (place_of_supply) {
+            const states = place_of_supply.split(',').map(s => s.trim());
+            query.where(function () {
+                this.whereIn('pi.place_of_supply', states)
+                    .orWhereIn('gi.place_of_supply', states);
             });
         }
 
@@ -465,6 +439,87 @@ class ReconciliationModel {
 
     static normalizeGstin(gstin) {
         return (gstin || '').trim().toUpperCase();
+    }
+
+    /**
+     * Helper: Calculate financial year from return period (MMYYYY)
+     */
+    static calculateFinancialYear(returnPeriod) {
+        const month = parseInt(returnPeriod.substring(0, 2));
+        const year = parseInt(returnPeriod.substring(2));
+
+        if (month >= 4) {
+            return `${year}-${(year + 1).toString().substring(2)}`;
+        } else {
+            return `${year - 1}-${year.toString().substring(2)}`;
+        }
+    }
+
+    /**
+     * Ensure tax period exists in the database, creating it if necessary.
+     */
+    static async ensureTaxPeriodExists(returnPeriod, trx) {
+        const db = trx || knex;
+        const taxPeriod = await db('tax_periods')
+            .select('id')
+            .where({ period_code: returnPeriod })
+            .first();
+
+        if (taxPeriod) {
+            return taxPeriod.id;
+        }
+
+        console.log(`[ReconciliationModel] Creating missing tax period: ${returnPeriod}`);
+        const month = parseInt(returnPeriod.substring(0, 2));
+        const year = parseInt(returnPeriod.substring(2));
+        const fyCode = this.calculateFinancialYear(returnPeriod);
+
+        // 1. Get or Create Financial Year
+        let fyId;
+        const fy = await db('financial_years')
+            .select('id')
+            .where({ fy_code: fyCode })
+            .first();
+
+        if (fy) {
+            fyId = fy.id;
+        } else {
+            const startYear = parseInt(fyCode.split('-')[0]);
+            const startDate = `${startYear}-04-01`;
+            const endDate = `${startYear + 1}-03-31`;
+            const [newFy] = await db('financial_years')
+                .insert({
+                    fy_code: fyCode,
+                    display_name: `FY ${fyCode}`,
+                    start_date: startDate,
+                    end_date: endDate
+                })
+                .returning('id');
+            fyId = newFy.id;
+        }
+
+        // 2. Create Tax Period
+        const startDateString = `${year}-${returnPeriod.substring(0, 2)}-01`;
+        const lastDay = new Date(year, month, 0).getDate();
+        const endDateString = `${year}-${returnPeriod.substring(0, 2)}-${lastDay}`;
+        const quarter = Math.ceil(month / 3);
+        const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        const [newPeriod] = await db('tax_periods')
+            .insert({
+                fy_id: fyId,
+                month,
+                year,
+                period_code: returnPeriod,
+                display_name: displayName,
+                start_date: startDateString,
+                end_date: endDateString,
+                period_type: 'MONTHLY',
+                quarter
+            })
+            .returning('id');
+
+        return newPeriod.id;
     }
 }
 

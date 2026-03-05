@@ -80,8 +80,17 @@ class DashboardModel {
             latestDataMonth = allMonthsWithData[0];
         }
 
-        const currentYear = parseInt(latestDataMonth.split('-')[0], 10);
-        const currentMonthIndex = parseInt(latestDataMonth.split('-')[1], 10) - 1;
+        let currentYear, currentMonthIndex;
+        try {
+            const parts = latestDataMonth.split('-');
+            currentYear = parseInt(parts[0], 10);
+            currentMonthIndex = parseInt(parts[1], 10) - 1;
+        } catch (e) {
+            const fallback = new Date();
+            currentYear = fallback.getFullYear();
+            currentMonthIndex = fallback.getMonth();
+        }
+
         const dataDate = new Date(currentYear, currentMonthIndex, 1);
         const prevDataDate = new Date(currentYear, currentMonthIndex - 1, 1);
         const previousMonthYMString = `${prevDataDate.getFullYear()}-${String(prevDataDate.getMonth() + 1).padStart(2, '0')}`;
