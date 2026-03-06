@@ -348,6 +348,7 @@ class NormalizedGstr2bModel {
             stateCodes,
             sortBy,
             sortOrder = 'asc',
+            importType,
             page = 1,
             pageSize = 50,
         } = filters;
@@ -417,21 +418,21 @@ class NormalizedGstr2bModel {
         if (stateCodes) {
             const states = stateCodes.split(',').map(s => s.trim()).filter(Boolean);
             if (states.length > 0) {
-                // For supplier state, the first 2 chars of supplier_gstin are the state code.
-                // We also check place_of_supply as fallback if needed, but primarily state code is by GSTIN.
-                // Depending on the exact definition of "State-wise data", we prioritize supplier state code or POS.
-                // Here we match either the POS or the supplier's state code prefix.
                 const statePlaceholders = states.map(() => '?').join(',');
                 conditions.push(`(substring(supplier_gstin from 1 for 2) IN (${statePlaceholders}) OR place_of_supply IN (${statePlaceholders}))`);
                 params.push(...states, ...states);
             }
+        }
+        if (importType) {
+            conditions.push('import_type = ?');
+            params.push(importType.toUpperCase());
         }
 
         const whereClause = conditions.join(' AND ');
 
         // Count query
         const countResult = await db.raw(
-            `SELECT COUNT(*) AS total FROM v_gstr2b_listing WHERE ${whereClause}`,
+            `SELECT COUNT(*) AS total FROM v_gstr_listing WHERE ${whereClause}`,
             params
         );
         const total = parseInt(countResult.rows[0]?.total || 0);
@@ -470,7 +471,7 @@ class NormalizedGstr2bModel {
                 irn, irn_date,
                 original_filename, upload_timestamp, import_type,
                 created_at
-             FROM v_gstr2b_listing
+             FROM v_gstr_listing
              WHERE ${whereClause}
              ${orderByClause}
              LIMIT ? OFFSET ?`,
@@ -506,7 +507,8 @@ class NormalizedGstr2bModel {
             toDate,
             minAmount,
             maxAmount,
-            stateCodes
+            stateCodes,
+            importType
         } = filters;
 
         if (!workspaceId) throw new Error('workspaceId is required for getListingSummary');
@@ -574,6 +576,10 @@ class NormalizedGstr2bModel {
                 params.push(...states, ...states);
             }
         }
+        if (importType) {
+            conditions.push('import_type = ?');
+            params.push(importType.toUpperCase());
+        }
 
         const whereClause = conditions.join(' AND ');
 
@@ -587,7 +593,7 @@ class NormalizedGstr2bModel {
                 COALESCE(SUM(sgst),          0) AS total_sgst,
                 COALESCE(SUM(cess),          0) AS total_cess,
                 COALESCE(SUM(total_tax),     0) AS total_tax
-             FROM v_gstr2b_listing
+             FROM v_gstr_listing
              WHERE ${whereClause}
              GROUP BY source_section
              ORDER BY source_section`,

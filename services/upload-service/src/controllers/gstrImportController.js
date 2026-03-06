@@ -839,6 +839,7 @@ class GSTRImportController {
                 sort_order,
                 page,
                 page_size,
+                import_type,
             } = req.query;
 
             console.log(`[listGstr2bInvoices] Workspace: ${workspaceId}, Period: ${return_period}, Section: ${section}`);
@@ -858,6 +859,7 @@ class GSTRImportController {
                 stateCodes: state_codes,
                 sortBy: sort_by,
                 sortOrder: sort_order,
+                importType: import_type,
                 page,
                 pageSize: page_size,
             });
@@ -897,7 +899,8 @@ class GSTRImportController {
                 to_date,
                 min_amount,
                 max_amount,
-                state_codes
+                state_codes,
+                import_type
             } = req.query;
 
             console.log(`[getGstr2bSummary] Workspace: ${workspaceId}, Period: ${return_period}`);
@@ -914,6 +917,7 @@ class GSTRImportController {
                 minAmount: min_amount,
                 maxAmount: max_amount,
                 stateCodes: state_codes,
+                importType: import_type,
             });
 
             return successResponse(res, rows, 'Summary retrieved successfully');
