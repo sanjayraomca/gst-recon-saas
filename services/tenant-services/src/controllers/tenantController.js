@@ -528,8 +528,7 @@ const provisionUser = async (req, res) => {
         // 4. Update/Create Local User
         // ALWAYS generate token for invitations (both new and existing users)
         const invitationToken = crypto.randomUUID();
-        // For testing: set expiry to 10 seconds
-        const invitationExpiresAt = new Date(Date.now() + 10 * 1000);
+        const invitationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
         const userData = {
             full_name,
@@ -963,7 +962,7 @@ const resendInvite = async (req, res) => {
         if (workspaces.length === 0) return errorResponse(res, "No pending invitations", 400);
 
         const invitationToken = crypto.randomUUID();
-        const invitationExpiresAt = new Date(Date.now() + 10 * 1000);
+        const invitationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
         await knex("users").where("id", user.id).update({
             invitation_token: invitationToken,

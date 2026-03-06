@@ -271,8 +271,10 @@ class NormalizedGstr2bModel {
 
     /**
      * Batch-insert normalized rows into normalized_gstr2b_invoices.
-     * ON CONFLICT (import_filing_id, source_section, source_row_id) DO NOTHING
-     * makes normalization fully idempotent on re-runs.
+     * Uses the business-key constraint (workspace_id, source_section, supplier_gstin,
+     * document_number_clean, return_period) to deduplicate across ALL import routes
+     * (Book Data Import, GSTR File Import, etc.) — so the same invoice cannot appear
+     * twice regardless of which path it came from.
      * @param {object[]} rows
      * @returns {Promise<{ inserted: number }>}
      */
@@ -290,10 +292,12 @@ class NormalizedGstr2bModel {
                 .join(', ');
             const values = batch.flatMap(row => columns.map(col => row[col] ?? null));
 
+            // Use the functional unique index for cross-route deduplication.
+            // COALESCE handles NULL columns — same expression as the DB index.
             const query = `
                 INSERT INTO normalized_gstr2b_invoices (${columns.join(', ')})
                 VALUES ${placeholders}
-                ON CONFLICT (import_filing_id, source_section, source_row_id)
+                ON CONFLICT (workspace_id, source_section, COALESCE(supplier_gstin, ''), COALESCE(document_number_clean, ''), COALESCE(return_period, ''))
                 DO NOTHING
             `;
 
