@@ -721,6 +721,7 @@ class GSTRImportController {
     static async getImportHistory(req, res) {
         try {
             const userEmail = req.user?.email;
+            console.log(`[getImportHistory] Request received for email: ${userEmail}, query:`, req.query);
 
             if (!userEmail) {
                 return errorResponse(res, { message: 'User email not found in token' }, 401);

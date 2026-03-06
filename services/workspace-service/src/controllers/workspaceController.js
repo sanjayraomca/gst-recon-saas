@@ -665,6 +665,18 @@ const getDashboardMetrics = async (req, res) => {
         return errorResponse(res, error.message, 500);
     }
 };
+
+const getLatestPeriod = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const result = await DashboardModel.getLatestPeriod(id);
+        return successResponse(res, result, 'Latest period fetched successfully');
+    } catch (error) {
+        console.error('getLatestPeriod Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 const updateWorkspace = async (req, res) => {
     try {
         const { id } = req.params;
@@ -718,5 +730,6 @@ module.exports = {
     listWorkspaceUsers,
     inviteUser,
     getDashboardMetrics,
+    getLatestPeriod,
     updateWorkspace
 };

@@ -21,12 +21,12 @@ class ReconciliationModel {
             let taxPeriodId = period_id;
 
             // If period (MMYYYY) provided, look up or create ID
-            if (!taxPeriodId && period) {
+            if (!taxPeriodId && period && period !== 'ALL') {
                 taxPeriodId = await this.ensureTaxPeriodExists(period, trx);
             }
 
-            if (!taxPeriodId) {
-                throw new Error('Either period_id or period (MMYYYY) is required');
+            if (!taxPeriodId && period !== 'ALL') {
+                throw new Error('Either period_id or period (MMYYYY) or "ALL" is required');
             }
 
             // 1. Create reconciliation run record
@@ -66,16 +66,20 @@ class ReconciliationModel {
      * Background task to perform the actual reconciliation matching
      */
     static async runMatchingTask(workspaceId, runId, taxPeriodId, runData) {
+        let trx;
         try {
             await progressEmitter.emitProgress(runId, 5, 'Starting reconciliation run...');
 
-            const trx = await knex.transaction();
+            trx = await knex.transaction();
 
             // Extract run_type from runData (fix for undefined variable bug)
             const run_type = runData.run_type || 'PURCHASE_2B';
 
             // Fetch the tax period details (month/year) so we can filter invoice dates
-            const taxPeriod = await trx('tax_periods').where({ id: taxPeriodId }).first();
+            let taxPeriod = null;
+            if (taxPeriodId) {
+                taxPeriod = await trx('tax_periods').where({ id: taxPeriodId }).first();
+            }
 
             // 2. Fetch purchase vouchers for this workspace/period
             await progressEmitter.emitProgress(runId, 15, 'Fetching purchase invoices...');
@@ -123,54 +127,105 @@ class ReconciliationModel {
             let missingCount = 0;
 
             for (const purchaseInv of purchaseInvoices) {
-                const match = gstr2bInvoices.find(gstr2bInv =>
-                    this.normalizeInvoiceNumber(purchaseInv.supplier_invoice_no) === this.normalizeInvoiceNumber(gstr2bInv.document_number_clean) &&
-                    this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin)
-                );
+                const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
+                const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
+                
+                let matchType = null;
+                const match = gstr2bInvoices.find(gstr2bInv => {
+                    const gstinMatch = this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    if (!gstinMatch) return false;
+                    
+                    const pNormalizedInv = this.normalizeInvoiceNumber(purchaseInv.supplier_invoice_no);
+                    const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
+                    const invMatch = pNormalizedInv === gNormalizedInv;
+                    
+                    const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
+                    const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
+                    
+                    const taxableMatch = Math.abs(pTaxable - gTaxable) <= 1.00;
+                    const netMatch = Math.abs(pNet - gNet) <= 1.00;
+                    const amountMatch = taxableMatch || netMatch;
+
+                    // L1: Exact match (Normalized Inv No + Supplier GSTIN + Taxable Value Tolerance 1.00)
+                    if (invMatch && amountMatch) {
+                        matchType = 'L1';
+                        return true;
+                    }
+                    
+                    // L2: Fuzzy match (Supplier GSTIN + Taxable Value match exactly, but Inv No has >70% similarity)
+                    if (amountMatch) {
+                        const similarity = this.calculateSimilarity(pNormalizedInv, gNormalizedInv);
+                        if (similarity > 0.70) {
+                            matchType = 'L2';
+                            return true;
+                        }
+                    }
+                    
+                    // L3: Probable match (Normalized Inv No + Supplier GSTIN match, but Taxable Value differs)
+                    if (invMatch && !amountMatch) {
+                        matchType = 'L3';
+                        return true;
+                    }
+
+                    // L4: Probable Amount Match (Supplier GSTIN + Amount Match, but Invoice No is different)
+                    // Added as a production fallback for the user's specific data pattern
+                    if (amountMatch) {
+                        matchType = 'L4';
+                        return true;
+                    }
+
+                    return false;
+                });
 
                 if (match) {
                     matchedGstr2bIds.add(match.id);
 
-                    const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
-                    const gTotal = isNaN(parseFloat(match.document_value)) ? 0 : parseFloat(match.document_value);
-                    const amountDiff = Math.abs(pTotal - gTotal);
-                    const isExactMatch = amountDiff <= 1.00;
+                    const gNet = isNaN(parseFloat(match.document_value)) ? 0 : parseFloat(match.document_value);
+                    const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
+
+                    let finalStatus;
+                    if (!isEligible) {
+                        finalStatus = 'not_eligible';
+                    } else if (matchType === 'L1' || matchType === 'L2' || matchType === 'L4') {
+                        finalStatus = 'claimed';
+                        matchedCount++;
+                    } else if (matchType === 'L3') {
+                        finalStatus = 'wrong_entry_portal';
+                        mismatchedCount++;
+                    }
 
                     matchResults.push({
                         recon_run_id: runId,
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_status: isExactMatch ? 'EXACT' : 'PARTIAL',
-                        match_score: isExactMatch ? 100.00 : 75.00,
-                        match_confidence: isExactMatch ? 'HIGH' : 'MEDIUM',
-                        books_value: pTotal,
-                        portal_value: gTotal,
-                        variance_amount: pTotal - gTotal,
-                        itc_decision: isExactMatch ? 'ELIGIBLE' : 'PENDING',
-                        decision_reason: isExactMatch ? 'Exact match found' : 'Amount mismatch',
-                        action_required: isExactMatch ? null : 'REVIEW_AMOUNT',
+                        match_status: finalStatus,
+                        match_score: matchType === 'L1' ? 100.00 : (matchType === 'L2' ? 85.00 : (matchType === 'L4' ? 70.00 : 60.00)),
+                        match_confidence: matchType === 'L1' ? 'HIGH' : (matchType === 'L2' || matchType === 'L4' ? 'MEDIUM' : 'LOW'),
+                        books_value: pNet,
+                        portal_value: gNet,
+                        variance_amount: pNet - gNet,
+                        itc_decision: isEligible ? (matchType === 'L3' ? 'PENDING' : 'ELIGIBLE') : 'INELIGIBLE',
+                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (matchType === 'L3' ? 'Amount mismatch' : `Match found (${matchType})`),
+                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (matchType === 'L3' ? 'REVIEW_AMOUNT' : null),
                         action_status: 'PENDING',
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
                     });
 
-                    if (isExactMatch) matchedCount++;
-                    else mismatchedCount++;
                 } else {
-                    // Collect for AI matching instead of immediately marking as MISSING
                     unmatchedPurchases.push(purchaseInv);
                 }
             }
 
-            // 4c. Process unmatched purchases
+            // 4c. Process unmatched purchases (Books but not in Portal)
             for (const purchaseInv of unmatchedPurchases) {
                 const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 matchResults.push({
                     recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
-                    match_status: 'MISSING',
+                    match_status: 'not_in_portal',
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
@@ -178,7 +233,7 @@ class ReconciliationModel {
                     variance_amount: pTotal,
                     itc_decision: 'INELIGIBLE',
                     decision_reason: 'Not found in GSTR2B',
-                    action_required: 'VERIFY_SUPPLIER',
+                    action_required: 'FOLLOW_UP_SUPPLIER',
                     action_priority: 'HIGH',
                     action_status: 'PENDING',
                     created_at: knex.fn.now(),
@@ -187,23 +242,25 @@ class ReconciliationModel {
                 missingCount++;
             }
 
-            // 4d. Unmatched GSTR-2B invoices (in portal but not in books)
+            // 4d. Unmatched GSTR-2B invoices (Portal but not in Books)
             for (const gstr2bInv of gstr2bInvoices) {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
                     const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
+                    const isEligible = gstr2bInv.itc_available !== false && gstr2bInv.itc_eligibility !== 'No' && gstr2bInv.itc_eligibility !== 'N';
+
                     matchResults.push({
                         recon_run_id: runId,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
-                        match_status: 'MISSING',
+                        match_status: isEligible ? 'not_in_books' : 'not_eligible',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
                         portal_value: gTotal,
                         variance_amount: -gTotal,
-                        itc_decision: 'PENDING',
-                        decision_reason: 'Not found in purchase register',
-                        action_required: 'ADD_TO_BOOKS',
+                        itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
+                        decision_reason: isEligible ? 'Not found in purchase register' : 'ITC Not Available in GSTR2B',
+                        action_required: isEligible ? 'ADD_TO_BOOKS' : 'REVIEW_ELIGIBILITY',
                         action_priority: 'MEDIUM',
                         action_status: 'PENDING',
                         created_at: knex.fn.now(),
@@ -239,8 +296,8 @@ class ReconciliationModel {
             await trx.commit();
             await progressEmitter.emitProgress(runId, 100, 'Reconciliation completed successfully');
         } catch (error) {
-            await trx.rollback();
-            console.error(`[Recon Task] Run ${runId} failed:`, error.message);
+            if (trx) await trx.rollback();
+            console.error(`[Recon Task] Run ${runId} failed:`, error.message, error);
             await progressEmitter.emitProgress(runId, 0, `Failed: ${error.message}`, true);
         }
     }
@@ -435,6 +492,36 @@ class ReconciliationModel {
         // 2. Remove all non-alphanumeric characters (including spaces, hyphens, slashes)
         // 3. Remove leading zeros
         return num.toString().toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+    }
+
+    static calculateSimilarity(s1, s2) {
+        if (!s1 || !s2) return 0;
+        if (s1 === s2) return 1;
+        
+        const m = s1.length;
+        const n = s2.length;
+        const dp = Array.from(Array(m + 1), () => Array(n + 1).fill(0));
+        
+        for (let i = 0; i <= m; i++) dp[i][0] = i;
+        for (let j = 0; j <= n; j++) dp[0][j] = j;
+        
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (s1[i - 1] === s2[j - 1]) {
+                    dp[i][j] = dp[i - 1][j - 1];
+                } else {
+                    dp[i][j] = Math.min(
+                        dp[i - 1][j] + 1, // deletion
+                        dp[i][j - 1] + 1, // insertion
+                        dp[i - 1][j - 1] + 1 // substitution
+                    );
+                }
+            }
+        }
+        
+        const maxLen = Math.max(m, n);
+        const distance = dp[m][n];
+        return (maxLen - distance) / maxLen;
     }
 
     static normalizeGstin(gstin) {

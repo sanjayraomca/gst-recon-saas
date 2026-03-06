@@ -246,8 +246,14 @@ class GSTRImportModel {
         }
 
         if (filters.importType) {
-            query += ` AND import_type = ?`;
-            values.push(filters.importType);
+            const types = filters.importType.split(',').map(t => t.trim());
+            if (types.length > 1) {
+                query += ` AND import_type IN (${types.map(() => '?').join(', ')})`;
+                values.push(...types);
+            } else {
+                query += ` AND import_type = ?`;
+                values.push(filters.importType);
+            }
         }
 
         if (filters.status) {

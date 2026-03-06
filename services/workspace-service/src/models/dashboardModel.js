@@ -210,6 +210,46 @@ class DashboardModel {
             recentActivities: activities
         };
     }
+
+    /**
+     * Gets the latest active period (MMYYYY) based on uploaded data across all sources
+     */
+    static async getLatestPeriod(workspaceId) {
+        // Fetch latest dates from purchases and GSTR2B 
+        const latestPurchase = await knex('purchase_vouchers')
+            .where({ workspace_id: workspaceId })
+            .orderBy('supplier_invoice_date', 'desc')
+            .first('supplier_invoice_date');
+
+        const latestGstr2b = await knex('normalized_gstr2b_invoices')
+            .where({ workspace_id: workspaceId })
+            .orderBy('document_date', 'desc')
+            .first('document_date');
+
+        let maxDate = null;
+        if (latestPurchase?.supplier_invoice_date) {
+            maxDate = new Date(latestPurchase.supplier_invoice_date);
+        }
+        
+        if (latestGstr2b?.document_date) {
+            const gstrDate = new Date(latestGstr2b.document_date);
+            if (!maxDate || gstrDate > maxDate) {
+                maxDate = gstrDate;
+            }
+        }
+
+        if (!maxDate) {
+            // Fallback to current month if no data exists
+            const now = new Date();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const yyyy = now.getFullYear();
+            return { period: `${mm}${yyyy}` };
+        }
+
+        const mm = String(maxDate.getMonth() + 1).padStart(2, '0');
+        const yyyy = maxDate.getFullYear();
+        return { period: `${mm}${yyyy}` };
+    }
 }
 
 module.exports = DashboardModel;

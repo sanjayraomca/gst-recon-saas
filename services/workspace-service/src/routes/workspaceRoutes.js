@@ -9,6 +9,7 @@ router.post('/', verifyToken, workspaceController.createWorkspace);
 router.get('/', verifyToken, workspaceController.listWorkspaces);
 router.get('/:id', verifyToken, workspaceController.getWorkspace);
 router.get('/:id/dashboard-metrics', verifyToken, workspaceController.getDashboardMetrics);
+router.get('/:id/latest-period', verifyToken, workspaceController.getLatestPeriod);
 router.get('/:id/users', verifyToken, workspaceController.listWorkspaceUsers);
 router.post('/:id/users/invite', verifyToken, workspaceController.inviteUser);
 router.put('/:id', verifyToken, workspaceController.updateWorkspace);

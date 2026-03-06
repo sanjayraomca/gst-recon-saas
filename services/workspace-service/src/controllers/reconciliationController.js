@@ -96,6 +96,8 @@ const getRunResults = async (req, res) => {
         const result = await ReconciliationModel.getRunResults(workspaceId, runId, req.query);
         if (!result) return errorResponse(res, 'Run not found', 404);
 
+        console.log(`[getRunResults] returning ${result.data?.length} rows for runId=${runId}`);
+
         return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
             pagination: result.pagination
         });

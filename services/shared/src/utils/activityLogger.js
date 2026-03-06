@@ -31,8 +31,24 @@ const logActivity = async ({
             userAgent = req.headers['user-agent'];
         }
 
+        let validUserId = null;
+        if (userId) {
+            if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) {
+                validUserId = userId;
+            } else {
+                try {
+                    const user = await knex('users').where({ keycloak_id: userId }).first();
+                    if (user) {
+                        validUserId = user.id;
+                    }
+                } catch (e) {
+                    console.error('Failed to resolve valid user UUID for activity log:', e.message);
+                }
+            }
+        }
+
         await knex('activity_logs').insert({
-            user_id: userId || null,
+            user_id: validUserId,
             tenant_id: tenantId || null,
             workspace_id: workspaceId || null,
             action_type: actionType,
