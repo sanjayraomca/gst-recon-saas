@@ -37,7 +37,7 @@ const logActivity = async ({
                 validUserId = userId;
             } else {
                 try {
-                    const user = await knex('users').where({ keycloak_id: userId }).first();
+                    const user = await knex('users').where({ auth_provider_id: userId }).first();
                     if (user) {
                         validUserId = user.id;
                     }

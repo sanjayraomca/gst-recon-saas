@@ -1381,7 +1381,7 @@ CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_ws_matchkey
 -- v_gstr2b_listing — optimized read model for UI listing
 -- ========================================================
 
-CREATE OR REPLACE VIEW v_gstr2b_listing AS
+CREATE OR REPLACE VIEW v_gstr_listing AS
 SELECT
     n.id,
     n.workspace_id,
@@ -1391,7 +1391,7 @@ SELECT
     n.document_category,
     n.document_type,
     n.is_amendment,
-    n.is_active,
+    n.is_active,~
 
     -- Supplier
     n.supplier_gstin,
