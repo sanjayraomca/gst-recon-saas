@@ -81,6 +81,19 @@ class ReconciliationModel {
                 taxPeriod = await trx('tax_periods').where({ id: taxPeriodId }).first();
             }
 
+            // Fetch workspace settings for dynamic variances
+            const workspace = await trx('workspaces').where({ id: workspaceId }).first();
+            const wsSettings = typeof workspace?.settings === 'string'
+                ? JSON.parse(workspace.settings)
+                : (workspace?.settings || {});
+
+            const VAR_DAYS_MIN = parseFloat(wsSettings.variance_days_min) ?? 1;
+            const VAR_DAYS_MAX = parseFloat(wsSettings.variance_days_max) ?? 1;
+            const VAR_TAXABLE_MIN = parseFloat(wsSettings.variance_taxable_min) ?? 1;
+            const VAR_TAXABLE_MAX = parseFloat(wsSettings.variance_taxable_max) ?? 1;
+            const VAR_TAX_MIN = parseFloat(wsSettings.variance_tax_min) ?? 1;
+            const VAR_TAX_MAX = parseFloat(wsSettings.variance_tax_max) ?? 1;
+
             // 2. Fetch purchase vouchers for this workspace/period
             await progressEmitter.emitProgress(runId, 15, 'Fetching purchase invoices...');
             let purchaseQuery = trx('purchase_vouchers')
@@ -89,9 +102,18 @@ class ReconciliationModel {
 
             // Filter by invoice date if we have the period details
             if (taxPeriod) {
-                purchaseQuery = purchaseQuery
-                    .whereRaw('EXTRACT(MONTH FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.month])
-                    .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.year]);
+                const isQuarterly = workspace?.filing_type === 'q';
+                if (isQuarterly && taxPeriod.quarter) {
+                    // Fetch for the entire quarter
+                    purchaseQuery = purchaseQuery
+                        .where({ 'purchase_vouchers.fy_id': taxPeriod.fy_id })
+                        .whereRaw('EXTRACT(QUARTER FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.quarter])
+                        .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.year]);
+                } else {
+                    purchaseQuery = purchaseQuery
+                        .whereRaw('EXTRACT(MONTH FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.month])
+                        .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.year]);
+                }
             }
 
             const purchaseInvoices = await purchaseQuery;
@@ -109,9 +131,16 @@ class ReconciliationModel {
 
             // Filter by document date if we have the period details
             if (taxPeriod) {
-                gstrQuery = gstrQuery
-                    .whereRaw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.month])
-                    .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+                const isQuarterly = workspace?.filing_type === 'q';
+                if (isQuarterly && taxPeriod.quarter) {
+                    gstrQuery = gstrQuery
+                        .whereRaw('EXTRACT(QUARTER FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.quarter])
+                        .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+                } else {
+                    gstrQuery = gstrQuery
+                        .whereRaw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.month])
+                        .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+                }
             }
 
             const gstr2bInvoices = await gstrQuery;
@@ -138,6 +167,7 @@ class ReconciliationModel {
                 return 'INVOICE'; // PURCHASE, EXPENSE -> INVOICE
             };
 
+            // STEP 1: MATCH BY INVOICE NUMBER (STRICT)
             for (const purchaseInv of validPurchaseInvoices) {
                 const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
@@ -186,9 +216,13 @@ class ReconciliationModel {
                     }
 
                     // Case 2: Partial Match / Mismatch
-                    const dateNear = dateDiff <= 2;
-                    const taxableNear = Math.abs(pTaxable - gTaxable) <= 1.01;
-                    const taxNear = Math.abs(pTax - gTax) <= 1.01;
+                    const diffDays = (pDate - gDate) / (1000 * 60 * 60 * 24);
+                    const diffTaxable = pTaxable - gTaxable;
+                    const diffTax = pTax - gTax;
+
+                    const dateNear = diffDays >= -VAR_DAYS_MAX && diffDays <= VAR_DAYS_MIN;
+                    const taxableNear = diffTaxable >= -(VAR_TAXABLE_MAX + 0.01) && diffTaxable <= (VAR_TAXABLE_MIN + 0.01);
+                    const taxNear = diffTax >= -(VAR_TAX_MAX + 0.01) && diffTax <= (VAR_TAX_MIN + 0.01);
 
                     if (dateNear && exactTaxable && exactTax) { matchType = 'MISMATCH'; return true; }
                     if (exactDate && taxableNear && exactTax) { matchType = 'MISMATCH'; return true; }
@@ -230,8 +264,88 @@ class ReconciliationModel {
                 }
             }
 
-            // 4c. Process unmatched purchases
+            // STEP 2: MATCH BY AMOUNT + DATE (FALLBACK FOR UNMATCHED)
+            const remainingPurchases = [];
             for (const purchaseInv of unmatchedPurchases) {
+                const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
+                const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
+                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_cgst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_sgst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_cess_amount) || 0);
+                
+                const pDate = new Date(purchaseInv.supplier_invoice_date);
+                const pCategory = mapCategory(purchaseInv.voucher_type);
+                
+                let matchType = null;
+                const match = validGstr2bInvoices.find(gstr2bInv => {
+                    if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
+
+                    // 1. GSTIN Match
+                    const gstinMatch = this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    if (!gstinMatch) return false;
+                    
+                    // 2. Category Match
+                    const gCategory = gstr2bInv.document_category || 'INVOICE';
+                    if (pCategory !== gCategory) return false;
+
+                    // 3. Amount + Date Match (Fuzzy)
+                    const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
+                    const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
+                    const gTax = isNaN(parseFloat(gstr2bInv.total_tax)) ? 0 : parseFloat(gstr2bInv.total_tax);
+                    const gDate = new Date(gstr2bInv.document_date);
+                    
+                    const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
+                    const diffTaxable = Math.abs(pTaxable - gTaxable);
+                    const diffTax = Math.abs(pTax - gTax);
+
+                    // Thresholds for fuzzy matching
+                    const dateNear = dateDiff <= 30; // Within 30 days
+                    const taxableMatch = diffTaxable < (VAR_TAXABLE_MAX + 1);
+                    const taxMatch = diffTax < (VAR_TAX_MAX + 1);
+
+                    if (dateNear && taxableMatch && taxMatch) {
+                        matchType = (dateDiff === 0 && diffTaxable < 0.01) ? 'MATCHED' : 'MISMATCH';
+                        return true;
+                    }
+
+                    return false;
+                });
+
+                if (match) {
+                    matchedGstr2bIds.add(match.id);
+                    const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
+                    
+                    let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
+                    if (finalStatus === 'matched') matchedCount++;
+                    else if (finalStatus === 'mismatch') mismatchedCount++;
+
+                    matchResults.push({
+                        recon_run_id: runId,
+                        workspace_id: workspaceId,
+                        purchase_invoice_id: purchaseInv.id,
+                        gstr2b_invoice_id: match.id,
+                        match_status: finalStatus,
+                        match_score: finalStatus === 'matched' ? 90.00 : 60.00, // Slightly lower score since it's fuzzy
+                        match_confidence: 'LOW',
+                        matched_by: 'FUZZY',
+                        books_value: pNet,
+                        portal_value: match.document_value || 0,
+                        variance_amount: pNet - (match.document_value || 0),
+                        itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE', // Always require review for fuzzy match
+                        decision_reason: `Fuzzy Match: Matched by amount and date (+/- 30 days)`,
+                        action_required: 'REVIEW_MATCH',
+                        action_status: 'PENDING',
+                        created_at: knex.fn.now(),
+                        updated_at: knex.fn.now()
+                    });
+                } else {
+                    remainingPurchases.push(purchaseInv);
+                }
+            }
+
+            // 4c. Process unmatched purchases
+            for (const purchaseInv of remainingPurchases) {
                 const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 matchResults.push({
                     recon_run_id: runId,
@@ -372,6 +486,7 @@ class ReconciliationModel {
 
         let query = knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .where('rr.recon_run_id', runId);
 
@@ -464,9 +579,15 @@ class ReconciliationModel {
         // --- Prepare Main Query ---
         query.select(
             'rr.*',
+            
+            // Row identification
+            'pi.id as purchase_invoice_id',
+            'gi.id as gstr2b_invoice_id',
+
             // Supplier mapping
             knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
             knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
+            knex.raw('COALESCE(tp.period_code, gi.return_period) as return_period'), // Explicit period code
 
             // Purchase/Books mapping
             'pi.supplier_invoice_no as purchase_invoice_number',
@@ -610,7 +731,7 @@ class ReconciliationModel {
         const startDateString = `${year}-${returnPeriod.substring(0, 2)}-01`;
         const lastDay = new Date(year, month, 0).getDate();
         const endDateString = `${year}-${returnPeriod.substring(0, 2)}-${lastDay}`;
-        const quarter = Math.ceil(month / 3);
+        const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
         const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
 
         const [newPeriod] = await db('tax_periods')

@@ -365,7 +365,7 @@ class BookImportController {
         const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
         const dateObj = new Date(year, month, 0); // Last day of month
         const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
-        const quarter = Math.ceil(month / 3);
+        const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
         const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
 
         const periodInsert = await db.raw(

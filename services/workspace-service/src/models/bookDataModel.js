@@ -64,8 +64,21 @@ class BookDataModel {
             if (resolved.bookTypes) q = q.whereIn('si.book_type', resolved.bookTypes);
 
             if (period) {
-                const [yr, mo] = period.split('-');
-                if (yr && mo) q = q.whereRaw(`to_char(si.invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
+                if (period.startsWith('Q')) {
+                    const q = parseInt(period.substring(1, 2));
+                    const yr = period.substring(2);
+                    let months = [];
+                    if (q === 1) months = ['04', '05', '06'];
+                    else if (q === 2) months = ['07', '08', '09'];
+                    else if (q === 3) months = ['10', '11', '12'];
+                    else if (q === 4) months = ['01', '02', '03'];
+                    
+                    const conditions = months.map(mo => `${yr}-${mo}`);
+                    q = q.whereRaw(`to_char(si.invoice_date, 'YYYY-MM') = ANY(?)`, [conditions]);
+                } else {
+                    const [yr, mo] = period.split('-');
+                    if (yr && mo) q = q.whereRaw(`to_char(si.invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
+                }
             }
             if (search) {
                 q = q.where(function () {
@@ -141,8 +154,21 @@ class BookDataModel {
             if (resolved.bookTypes) q = q.whereIn('ev.book_type', resolved.bookTypes);
 
             if (period) {
-                const [yr, mo] = period.split('-');
-                if (yr && mo) q = q.whereRaw(`to_char(ev.supplier_invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
+                if (period.startsWith('Q')) {
+                    const q = parseInt(period.substring(1, 2));
+                    const yr = period.substring(2);
+                    let months = [];
+                    if (q === 1) months = ['04', '05', '06'];
+                    else if (q === 2) months = ['07', '08', '09'];
+                    else if (q === 3) months = ['10', '11', '12'];
+                    else if (q === 4) months = ['01', '02', '03'];
+                    
+                    const conditions = months.map(mo => `${yr}-${mo}`);
+                    q = q.whereRaw(`to_char(ev.supplier_invoice_date, 'YYYY-MM') = ANY(?)`, [conditions]);
+                } else {
+                    const [yr, mo] = period.split('-');
+                    if (yr && mo) q = q.whereRaw(`to_char(ev.supplier_invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
+                }
             }
             if (search) {
                 q = q.where(function () {
@@ -234,6 +260,18 @@ class BookDataModel {
         // Helper to parse period into SQL condition
         const addPeriod = (q, alias, col) => {
             if (!period) return q;
+            if (period.startsWith('Q')) {
+                const qNum = parseInt(period.substring(1, 2));
+                const yr = period.substring(2);
+                let months = [];
+                if (qNum === 1) months = ['04', '05', '06'];
+                else if (qNum === 2) months = ['07', '08', '09'];
+                else if (qNum === 3) months = ['10', '11', '12'];
+                else if (qNum === 4) months = ['01', '02', '03'];
+                
+                const conditions = months.map(mo => `${yr}-${mo}`);
+                return q.whereRaw(`to_char(${alias}.${col}, 'YYYY-MM') = ANY(?)`, [conditions]);
+            }
             return q.whereRaw(`to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
         };
 

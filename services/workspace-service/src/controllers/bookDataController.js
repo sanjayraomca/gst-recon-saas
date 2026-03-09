@@ -80,5 +80,29 @@ const getBookDataSummary = async (req, res) => {
     }
 };
 
-module.exports = { getBookData, getBookDataSummary };
+const getBookDataById = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+
+        const { id } = req.params;
+        if (!id) return errorResponse(res, 'Voucher ID is required', 400);
+
+        const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
+        if (tenantId) {
+            const workspace = await knex('workspaces').where({ id: workspaceId, tenant_id: tenantId }).select('id').first();
+            if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
+        }
+
+        const record = await BookDataModel.getById(workspaceId, id);
+        if (!record) return errorResponse(res, 'Voucher not found', 404);
+
+        return successResponse(res, record, 'Voucher retrieved successfully');
+    } catch (error) {
+        console.error('BookDataController.getBookDataById error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+module.exports = { getBookData, getBookDataSummary, getBookDataById };
 
