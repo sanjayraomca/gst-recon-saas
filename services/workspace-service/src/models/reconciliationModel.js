@@ -87,12 +87,12 @@ class ReconciliationModel {
                 ? JSON.parse(workspace.settings)
                 : (workspace?.settings || {});
 
-            const VAR_DAYS_MIN = parseFloat(wsSettings.variance_days_min) ?? 1;
-            const VAR_DAYS_MAX = parseFloat(wsSettings.variance_days_max) ?? 1;
-            const VAR_TAXABLE_MIN = parseFloat(wsSettings.variance_taxable_min) ?? 1;
-            const VAR_TAXABLE_MAX = parseFloat(wsSettings.variance_taxable_max) ?? 1;
-            const VAR_TAX_MIN = parseFloat(wsSettings.variance_tax_min) ?? 1;
-            const VAR_TAX_MAX = parseFloat(wsSettings.variance_tax_max) ?? 1;
+            const VAR_DAYS_MIN = parseFloat(wsSettings.variance_days_min) || 1;
+            const VAR_DAYS_MAX = parseFloat(wsSettings.variance_days_max) || 1;
+            const VAR_TAXABLE_MIN = parseFloat(wsSettings.variance_taxable_min) || 1;
+            const VAR_TAXABLE_MAX = parseFloat(wsSettings.variance_taxable_max) || 1;
+            const VAR_TAX_MIN = parseFloat(wsSettings.variance_tax_min) || 1;
+            const VAR_TAX_MAX = parseFloat(wsSettings.variance_tax_max) || 1;
 
             // 2. Fetch purchase vouchers for this workspace/period
             await progressEmitter.emitProgress(runId, 15, 'Fetching purchase invoices...');
@@ -104,10 +104,16 @@ class ReconciliationModel {
             if (taxPeriod) {
                 const isQuarterly = workspace?.filing_type === 'q';
                 if (isQuarterly && taxPeriod.quarter) {
-                    // Fetch for the entire quarter
+                    // Fetch for the entire fiscal quarter
+                    // Q1: 4,5,6 | Q2: 7,8,9 | Q3: 10,11,12 | Q4: 1,2,3
+                    let quarterMonths = [];
+                    if (taxPeriod.quarter === 1) quarterMonths = [4, 5, 6];
+                    else if (taxPeriod.quarter === 2) quarterMonths = [7, 8, 9];
+                    else if (taxPeriod.quarter === 3) quarterMonths = [10, 11, 12];
+                    else if (taxPeriod.quarter === 4) quarterMonths = [1, 2, 3];
+
                     purchaseQuery = purchaseQuery
-                        .where({ 'purchase_vouchers.fy_id': taxPeriod.fy_id })
-                        .whereRaw('EXTRACT(QUARTER FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.quarter])
+                        .whereIn(trx.raw('EXTRACT(MONTH FROM purchase_vouchers.supplier_invoice_date)'), quarterMonths)
                         .whereRaw('EXTRACT(YEAR FROM purchase_vouchers.supplier_invoice_date) = ?', [taxPeriod.year]);
                 } else {
                     purchaseQuery = purchaseQuery
@@ -117,6 +123,7 @@ class ReconciliationModel {
             }
 
             const purchaseInvoices = await purchaseQuery;
+            console.log(`[MatchingTask] Fetched ${purchaseInvoices.length} purchase vouchers for period:`, taxPeriod);
 
             // 3. Fetch GSTR (2A or 2B) invoices
             const is2a = run_type === 'PURCHASE_2A';
@@ -133,8 +140,14 @@ class ReconciliationModel {
             if (taxPeriod) {
                 const isQuarterly = workspace?.filing_type === 'q';
                 if (isQuarterly && taxPeriod.quarter) {
+                    let quarterMonths = [];
+                    if (taxPeriod.quarter === 1) quarterMonths = [4, 5, 6];
+                    else if (taxPeriod.quarter === 2) quarterMonths = [7, 8, 9];
+                    else if (taxPeriod.quarter === 3) quarterMonths = [10, 11, 12];
+                    else if (taxPeriod.quarter === 4) quarterMonths = [1, 2, 3];
+
                     gstrQuery = gstrQuery
-                        .whereRaw('EXTRACT(QUARTER FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.quarter])
+                        .whereIn(trx.raw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date)'), quarterMonths)
                         .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
                 } else {
                     gstrQuery = gstrQuery
@@ -144,6 +157,7 @@ class ReconciliationModel {
             }
 
             const gstr2bInvoices = await gstrQuery;
+            console.log(`[MatchingTask] Fetched ${gstr2bInvoices.length} ${portalTypeLabel} invoices`);
 
 
             // 4. Perform matching
@@ -201,7 +215,10 @@ class ReconciliationModel {
                     
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = isNaN(parseFloat(gstr2bInv.total_tax)) ? 0 : parseFloat(gstr2bInv.total_tax);
+                    const gTax = (parseFloat(gstr2bInv.igst) || 0) + 
+                                 (parseFloat(gstr2bInv.cgst) || 0) + 
+                                 (parseFloat(gstr2bInv.sgst) || 0) + 
+                                 (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
                     
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
@@ -292,7 +309,10 @@ class ReconciliationModel {
                     // 3. Amount + Date Match (Fuzzy)
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = isNaN(parseFloat(gstr2bInv.total_tax)) ? 0 : parseFloat(gstr2bInv.total_tax);
+                    const gTax = (parseFloat(gstr2bInv.igst) || 0) + 
+                                 (parseFloat(gstr2bInv.cgst) || 0) + 
+                                 (parseFloat(gstr2bInv.sgst) || 0) + 
+                                 (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
                     
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
