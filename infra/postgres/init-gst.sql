@@ -1372,6 +1372,16 @@ ALTER TABLE normalized_gstr2b_invoices
     ADD CONSTRAINT uq_norm_source
     UNIQUE (import_filing_id, source_section, source_row_id);
 
+-- Business-key UNIQUE index for cross-route deduplication (Used by batchInsert ON CONFLICT)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_normalized_gstr2b_business_key
+    ON normalized_gstr2b_invoices (
+        workspace_id, 
+        source_section, 
+        COALESCE(supplier_gstin, ''), 
+        COALESCE(document_number_clean, ''), 
+        COALESCE(return_period, '')
+    );
+
 -- Composite index for workspace listing + match_key lookups
 CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_ws_matchkey
     ON normalized_gstr2b_invoices(workspace_id, match_key);
@@ -1391,7 +1401,7 @@ SELECT
     n.document_category,
     n.document_type,
     n.is_amendment,
-    n.is_active,~
+    n.is_active,
 
     -- Supplier
     n.supplier_gstin,
@@ -1423,7 +1433,10 @@ SELECT
     -- ITC
     n.itc_available,
     n.itc_eligibility,
-    n.applicable_tax_rate_percent,
+    CASE 
+        WHEN n.applicable_tax_rate_percent = 100 AND n.taxable_value > 0 THEN ROUND((COALESCE(n.total_tax, n.igst + n.cgst + n.sgst + n.cess) / n.taxable_value) * 100)
+        ELSE n.applicable_tax_rate_percent 
+    END AS applicable_tax_rate_percent,
 
     -- Period
     n.return_period,
@@ -1464,7 +1477,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
     id UUID PRIMARY KEY,
     workspace_id UUID NOT NULL REFERENCES workspaces(id),
     gstin_id UUID NOT NULL,
-    period_id UUID NOT NULL REFERENCES tax_periods(id),
+    period_id UUID REFERENCES tax_periods(id),
     run_type VARCHAR(50) NOT NULL,
     run_mode VARCHAR(50) NOT NULL,
     rule_set_version VARCHAR(20),

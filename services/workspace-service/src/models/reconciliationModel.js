@@ -121,78 +121,90 @@ class ReconciliationModel {
             await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
             const matchResults = [];
             const matchedGstr2bIds = new Set();
-            const unmatchedPurchases = []; // Collected for AI matching
+            const unmatchedPurchases = [];
             let matchedCount = 0;
             let mismatchedCount = 0;
             let missingCount = 0;
 
-            for (const purchaseInv of purchaseInvoices) {
+            // Step 0: Filter out invoices without GSTIN for matching
+            const validPurchaseInvoices = purchaseInvoices.filter(p => !!this.normalizeGstin(p.supplier_gstin));
+            const validGstr2bInvoices = gstr2bInvoices.filter(g => !!this.normalizeGstin(g.supplier_gstin));
+
+            // Helper to map Books categories to Portal categories
+            const mapCategory = (booksType) => {
+                const type = (booksType || 'PURCHASE').toUpperCase();
+                if (type === 'CREDIT_NOTE') return 'CREDIT_NOTE';
+                if (type === 'DEBIT_NOTE') return 'DEBIT_NOTE';
+                return 'INVOICE'; // PURCHASE, EXPENSE -> INVOICE
+            };
+
+            for (const purchaseInv of validPurchaseInvoices) {
                 const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
+                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_cgst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_sgst_amount) || 0) + 
+                             (parseFloat(purchaseInv.total_cess_amount) || 0);
+                
+                const pDate = new Date(purchaseInv.supplier_invoice_date);
+                const pNormalizedInv = this.normalizeInvoiceNumber(purchaseInv.supplier_invoice_no);
+                const pCategory = mapCategory(purchaseInv.voucher_type);
                 
                 let matchType = null;
-                const match = gstr2bInvoices.find(gstr2bInv => {
+                const match = validGstr2bInvoices.find(gstr2bInv => {
+                    if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
+
+                    // 1. GSTIN Match
                     const gstinMatch = this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin);
                     if (!gstinMatch) return false;
                     
-                    const pNormalizedInv = this.normalizeInvoiceNumber(purchaseInv.supplier_invoice_no);
+                    // 2. Category Match (Invoice vs Note)
+                    const gCategory = gstr2bInv.document_category || 'INVOICE';
+                    if (pCategory !== gCategory) return false;
+
+                    // 3. Invoice Number Match (Including Amendment check)
                     const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
-                    const invMatch = pNormalizedInv === gNormalizedInv;
+                    const gOriginalInv = this.normalizeInvoiceNumber(gstr2bInv.original_invoice_number);
+                    const invMatch = (pNormalizedInv === gNormalizedInv) || (gOriginalInv && pNormalizedInv === gOriginalInv);
+                    
+                    if (!invMatch) return false;
                     
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
+                    const gTax = isNaN(parseFloat(gstr2bInv.total_tax)) ? 0 : parseFloat(gstr2bInv.total_tax);
+                    const gDate = new Date(gstr2bInv.document_date);
                     
-                    const taxableMatch = Math.abs(pTaxable - gTaxable) <= 1.00;
-                    const netMatch = Math.abs(pNet - gNet) <= 1.00;
-                    const amountMatch = taxableMatch || netMatch;
+                    const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
+                    const exactDate = dateDiff === 0;
+                    const exactTaxable = Math.abs(pTaxable - gTaxable) < 0.01;
+                    const exactTax = Math.abs(pTax - gTax) < 0.01;
 
-                    // L1: Exact match (Normalized Inv No + Supplier GSTIN + Taxable Value Tolerance 1.00)
-                    if (invMatch && amountMatch) {
-                        matchType = 'L1';
-                        return true;
-                    }
-                    
-                    // L2: Fuzzy match (Supplier GSTIN + Taxable Value match exactly, but Inv No has >70% similarity)
-                    if (amountMatch) {
-                        const similarity = this.calculateSimilarity(pNormalizedInv, gNormalizedInv);
-                        if (similarity > 0.70) {
-                            matchType = 'L2';
-                            return true;
-                        }
-                    }
-                    
-                    // L3: Probable match (Normalized Inv No + Supplier GSTIN match, but Taxable Value differs)
-                    if (invMatch && !amountMatch) {
-                        matchType = 'L3';
+                    // Case 1: Exact Match
+                    if (exactDate && exactTaxable && exactTax) {
+                        matchType = 'MATCHED';
                         return true;
                     }
 
-                    // L4: Probable Amount Match (Supplier GSTIN + Amount Match, but Invoice No is different)
-                    // Added as a production fallback for the user's specific data pattern
-                    if (amountMatch) {
-                        matchType = 'L4';
-                        return true;
-                    }
+                    // Case 2: Partial Match / Mismatch
+                    const dateNear = dateDiff <= 2;
+                    const taxableNear = Math.abs(pTaxable - gTaxable) <= 1.01;
+                    const taxNear = Math.abs(pTax - gTax) <= 1.01;
+
+                    if (dateNear && exactTaxable && exactTax) { matchType = 'MISMATCH'; return true; }
+                    if (exactDate && taxableNear && exactTax) { matchType = 'MISMATCH'; return true; }
+                    if (exactDate && exactTaxable && taxNear) { matchType = 'MISMATCH'; return true; }
+                    if (exactDate && taxNear && !exactTaxable) { matchType = 'MISMATCH'; return true; }
 
                     return false;
                 });
 
                 if (match) {
                     matchedGstr2bIds.add(match.id);
-
-                    const gNet = isNaN(parseFloat(match.document_value)) ? 0 : parseFloat(match.document_value);
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
-
-                    let finalStatus;
-                    if (!isEligible) {
-                        finalStatus = 'not_eligible';
-                    } else if (matchType === 'L1' || matchType === 'L2' || matchType === 'L4') {
-                        finalStatus = 'claimed';
-                        matchedCount++;
-                    } else if (matchType === 'L3') {
-                        finalStatus = 'wrong_entry_portal';
-                        mismatchedCount++;
-                    }
+                    
+                    let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
+                    if (finalStatus === 'matched') matchedCount++;
+                    else if (finalStatus === 'mismatch') mismatchedCount++;
 
                     matchResults.push({
                         recon_run_id: runId,
@@ -200,14 +212,14 @@ class ReconciliationModel {
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
                         match_status: finalStatus,
-                        match_score: matchType === 'L1' ? 100.00 : (matchType === 'L2' ? 85.00 : (matchType === 'L4' ? 70.00 : 60.00)),
-                        match_confidence: matchType === 'L1' ? 'HIGH' : (matchType === 'L2' || matchType === 'L4' ? 'MEDIUM' : 'LOW'),
+                        match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
+                        match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
                         books_value: pNet,
-                        portal_value: gNet,
-                        variance_amount: pNet - gNet,
-                        itc_decision: isEligible ? (matchType === 'L3' ? 'PENDING' : 'ELIGIBLE') : 'INELIGIBLE',
-                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (matchType === 'L3' ? 'Amount mismatch' : `Match found (${matchType})`),
-                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (matchType === 'L3' ? 'REVIEW_AMOUNT' : null),
+                        portal_value: match.document_value || 0,
+                        variance_amount: pNet - (match.document_value || 0),
+                        itc_decision: isEligible ? (matchType === 'MATCHED' ? 'ELIGIBLE' : 'PENDING') : 'INELIGIBLE',
+                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (matchType === 'MATCHED' ? 'Exact match found' : 'Partial match / variance detected'),
+                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (matchType === 'MISMATCH' ? 'REVIEW_AMOUNT' : null),
                         action_status: 'PENDING',
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
@@ -218,14 +230,14 @@ class ReconciliationModel {
                 }
             }
 
-            // 4c. Process unmatched purchases (Books but not in Portal)
+            // 4c. Process unmatched purchases
             for (const purchaseInv of unmatchedPurchases) {
                 const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 matchResults.push({
                     recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
-                    match_status: 'not_in_portal',
+                    match_status: 'missing_in_2b',
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
@@ -242,24 +254,24 @@ class ReconciliationModel {
                 missingCount++;
             }
 
-            // 4d. Unmatched GSTR-2B invoices (Portal but not in Books)
-            for (const gstr2bInv of gstr2bInvoices) {
+            // 4d. Unmatched GSTR-2B invoices
+            for (const gstr2bInv of validGstr2bInvoices) {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
                     const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const isEligible = gstr2bInv.itc_available !== false && gstr2bInv.itc_eligibility !== 'No' && gstr2bInv.itc_eligibility !== 'N';
-
+                    
                     matchResults.push({
                         recon_run_id: runId,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
-                        match_status: isEligible ? 'not_in_books' : 'not_eligible',
+                        match_status: isEligible ? 'missing_in_books' : 'not_eligible',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
                         portal_value: gTotal,
                         variance_amount: -gTotal,
                         itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
-                        decision_reason: isEligible ? 'Not found in purchase register' : 'ITC Not Available in GSTR2B',
+                        decision_reason: isEligible ? 'Not found in records' : 'ITC Not Available in GSTR2B',
                         action_required: isEligible ? 'ADD_TO_BOOKS' : 'REVIEW_ELIGIBILITY',
                         action_priority: 'MEDIUM',
                         action_status: 'PENDING',
@@ -363,6 +375,15 @@ class ReconciliationModel {
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .where('rr.recon_run_id', runId);
 
+        // Hide records where GSTIN is missing (as per user request "else hide the data")
+        query.where(function () {
+            this.whereNotNull('pi.supplier_gstin')
+                .orWhereNotNull('gi.supplier_gstin');
+        }).andWhere(function () {
+            this.where('pi.supplier_gstin', '!=', '')
+                .orWhere('gi.supplier_gstin', '!=', '');
+        });
+
         // --- Apply Filters ---
         if (match_status && match_status !== 'all') {
             query.where('rr.match_status', match_status);
@@ -460,8 +481,8 @@ class ReconciliationModel {
             'gi.document_date as gstr2b_invoice_date',
             'gi.document_value as gstr2b_invoice_total',
             'gi.taxable_value as gstr2b_taxable',
-            'gi.total_tax as gstr2b_tax',
-            'gi.applicable_tax_rate_percent as gstr2b_tax_rate'
+            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax'),
+            knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr2b_tax_rate')
         ).orderBy('rr.created_at', 'desc');
 
         // --- Apply Pagination/Export Mode ---
