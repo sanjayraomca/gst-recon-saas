@@ -145,7 +145,7 @@ class BookImportController {
 
             console.log(`[DEBUG] Reading workbook from ${uploadedFilePath}`);
             const workbook = xlsx.readFile(uploadedFilePath);
-            const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
+            const { validateFileType } = require('../utils/fileValidation');
 
             console.log(`[DEBUG] Validating file type: expected=${type}`);
             const fileTypeValidation = validateFileType(workbook, type);
@@ -158,14 +158,8 @@ class BookImportController {
                 }, 400);
             }
 
-            console.log(`[DEBUG] Validating organization GSTIN: expected=${expectedGstin}`);
-            if (!validateFileGSTIN(workbook, expectedGstin)) {
-                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
-                return errorResponse(res, {
-                    message: `GSTIN Mismatch: The uploaded file does not appear to belong to the selected Organization (${expectedGstin}).`,
-                    isCustom: true
-                }, 400);
-            }
+            // GSTIN validation from file is removed as per requirement
+
 
 
             // 8. Upload to MinIO

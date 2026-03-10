@@ -167,7 +167,7 @@ class GSTRImportController {
 
             // 1. Parse & Validate File GSTIN
             const workbook = xlsx.readFile(uploadedFilePath);
-            const { validateFileGSTIN, validateFileType } = require('../utils/fileValidation');
+            const { validateFileType } = require('../utils/fileValidation');
 
             const fileTypeValidation = validateFileType(workbook, gstr_type);
             if (!fileTypeValidation.valid) {
@@ -178,15 +178,7 @@ class GSTRImportController {
                 }, 400);
             }
 
-            if (!validateFileGSTIN(workbook, gstinRecipient)) {
-                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
-                    fs.unlinkSync(uploadedFilePath);
-                }
-                return errorResponse(res, {
-                    message: `GSTIN Mismatch: The uploaded file does not appear to belong to the selected Organization (${gstinRecipient}).`,
-                    isCustom: true
-                }, 400);
-            }
+            // GSTIN validation from file is removed as per requirement
 
             // 2. Compute MD5 hash of the uploaded file BEFORE doing anything else
             if (upload_id) {
