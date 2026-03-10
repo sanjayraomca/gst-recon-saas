@@ -30,9 +30,9 @@ const buildColumnMap = (headerRow) => {
 
         // Common Columns (Handle duplicates for new 122025 Amendment format)
         else if (header.includes('GSTIN OF SUPPLIER')) colMap['gstin_supplier'] = index;
-        else if (header.includes('TRADE/LEGAL NAME') || header.includes('TRADE NAME')) colMap['trade_name'] = index;
+        else if (header.includes('TRADE/LEGAL NAME') || header.includes('TRADE NAME') || header === 'NAME') colMap['trade_name'] = index;
 
-        else if (header.includes('INVOICE NUMBER')) {
+        else if (header.includes('INVOICE NUMBER') || header.includes('INVOICE/REF')) {
             if (colMap['invoice_number'] !== undefined) {
                 colMap['original_invoice_number'] = colMap['invoice_number'];
                 colMap['invoice_number'] = index;
@@ -48,7 +48,7 @@ const buildColumnMap = (headerRow) => {
                 colMap['note_number'] = index;
             }
         }
-        else if (header.includes('INVOICE TYPE') || header.includes('NOTE TYPE')) colMap['invoice_type'] = index;
+        else if (header.match(/INVOICE TYPE|NOTE TYPE|GST TYPE|GSTR TYPE|DOCUMENT TYPE/)) colMap['invoice_type'] = index;
         else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE')) {
             if (colMap['invoice_date'] !== undefined) {
                 colMap['original_invoice_date'] = colMap['invoice_date'];
@@ -58,18 +58,25 @@ const buildColumnMap = (headerRow) => {
             }
         }
 
-        else if (header.includes('INVOICE VALUE') || header.includes('NOTE VALUE')) colMap['invoice_value'] = index;
+        else if (header.match(/TAX PERIOD|RETURN PERIOD|MONTH/)) colMap['return_period'] = index;
+
+        else if (header.includes('INVOICE VALUE') || header.includes('NOTE VALUE') || header.includes('INVOICE AMT')) colMap['invoice_value'] = index;
         else if (header.includes('PLACE OF SUPPLY')) colMap['place_of_supply'] = index;
-        else if (header.includes('REVERSE CHARGE')) colMap['reverse_charge'] = index;
-        else if (header.includes('TAXABLE VALUE')) colMap['taxable_value'] = index;
-        else if (header.includes('INTEGRATED TAX')) colMap['igst_amount'] = index;
-        else if (header.includes('CENTRAL TAX')) colMap['cgst_amount'] = index;
-        else if (header.includes('STATE/UT TAX')) colMap['sgst_amount'] = index;
+        else if (header.match(/REVERSE CHARGE|RCM|REV.? CHARGE/)) colMap['reverse_charge'] = index;
+        else if (header.includes('TAXABLE VALUE') || header.includes('TAXABLE AMT')) colMap['taxable_value'] = index;
+        else if (header.includes('INTEGRATED TAX') || (header.includes('TAX AMT') && header.includes('IGST'))) colMap['igst_amount'] = index;
+        else if (header.includes('CENTRAL TAX') || (header.includes('TAX AMT') && header.includes('CGST'))) colMap['cgst_amount'] = index;
+        else if (header.includes('STATE/UT TAX') || (header.includes('TAX AMT') && header.includes('SGST'))) colMap['sgst_amount'] = index;
         else if (header.includes('CESS AMOUNT') || header.includes('CESS')) colMap['cess_amount'] = index;
+        
+        // Handle generic 'Tax AMT' when detailed split isn't available
+        else if (header === 'TAX AMT' || header === 'TAX AMOUNT') colMap['total_tax_amount'] = index;
+        else if (header === 'TAX %' || header === 'TAX RATE') colMap['tax_rate_percentage'] = index;
 
         // GSTR-2B Specifics
-        else if (header.includes('GSTR-1/IFF/GSTR-5 PERIOD')) colMap['filing_period'] = index;
-        else if (header.includes('FILING DATE')) colMap['filing_date'] = index;
+        else if (header.match(/GSTR-1\/IFF\/GSTR-5 PERIOD|FILING PERIOD|SUPPLIER FILING PERIOD/)) colMap['filing_period'] = index;
+        else if (header.match(/FILING DATE|SUPPLIER FILING DATE/)) colMap['filing_date'] = index;
+        else if (header.match(/^STATUS$|RECONCILED STATUS|RECONCILIATION STATUS|RECON STATUS/)) colMap['reconciliation_status'] = index;
         else if (header.includes('ITC AVAILABILITY')) colMap['itc_availability'] = index;
         else if (header.includes('REASON')) colMap['unavailability_reason'] = index;
         else if (header.includes('APPLICABLE % OF TAX RATE')) colMap['tax_rate_percentage'] = index;
@@ -117,6 +124,23 @@ const buildColumnMap = (headerRow) => {
 };
 
 /**
+ * Helper to determine Return Period from the row if available, parsing formats like 'Apr 2025' -> '042025'
+ */
+const parseTaxPeriod = (tp) => {
+    if (!tp) return null;
+    const str = tp.toString().trim();
+    if (/^\d{6}$/.test(str)) return str;
+    const match = str.match(/([a-zA-Z]{3})[\s-]*(\d{4})/);
+    if (match) {
+        const monthStr = match[1].toLowerCase();
+        const year = match[2];
+        const months = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+        if (months[monthStr]) return `${months[monthStr]}${year}`;
+    }
+    return str;
+};
+
+/**
  * Helper to determine Return Period from the first valid data row if not provided
  * or standardizes it to MMYYYY format.
  */
@@ -126,6 +150,32 @@ const extractReturnPeriod = (row, colMap, defaultPeriod) => {
     // We need '122025'
     // This function is placeholder if we need row-level extraction. gstr2bController should pass specific period.
     return defaultPeriod;
+};
+
+/**
+ * Mappping arbitrary extracted strings (even HTML dropdowns!) to valid DB Enums for Status
+ */
+const extractReconStatus = (val) => {
+    if (!val) return 'pending';
+    let str = val.toString();
+    
+    // If it's HTML, try to extract the text of the 'selected' option
+    if (str.includes('<select')) {
+        const match = str.match(/<option[^>]*selected[^>]*>([^<]*)<\/option>/i);
+        if (match && match[1]) {
+            str = match[1];
+        } else {
+            return 'pending'; // fallback if no default selected
+        }
+    }
+    
+    str = str.toLowerCase().trim();
+    if (str.includes('claim') && !str.includes('not')) return 'claimed';
+    if (str.includes('not') && str.includes('claim')) return 'not_to_be_claimed';
+    if (str.includes('wrong') || str.includes('portal') || str.includes('issue')) return 'wrong_entry_portal';
+    if (str.includes('eligible')) return 'not_eligible_for_claim';
+    
+    return 'pending';
 };
 
 const processedDataFactory = () => ({
@@ -197,22 +247,35 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
         // Skip empty or total/invalid rows
         if (!gstin || gstin.toUpperCase().includes('TOTAL') || !isValidGSTIN(gstin)) continue;
 
+        const rowReturnPeriod = colMap['return_period'] !== undefined ? parseTaxPeriod(row[colMap['return_period']]) : null;
+        
+        let igst = cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0);
+        let cgst = cleanAmount(colMap['cgst_amount'] !== undefined ? row[colMap['cgst_amount']] : 0);
+        let sgst = cleanAmount(colMap['sgst_amount'] !== undefined ? row[colMap['sgst_amount']] : 0);
+        
+        // Handle generic tax amount mapped without split using naive split or assume IGST if inter-state logic exists.
+        // For simplicity, we fallback to IGST if no split is there but total exists
+        if (colMap['total_tax_amount'] !== undefined && !igst && !cgst && !sgst) {
+            igst = cleanAmount(row[colMap['total_tax_amount']]);
+        }
+
         // Common Fields
         const commonData = {
             gstin_id: gstinId, // Foreign Key
-            return_period: fileReturnPeriod, // Partition Key
+            return_period: rowReturnPeriod || fileReturnPeriod, // Prefer row-level period format
             gstin_supplier: gstin,
             trade_name: colMap['trade_name'] !== undefined ? row[colMap['trade_name']] : null,
             place_of_supply: colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : null,
-            reverse_charge: colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().startsWith('Y') ? 'Y' : 'N') : 'N',
+            reverse_charge: colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Y' : 'N') : 'N',
             taxable_value: cleanAmount(colMap['taxable_value'] !== undefined ? row[colMap['taxable_value']] : 0),
-            igst_amount: cleanAmount(colMap['igst_amount'] !== undefined ? row[colMap['igst_amount']] : 0),
-            cgst_amount: cleanAmount(colMap['cgst_amount'] !== undefined ? row[colMap['cgst_amount']] : 0),
-            sgst_amount: cleanAmount(colMap['sgst_amount'] !== undefined ? row[colMap['sgst_amount']] : 0),
+            igst_amount: igst,
+            cgst_amount: cgst,
+            sgst_amount: sgst,
             cess_amount: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0),
             filing_period: colMap['filing_period'] !== undefined ? row[colMap['filing_period']] : null,
             filing_date: parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null),
-            itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().startsWith('Y') ? 'Yes' : 'No') : 'Yes',
+            reconciliation_status: colMap['reconciliation_status'] !== undefined ? extractReconStatus(row[colMap['reconciliation_status']]) : 'pending',
+            itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Yes' : 'No') : 'Yes',
             unavailability_reason: colMap['unavailability_reason'] !== undefined ? row[colMap['unavailability_reason']] : null,
 
             // IMS & Additional
