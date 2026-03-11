@@ -612,6 +612,25 @@ class ReconciliationModel {
         const countResult = await countQuery.first();
         const total = parseInt(countResult.total);
 
+        // --- Calculate filtered counts by status ---
+        const statusCountsQuery = query.clone()
+            .clearSelect()
+            .select('rr.match_status')
+            .count('* as count')
+            .groupBy('rr.match_status');
+        const statusCountsResult = await statusCountsQuery;
+
+        const summary = {
+            matched: 0,
+            mismatched: 0,
+            missing: 0
+        };
+        statusCountsResult.forEach(row => {
+            if (row.match_status === 'matched') summary.matched = parseInt(row.count);
+            else if (row.match_status === 'mismatched') summary.mismatched = parseInt(row.count);
+            else if (row.match_status === 'missing') summary.missing = parseInt(row.count);
+        });
+
         // --- Prepare Main Query ---
         query.select(
             'rr.*',
@@ -665,6 +684,7 @@ class ReconciliationModel {
 
         return {
             data: results,
+            summary,
             pagination: {
                 total,
                 page: parseInt(page),
