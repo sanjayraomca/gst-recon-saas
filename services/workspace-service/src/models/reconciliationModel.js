@@ -169,9 +169,9 @@ class ReconciliationModel {
             let mismatchedCount = 0;
             let missingCount = 0;
 
-            // Step 0: Filter out invoices without GSTIN for matching
-            const validPurchaseInvoices = purchaseInvoices.filter(p => !!this.normalizeGstin(p.supplier_gstin));
-            const validGstr2bInvoices = gstr2bInvoices.filter(g => !!this.normalizeGstin(g.supplier_gstin));
+            // Step 0: Include all invoices for matching (bypassing strict GSTIN filter for IMPG)
+            const validPurchaseInvoices = purchaseInvoices;
+            const validGstr2bInvoices = gstr2bInvoices;
 
             // Helper to map Books categories to Portal categories
             const mapCategory = (booksType) => {
@@ -198,13 +198,21 @@ class ReconciliationModel {
                 const match = validGstr2bInvoices.find(gstr2bInv => {
                     if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
 
-                    // 1. GSTIN Match
-                    const gstinMatch = this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin);
-                    if (!gstinMatch) return false;
-                    
-                    // 2. Category Match (Invoice vs Note)
                     const gCategory = gstr2bInv.document_category || 'INVOICE';
-                    if (pCategory !== gCategory) return false;
+
+                    // 1. GSTIN Match (Bypass for IMPORT)
+                    const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
+                    const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
+                    
+                    if (!gstinMatch && gCategory !== 'IMPORT') return false;
+                    
+                    // 2. Category Match (Invoice vs Note vs Import vs ISD)
+                    if (pCategory !== gCategory) {
+                        if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
+                            return false;
+                        }
+                    }
 
                     // 3. Invoice Number Match (Including Amendment check)
                     const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
@@ -298,13 +306,21 @@ class ReconciliationModel {
                 const match = validGstr2bInvoices.find(gstr2bInv => {
                     if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
 
-                    // 1. GSTIN Match
-                    const gstinMatch = this.normalizeGstin(purchaseInv.supplier_gstin) === this.normalizeGstin(gstr2bInv.supplier_gstin);
-                    if (!gstinMatch) return false;
+                    const gCategory = gstr2bInv.document_category || 'INVOICE';
+
+                    // 1. GSTIN Match (Bypass for IMPORT)
+                    const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
+                    const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
+                    
+                    if (!gstinMatch && gCategory !== 'IMPORT') return false;
                     
                     // 2. Category Match
-                    const gCategory = gstr2bInv.document_category || 'INVOICE';
-                    if (pCategory !== gCategory) return false;
+                    if (pCategory !== gCategory) {
+                        if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
+                            return false;
+                        }
+                    }
 
                     // 3. Amount + Date Match (Fuzzy)
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
@@ -623,7 +639,17 @@ class ReconciliationModel {
             'gi.document_value as gstr2b_invoice_total',
             'gi.taxable_value as gstr2b_taxable',
             knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax'),
-            knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr2b_tax_rate')
+            knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr2b_tax_rate'),
+            
+            // Dynamic GST & Tax Type Mappings
+            'gi.source_section as gstr2b_source_section',
+            'pi.voucher_type as purchase_voucher_type',
+            'gi.igst as gstr2b_igst',
+            'gi.cgst as gstr2b_cgst',
+            'gi.sgst as gstr2b_sgst',
+            'pi.total_igst_amount as purchase_igst',
+            'pi.total_cgst_amount as purchase_cgst',
+            'pi.total_sgst_amount as purchase_sgst'
         ).orderBy('rr.created_at', 'desc');
 
         // --- Apply Pagination/Export Mode ---

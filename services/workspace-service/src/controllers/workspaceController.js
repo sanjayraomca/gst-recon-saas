@@ -677,6 +677,19 @@ const getLatestPeriod = async (req, res) => {
     }
 };
 
+const getTaxPeriods = async (req, res) => {
+    try {
+        const periods = await knex('tax_periods')
+            .select('*')
+            .orderBy('year', 'desc')
+            .orderBy('month', 'desc');
+        return successResponse(res, periods, 'Tax periods fetched successfully');
+    } catch (error) {
+        console.error('getTaxPeriods Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 const updateWorkspace = async (req, res) => {
     try {
         const { id } = req.params;
@@ -731,5 +744,6 @@ module.exports = {
     inviteUser,
     getDashboardMetrics,
     getLatestPeriod,
+    getTaxPeriods,
     updateWorkspace
 };

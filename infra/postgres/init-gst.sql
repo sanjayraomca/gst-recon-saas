@@ -1520,15 +1520,6 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
 );
 
 
--- Seed data: Financial Years and Tax Periods
-INSERT INTO financial_years (id, fy_code, display_name, start_date, end_date, is_current)
-VALUES ('cceeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '2025-26', 'FY 2025-26', '2025-04-01', '2026-03-31', true)
-ON CONFLICT (fy_code) DO NOTHING;
-
-INSERT INTO tax_periods (id, fy_id, month, quarter, year, period_code, display_name, start_date, end_date)
-VALUES ('ddffffff-ffff-ffff-ffff-ffffffffffff', 'cceeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 6, 1, 2025, '2025-06', 'June 2025', '2025-06-01', '2025-06-30')
-ON CONFLICT (period_code) DO NOTHING;
-
 -- AI Reconciliation columns (idempotent migration)
 ALTER TABLE reconciliation_results
   ADD COLUMN IF NOT EXISTS matched_by VARCHAR(20) DEFAULT 'RULE',
