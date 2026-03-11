@@ -987,6 +987,29 @@ class GSTRImportController {
 
         return periodInsert.rows[0].id;
     }
+    /**
+     * Get active periods for a workspace
+     * GET /gst-import/active-periods
+     */
+    static async getActivePeriods(req, res) {
+        try {
+            const workspaceId = req.headers['x-workspace-id'] || req.query.workspace_id;
+
+            if (!workspaceId) {
+                return errorResponse(res, { message: 'Workspace ID is required', isCustom: true }, 400);
+            }
+
+            const activePeriods = await NormalizedGstr2bModel.getActivePeriods(workspaceId);
+
+            return successResponse(res, activePeriods, 'Active periods retrieved successfully');
+        } catch (error) {
+            console.error('[getActivePeriods] Error:', error);
+            return errorResponse(res, {
+                message: error.message || 'Internal Server Error',
+                isCustom: error.message?.includes('required'),
+            }, error.message?.includes('required') ? 400 : 500);
+        }
+    }
 }
 
 module.exports = GSTRImportController;
