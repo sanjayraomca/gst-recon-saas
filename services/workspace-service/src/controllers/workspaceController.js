@@ -690,6 +690,52 @@ const getTaxPeriods = async (req, res) => {
     }
 };
 
+const getDataDateRange = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+
+        // Queries to find min/max dates across different tables
+        const salesRange = await knex('sales_invoices')
+            .where('workspace_id', id)
+            .select(
+                knex.raw('MIN(invoice_date) as min_date'),
+                knex.raw('MAX(invoice_date) as max_date')
+            )
+            .first();
+
+        const purchaseRange = await knex('purchase_vouchers')
+            .where('workspace_id', id)
+            .select(
+                knex.raw('MIN(supplier_invoice_date) as min_date'),
+                knex.raw('MAX(supplier_invoice_date) as max_date')
+            )
+            .first();
+
+        const gstrRange = await knex('normalized_gstr2b_invoices')
+            .where('workspace_id', id)
+            .select(
+                knex.raw('MIN(document_date) as min_date'),
+                knex.raw('MAX(document_date) as max_date')
+            )
+            .first();
+
+        // Aggregate results
+        const minDates = [salesRange?.min_date, purchaseRange?.min_date, gstrRange?.min_date].filter(Boolean);
+        const maxDates = [salesRange?.max_date, purchaseRange?.max_date, gstrRange?.max_date].filter(Boolean);
+
+        const absoluteMin = minDates.length > 0 ? new Date(Math.min(...minDates.map(d => new Date(d)))) : null;
+        const absoluteMax = maxDates.length > 0 ? new Date(Math.max(...maxDates.map(d => new Date(d)))) : null;
+
+        return successResponse(res, {
+            min_date: absoluteMin ? absoluteMin.toISOString().split('T')[0] : null,
+            max_date: absoluteMax ? absoluteMax.toISOString().split('T')[0] : null
+        }, 'Data date range fetched successfully');
+    } catch (error) {
+        console.error('getDataDateRange Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 const updateWorkspace = async (req, res) => {
     try {
         const { id } = req.params;
@@ -745,5 +791,6 @@ module.exports = {
     getDashboardMetrics,
     getLatestPeriod,
     getTaxPeriods,
+    getDataDateRange,
     updateWorkspace
 };
