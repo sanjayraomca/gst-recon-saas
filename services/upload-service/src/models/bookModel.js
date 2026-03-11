@@ -12,12 +12,15 @@ class BookModel {
      * @param {Array} invoices - Array of processed sales invoices { header, items }
      */
     static async bulkInsertSales(invoices) {
-        if (!invoices || invoices.length === 0) return { inserted: 0 };
+        if (!invoices || invoices.length === 0) return { inserted: 0, addedInvoices: [], duplicateInvoices: [] };
 
         const trx = await db.transaction();
         try {
             let totalProcessed = 0;
             let totalInserted = 0;
+            const addedInvoices = [];
+            const duplicateInvoices = [];
+            
             for (const inv of invoices) {
                 const { header, items } = inv;
                 const spName = `sales_${totalProcessed++}`;
@@ -31,6 +34,7 @@ class BookModel {
                     }
 
                     // Insert/Update Header
+                    // Using xmax to determine if row was inserted (0) or updated (>0)
                     const headerRes = await trx.raw(`
                         INSERT INTO sales_invoices (
                             tenant_id, workspace_id, tax_period_id, invoice_type, 
@@ -50,7 +54,7 @@ class BookModel {
                             is_amendment = EXCLUDED.is_amendment,
                             round_off = EXCLUDED.round_off,
                             updated_at = NOW()
-                        RETURNING id
+                        RETURNING id, (xmax = 0) AS is_inserted
                     `, [
                         header.tenant_id, header.workspace_id, header.tax_period_id || null, header.invoice_type,
                         header.invoice_number, header.invoice_date, header.book_type || 'SA', header.customer_name || null, header.customer_gstin || null,
@@ -60,6 +64,14 @@ class BookModel {
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;
+                    const isInserted = headerRes.rows[0].is_inserted;
+
+                    if (isInserted) {
+                        addedInvoices.push(header.invoice_number);
+                        totalInserted++; // Only increment for truly new inserts
+                    } else {
+                        duplicateInvoices.push(header.invoice_number);
+                    }
 
                     // Full Replace Strategy for Items
                     await trx('sales_invoice_items').where('invoice_id', invoiceId).del();
@@ -85,14 +97,14 @@ class BookModel {
                     }
                     
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
-                    totalInserted++;
+                    
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
                     console.warn(`[BookModel] Skipped sales invoice ${header.invoice_number} due to error: ${rowErr.message}`);
                 }
             }
             await trx.commit();
-            return { inserted: totalInserted };
+            return { inserted: totalInserted, addedInvoices, duplicateInvoices };
         } catch (error) {
             await trx.rollback();
             console.error('[BookModel] Error in bulkInsertSales:', error);
@@ -105,12 +117,15 @@ class BookModel {
      * @param {Array} vouchers - Array of processed vouchers { header, items }
      */
     static async bulkInsertPurchase(vouchers) {
-        if (!vouchers || vouchers.length === 0) return { inserted: 0 };
+        if (!vouchers || vouchers.length === 0) return { inserted: 0, addedInvoices: [], duplicateInvoices: [] };
 
         const trx = await db.transaction();
         try {
             let totalProcessed = 0;
             let totalInserted = 0;
+            const addedInvoices = [];
+            const duplicateInvoices = [];
+
             for (const v of vouchers) {
                 const { header, items } = v;
                 const spName = `voucher_${totalProcessed++}`;
@@ -139,11 +154,6 @@ class BookModel {
                             header.supplier_gstin = null;
                         }
                     }
-
-                    // Insert/Update Header
-                    // Inconsistency note: init-gst.sql doesn't show a unique constraint for purchase_vouchers
-                    // We'll use a standard insert and handle it as a new record for now, or use a heuristic.
-                    // However, to keep it "same as GSTR-2B", a constraint would be ideal.
 
                     const headerRes = await trx.raw(`
                         INSERT INTO purchase_vouchers (
@@ -176,7 +186,7 @@ class BookModel {
                             total_cess_amount = EXCLUDED.total_cess_amount,
                             itc_eligible = EXCLUDED.itc_eligible,
                             updated_at = NOW()
-                        RETURNING id
+                        RETURNING id, (xmax = 0) AS is_inserted
                      `, [
                         header.tenant_id, header.workspace_id, header.tax_period_id || null, header.voucher_type || null, header.book_type || 'SR',
                         String(header.supplier_invoice_no || '').substring(0, 50), header.supplier_invoice_date || null, String(header.supplier_name || '').substring(0, 255), header.supplier_gstin || null,
@@ -189,6 +199,14 @@ class BookModel {
                     ]);
 
                     const voucherId = headerRes.rows[0].id;
+                    const isInserted = headerRes.rows[0].is_inserted;
+
+                    if (isInserted) {
+                        addedInvoices.push(header.supplier_invoice_no);
+                        totalInserted++; // Only increment for truly new inserts
+                    } else {
+                        duplicateInvoices.push(header.supplier_invoice_no);
+                    }
 
                     // Replace Strategy for Items
                     await trx('purchase_items').where('purchase_id', voucherId).del();
@@ -213,14 +231,13 @@ class BookModel {
                     }
                     
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
-                    totalInserted++;
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
                     console.warn(`[BookModel] Skipped voucher ${header.supplier_invoice_no} due to error: ${rowErr.message}`);
                 }
             }
             await trx.commit();
-            return { inserted: totalInserted };
+            return { inserted: totalInserted, addedInvoices, duplicateInvoices };
         } catch (error) {
             await trx.rollback();
             console.error('[BookModel] Error in bulkInsertPurchase:', error);

@@ -353,7 +353,7 @@ class GSTRImportModel {
      * @returns {Promise<{ inserted: number }>} Count of actually inserted rows
      */
     static async batchInsertB2BInvoices(invoices) {
-        return this.batchInsertToTable('gstr_2b_b2b_invoices', invoices, '(tenant_id, invoice_number, return_period)');
+        return this.batchInsertToTable('gstr_2b_b2b_invoices', invoices, '(tenant_id, invoice_number, return_period)', 'invoice_number');
     }
 
     /**
@@ -361,7 +361,7 @@ class GSTRImportModel {
      * @param {Array} invoices 
      */
     static async batchInsertB2BAInvoices(invoices) {
-        return this.batchInsertToTable('gstr_2b_b2ba_invoices', invoices, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)');
+        return this.batchInsertToTable('gstr_2b_b2ba_invoices', invoices, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)', 'revised_invoice_number');
     }
 
     /**
@@ -369,7 +369,7 @@ class GSTRImportModel {
      * @param {Array} notes 
      */
     static async batchInsertCDNR(notes) {
-        return this.batchInsertToTable('gstr_2b_cdnr', notes, '(tenant_id, note_number, return_period)');
+        return this.batchInsertToTable('gstr_2b_cdnr', notes, '(tenant_id, note_number, return_period)', 'note_number');
     }
 
     /**
@@ -377,7 +377,7 @@ class GSTRImportModel {
      * @param {Array} notes 
      */
     static async batchInsertCDNRA(notes) {
-        return this.batchInsertToTable('gstr_2b_cdnra', notes, '(tenant_id, original_note_number, revised_note_number, return_period)');
+        return this.batchInsertToTable('gstr_2b_cdnra', notes, '(tenant_id, original_note_number, revised_note_number, return_period)', 'revised_note_number');
     }
 
     /**
@@ -385,7 +385,7 @@ class GSTRImportModel {
      * @param {Array} imports 
      */
     static async batchInsertIMPG(imports) {
-        return this.batchInsertToTable('gstr_2b_impg', imports, '(tenant_id, boe_number, port_code, return_period)');
+        return this.batchInsertToTable('gstr_2b_impg', imports, '(tenant_id, boe_number, port_code, return_period)', 'boe_number');
     }
 
     /**
@@ -393,7 +393,7 @@ class GSTRImportModel {
      * @param {Array} records 
      */
     static async batchInsertISD(records) {
-        return this.batchInsertToTable('gstr_2b_isd', records, '(tenant_id, gstin_isd, document_number, return_period)');
+        return this.batchInsertToTable('gstr_2b_isd', records, '(tenant_id, gstin_isd, document_number, return_period)', 'document_number');
     }
 
     // ─── GSTR-2A Section ──────────────────────────────────────────────────
@@ -402,52 +402,53 @@ class GSTRImportModel {
      * Batch insert GSTR-2A B2B invoices
      */
     static async batchInsertB2BInvoices2A(invoices) {
-        return this.batchInsertToTable('gstr_2a_b2b_invoices', invoices, '(tenant_id, invoice_number, return_period)');
+        return this.batchInsertToTable('gstr_2a_b2b_invoices', invoices, '(tenant_id, invoice_number, return_period)', 'invoice_number');
     }
 
     /**
      * Batch insert GSTR-2A B2BA invoices
      */
     static async batchInsertB2BAInvoices2A(invoices) {
-        return this.batchInsertToTable('gstr_2a_b2ba_invoices', invoices, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)');
+        return this.batchInsertToTable('gstr_2a_b2ba_invoices', invoices, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)', 'revised_invoice_number');
     }
 
     /**
      * Batch insert GSTR-2A CDNR
      */
     static async batchInsertCDNR2A(notes) {
-        return this.batchInsertToTable('gstr_2a_cdnr', notes, '(tenant_id, note_number, return_period)');
+        return this.batchInsertToTable('gstr_2a_cdnr', notes, '(tenant_id, note_number, return_period)', 'note_number');
     }
 
     /**
      * Batch insert GSTR-2A CDNRA
      */
     static async batchInsertCDNRA2A(notes) {
-        return this.batchInsertToTable('gstr_2a_cdnra', notes, '(tenant_id, original_note_number, revised_note_number, return_period)');
+        return this.batchInsertToTable('gstr_2a_cdnra', notes, '(tenant_id, original_note_number, revised_note_number, return_period)', 'revised_note_number');
     }
 
     /**
      * Batch insert GSTR-2A IMPG
      */
     static async batchInsertIMPG2A(imports) {
-        return this.batchInsertToTable('gstr_2a_impg', imports, '(tenant_id, boe_number, port_code, return_period)');
+        return this.batchInsertToTable('gstr_2a_impg', imports, '(tenant_id, boe_number, port_code, return_period)', 'boe_number');
     }
 
     /**
      * Batch insert GSTR-2A ISD
      */
     static async batchInsertISD2A(records) {
-        return this.batchInsertToTable('gstr_2a_isd', records, '(tenant_id, gstin_isd, document_number, return_period)');
+        return this.batchInsertToTable('gstr_2a_isd', records, '(tenant_id, gstin_isd, document_number, return_period)', 'document_number');
     }
 
     /**
      * Generic helper for batch insertions with ON CONFLICT DO NOTHING
      */
-    static async batchInsertToTable(tableName, records, conflictTarget) {
-        if (!records || records.length === 0) return { inserted: 0 };
+    static async batchInsertToTable(tableName, records, conflictTarget, returningCol = 'id') {
+        if (!records || records.length === 0) return { inserted: 0, addedInvoices: [] };
 
         const batchSize = 500;
         let totalInserted = 0;
+        const addedInvoices = [];
 
         for (let i = 0; i < records.length; i += batchSize) {
             const batch = records.slice(i, i + batchSize);
@@ -460,18 +461,21 @@ class GSTRImportModel {
                 VALUES ${placeholders}
                 ON CONFLICT ${conflictTarget}
                 DO NOTHING
+                RETURNING ${returningCol}
             `;
 
             try {
                 const result = await db.raw(query, values);
-                totalInserted += result.rowCount || 0;
+                const insertedRows = result.rows || [];
+                totalInserted += insertedRows.length;
+                addedInvoices.push(...insertedRows.map(r => r[returningCol]));
             } catch (error) {
                 console.error(`[MODEL] Error in batchInsertToTable for ${tableName}:`, error);
                 throw error;
             }
         }
 
-        return { inserted: totalInserted };
+        return { inserted: totalInserted, addedInvoices };
     }
 
     /**

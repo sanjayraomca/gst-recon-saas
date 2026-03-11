@@ -378,7 +378,7 @@ class NormalizedGstr2bModel {
         const conditions = ['workspace_id = ?'];
         const params = [workspaceId];
 
-        if (returnPeriod) {
+        if (returnPeriod && returnPeriod !== 'ALL') {
             if (returnPeriod.startsWith('Q')) {
                 const q = returnPeriod.substring(1, 2);
                 const year = parseInt(returnPeriod.substring(2));
@@ -531,7 +531,7 @@ class NormalizedGstr2bModel {
         const conditions = ['workspace_id = ?'];
         const params = [workspaceId];
 
-        if (returnPeriod) {
+        if (returnPeriod && returnPeriod !== 'ALL') {
             if (returnPeriod.startsWith('Q')) {
                 const q = returnPeriod.substring(1, 2);
                 const year = parseInt(returnPeriod.substring(2));

@@ -263,7 +263,9 @@ class BookImportController {
 
             // 8. Update Status
             await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Completed', result.inserted, {
-                minioPath: minioResult.objectPath
+                minioPath: minioResult.objectPath,
+                added_invoices: result.addedInvoices,
+                duplicate_invoices: result.duplicateInvoices
             });
 
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
@@ -278,7 +280,7 @@ class BookImportController {
                 req
             });
 
-            const message = `Import Successful: ${result.inserted} records have been added to your ${type.toLowerCase()} register.`;
+            const message = `Import Successful: ${result.inserted} records have been added to your ${type.toLowerCase()} register, and ${result.duplicateInvoices.length} duplicates were skipped/updated.`;
 
             if (upload_id) {
                 await progressEmitter.emitProgress(upload_id, 100, 'Completed');
@@ -287,6 +289,8 @@ class BookImportController {
             return successResponse(res, {
                 message,
                 total_records: result.inserted,
+                added_invoices: result.addedInvoices,
+                duplicate_invoices: result.duplicateInvoices,
                 import_id: importRecord.import_filing_id
             }, message);
 

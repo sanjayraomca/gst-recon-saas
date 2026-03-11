@@ -49,7 +49,7 @@ class BookDataModel {
      * Supports YYYY-MM and YYYY-QX formats.
      */
     static _addPeriodFilter(q, period, dateCol) {
-        if (!period) return q;
+        if (!period || period === 'ALL') return q;
 
         // quarterly format: 2017-Q1 or Q1-2017 or Q12017
         if (period.includes('Q') || period.startsWith('Q')) {

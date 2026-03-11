@@ -274,6 +274,8 @@ class GSTRImportController {
 
             // Per-section counters (Task 6)
             const sectionCounters = { b2b: 0, b2ba: 0, cdnr: 0, cdnra: 0, impg: 0, isd: 0, normalized: 0 };
+            const allAddedInvoices = [];
+            const allDuplicateInvoices = [];
 
             // Mark as Processing (Task 7)
             await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Processing');
@@ -442,7 +444,7 @@ class GSTRImportController {
                                     await GstinMasterService.ensureMultiple(supplierGstins);
                                 }
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2B', sheetName);
-                                const { inserted } = isGstr2a
+                                const { inserted, addedInvoices } = isGstr2a
                                     ? await GSTRImportModel.batchInsertB2BInvoices2A(b2bInvoices)
                                     : await GSTRImportModel.batchInsertB2BInvoices(b2bInvoices);
 
@@ -453,13 +455,21 @@ class GSTRImportController {
                                 sectionCounters.b2b += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
+
+                                // Tracking duplicates
+                                allAddedInvoices.push(...addedInvoices);
+                                const addedSet = new Set(addedInvoices);
+                                b2bInvoices.forEach(inv => {
+                                    if (!addedSet.has(inv.invoice_number)) allDuplicateInvoices.push(inv.invoice_number);
+                                });
+
                                 totalSkipped += b2bInvoices.length - inserted;
                                 totalRecords += b2bInvoices.length;
                                 await GSTRImportModel.finishImportLog(logId, { rowsFound: b2bInvoices.length, rowsInserted: inserted, rowsSkipped: b2bInvoices.length - inserted, rowsNormalized: normIns });
                             }
                             if (b2baInvoices.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2BA', sheetName);
-                                const { inserted } = isGstr2a
+                                const { inserted, addedInvoices } = isGstr2a
                                     ? await GSTRImportModel.batchInsertB2BAInvoices2A(b2baInvoices)
                                     : await GSTRImportModel.batchInsertB2BAInvoices(b2baInvoices);
 
@@ -470,13 +480,20 @@ class GSTRImportController {
                                 sectionCounters.b2ba += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
+
+                                allAddedInvoices.push(...addedInvoices);
+                                const addedSet = new Set(addedInvoices);
+                                b2baInvoices.forEach(inv => {
+                                    if (!addedSet.has(inv.revised_invoice_number)) allDuplicateInvoices.push(inv.revised_invoice_number);
+                                });
+
                                 totalSkipped += b2baInvoices.length - inserted;
                                 totalRecords += b2baInvoices.length;
                                 await GSTRImportModel.finishImportLog(logId, { rowsFound: b2baInvoices.length, rowsInserted: inserted, rowsSkipped: b2baInvoices.length - inserted, rowsNormalized: normIns });
                             }
                             if (cdnrNotes.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNR', sheetName);
-                                const { inserted } = isGstr2a
+                                const { inserted, addedInvoices } = isGstr2a
                                     ? await GSTRImportModel.batchInsertCDNR2A(cdnrNotes)
                                     : await GSTRImportModel.batchInsertCDNR(cdnrNotes);
 
@@ -487,6 +504,13 @@ class GSTRImportController {
                                 sectionCounters.cdnr += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
+
+                                allAddedInvoices.push(...addedInvoices);
+                                const addedSet = new Set(addedInvoices);
+                                cdnrNotes.forEach(inv => {
+                                    if (!addedSet.has(inv.note_number)) allDuplicateInvoices.push(inv.note_number);
+                                });
+
                                 totalSkipped += cdnrNotes.length - inserted;
                                 totalRecords += cdnrNotes.length;
                                 await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnrNotes.length, rowsInserted: inserted, rowsSkipped: cdnrNotes.length - inserted, rowsNormalized: normIns });
@@ -611,6 +635,12 @@ class GSTRImportController {
                     finalStatus,
                     `${totalInserted} inserted, ${totalSkipped} skipped across all sections`
                 );
+                
+                // Update master record with added/duplicate info in extra_info
+                await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, finalStatus, totalInserted, {
+                    added_invoices: allAddedInvoices,
+                    duplicate_invoices: allDuplicateInvoices
+                });
 
                 importRecord.status = finalStatus;
                 importRecord.total_record = totalInserted;
@@ -655,7 +685,9 @@ class GSTRImportController {
                 total_record: importRecord.total_record,
                 is_update: isUpdate,
                 new_records: totalInserted,
-                skipped_records: totalSkipped
+                skipped_records: totalSkipped,
+                added_invoices: allAddedInvoices,
+                duplicate_invoices: allDuplicateInvoices
             }, message);
 
         } catch (error) {
