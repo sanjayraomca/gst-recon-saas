@@ -320,44 +320,29 @@ class BookImportController {
     }
 
 
-    // 2. Create Tax Period
-    const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
-    const dateObj = new Date(year, month, 0); // Last day of month
-    const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
-    const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
-    const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-
-    const periodInsert = await db.raw(
-        `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?) RETURNING id`,
-        [fyId, month, year, returnPeriod, displayName, startDate, endDate, quarter]
-    );
-
-        return periodInsert.rows[0].id;
-    }
 
     /**
      * Iterates over processed documents and assigns tax_period_id and filing_period
      * dynamically based on the invoice_date.
      */
     static async assignDynamicPeriods(documents, db) {
-    const periodCache = {};
-    for (const doc of documents) {
-        const dateStr = doc.header.invoice_date || doc.header.supplier_invoice_date;
-        if (dateStr) {
-            // dateStr is guaranteed to be YYYY-MM-DD from parseDate
-            const [yyyy, mm] = dateStr.split('-');
-            if (yyyy && mm) {
-                const mmyyyy = `${mm}${yyyy}`;
-                if (!periodCache[mmyyyy]) {
-                    periodCache[mmyyyy] = await BookImportController.ensureTaxPeriodExists(mmyyyy, db);
+        const periodCache = {};
+        for (const doc of documents) {
+            const dateStr = doc.header.invoice_date || doc.header.supplier_invoice_date;
+            if (dateStr) {
+                // dateStr is guaranteed to be YYYY-MM-DD from parseDate
+                const [yyyy, mm] = dateStr.split('-');
+                if (yyyy && mm) {
+                    const mmyyyy = `${mm}${yyyy}`;
+                    if (!periodCache[mmyyyy]) {
+                        periodCache[mmyyyy] = await TaxPeriodService.ensureTaxPeriodExists(mmyyyy, db);
+                    }
+                    doc.header.tax_period_id = periodCache[mmyyyy];
+                    doc.header.filing_period = mmyyyy;
                 }
-                doc.header.tax_period_id = periodCache[mmyyyy];
-                doc.header.filing_period = mmyyyy;
             }
         }
     }
-}
 }
 
 module.exports = BookImportController;
