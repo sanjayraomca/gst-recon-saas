@@ -102,6 +102,9 @@ router.get('/import/progress', verifyToken, GSTRImportController.getUploadProgre
 // Get import history
 router.get('/import/history', verifyToken, GSTRImportController.getImportHistory);
 
+// Get active periods
+router.get('/active-periods', verifyToken, GSTRImportController.getActivePeriods);
+
 // Get specific import details
 router.get('/import/:import_filing_id', verifyToken, GSTRImportController.getImportById);
 

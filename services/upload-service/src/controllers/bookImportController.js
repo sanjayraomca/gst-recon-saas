@@ -109,9 +109,8 @@ class BookImportController {
                 }
             }
 
-            // 3. Resolve Tax Period ID
+            // taxPeriodId resolution is moved to dynamic per-record mapping below
             const returnPeriodStr = return_period.toString();
-            const taxPeriodId = await BookImportController.ensureTaxPeriodExists(returnPeriodStr, db);
 
             // 6. Duplicate Check by Hash
             console.log(`[DEBUG] Computing file hash for ${uploadedFilePath}`);
@@ -225,8 +224,10 @@ class BookImportController {
             let result;
             if (type === 'SALES' || type === 'SALES_RETURN') {
                 console.log(`[DEBUG] Starting processSalesSheet for ` + type);
-                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
+                const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceUuid, null, null, expectedGstin, type);
                 console.log(`[DEBUG] processSalesSheet completed. Count=${invoices.length}`);
+
+                await BookImportController.assignDynamicPeriods(invoices, db);
 
                 if (upload_id) {
                     await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
@@ -234,8 +235,10 @@ class BookImportController {
                 result = await BookModel.bulkInsertSales(invoices);
             } else if (type === 'PURCHASE' || type === 'PURCHASE_RETURN') {
                 console.log(`[DEBUG] Starting processPurchaseSheet for ` + type);
-                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, taxPeriodId, return_period, expectedGstin, type);
+                const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, null, null, expectedGstin, type);
                 console.log(`[DEBUG] processPurchaseSheet completed. Count=${vouchers.length}`);
+
+                await BookImportController.assignDynamicPeriods(vouchers, db);
 
                 if (upload_id) {
                     await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
@@ -369,6 +372,29 @@ class BookImportController {
         );
 
         return periodInsert.rows[0].id;
+    }
+
+    /**
+     * Iterates over processed documents and assigns tax_period_id and filing_period
+     * dynamically based on the invoice_date.
+     */
+    static async assignDynamicPeriods(documents, db) {
+        const periodCache = {};
+        for (const doc of documents) {
+            const dateStr = doc.header.invoice_date || doc.header.supplier_invoice_date;
+            if (dateStr) {
+                // dateStr is guaranteed to be YYYY-MM-DD from parseDate
+                const [yyyy, mm] = dateStr.split('-');
+                if (yyyy && mm) {
+                    const mmyyyy = `${mm}${yyyy}`;
+                    if (!periodCache[mmyyyy]) {
+                        periodCache[mmyyyy] = await BookImportController.ensureTaxPeriodExists(mmyyyy, db);
+                    }
+                    doc.header.tax_period_id = periodCache[mmyyyy];
+                    doc.header.filing_period = mmyyyy;
+                }
+            }
+        }
     }
 }
 
