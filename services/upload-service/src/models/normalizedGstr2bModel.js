@@ -64,7 +64,7 @@ class NormalizedGstr2bModel {
             itc_available: r.itc_availability === 'Yes',
             itc_eligibility: r.itc_availability || null,
             itc_reason: r.itc_availability_reason || null,
-            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) : 
+            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) :
                 (r.taxable_value > 0 ? Math.round(((parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0)) / parseFloat(r.taxable_value) * 100) : null),
             return_period: returnPeriod,
             filing_period: r.supplier_filing_period || null,
@@ -109,7 +109,7 @@ class NormalizedGstr2bModel {
             total_tax: (parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0),
             itc_available: r.itc_availability === 'Yes',
             itc_eligibility: r.itc_availability || null,
-            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) : 
+            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) :
                 (r.taxable_value > 0 ? Math.round(((parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0)) / parseFloat(r.taxable_value) * 100) : null),
             return_period: returnPeriod,
             filing_period: r.supplier_filing_period || null,
@@ -154,7 +154,7 @@ class NormalizedGstr2bModel {
                 itc_available: r.itc_availability === 'Yes',
                 itc_eligibility: r.itc_availability || null,
                 itc_reason: r.itc_availability_reason || null,
-                applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) : 
+                applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) :
                     (r.taxable_value > 0 ? Math.round(((parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0)) / parseFloat(r.taxable_value) * 100) : null),
                 return_period: returnPeriod,
                 filing_period: r.supplier_filing_period || null,
@@ -200,7 +200,7 @@ class NormalizedGstr2bModel {
                 total_tax: (parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0),
                 itc_available: r.itc_availability === 'Yes',
                 itc_eligibility: r.itc_availability || null,
-                applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) : 
+                applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) :
                     (r.taxable_value > 0 ? Math.round(((parseFloat(r.integrated_tax) || 0) + (parseFloat(r.central_tax) || 0) + (parseFloat(r.state_ut_tax) || 0) + (parseFloat(r.cess) || 0)) / parseFloat(r.taxable_value) * 100) : null),
                 return_period: returnPeriod,
                 filing_period: r.supplier_filing_period || null,
@@ -236,7 +236,7 @@ class NormalizedGstr2bModel {
             total_tax: (parseFloat(r.integrated_tax) || 0) + (parseFloat(r.cess) || 0),
             itc_available: r.itc_availability === 'Yes',
             itc_reason: r.itc_availability_reason || null,
-            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) : 
+            applicable_tax_rate_percent: (r.applicable_tax_rate && parseFloat(r.applicable_tax_rate) < 100) ? parseFloat(r.applicable_tax_rate) :
                 (r.taxable_value > 0 ? Math.round(((parseFloat(r.integrated_tax) || 0) + (parseFloat(r.cess) || 0)) / parseFloat(r.taxable_value) * 100) : null),
             return_period: returnPeriod,
             source_type: 'PORTAL',
@@ -616,6 +616,25 @@ class NormalizedGstr2bModel {
         );
 
         return result.rows;
+    }
+
+    /**
+     * Get active periods for a given workspace
+     * @param {string} workspaceId 
+     */
+    static async getActivePeriods(workspaceId) {
+        if (!workspaceId) throw new Error('workspaceId is required for getActivePeriods');
+
+        const result = await db.raw(
+            `SELECT 
+                MIN(document_date) as min_date,
+                MAX(document_date) as max_date
+             FROM v_gstr_listing 
+             WHERE workspace_id = ? AND document_date IS NOT NULL`,
+            [workspaceId]
+        );
+
+        return result.rows[0];
     }
 }
 
