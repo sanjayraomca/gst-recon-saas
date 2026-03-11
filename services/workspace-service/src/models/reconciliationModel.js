@@ -598,9 +598,16 @@ class ReconciliationModel {
         }
 
         if (period && period !== 'ALL') {
+            let periodToUse = period;
+            // Convert YYYY-MM to MMYYYY if needed
+            if (/^\d{4}-\d{2}$/.test(period)) {
+                const [year, month] = period.split('-');
+                periodToUse = `${month}${year}`;
+            }
+
             query.where(function () {
-                this.where('tp.period_code', period)
-                    .orWhere('gi.return_period', period);
+                this.where('tp.period_code', periodToUse)
+                    .orWhere('gi.return_period', periodToUse);
             });
         }
 
