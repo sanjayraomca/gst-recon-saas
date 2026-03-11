@@ -99,7 +99,8 @@ const getRunResults = async (req, res) => {
         console.log(`[getRunResults] returning ${result.data?.length} rows for runId=${runId}`);
 
         return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
-            pagination: result.pagination
+            pagination: result.pagination,
+            summary: result.summary
         });
     } catch (error) {
         console.error('Error fetching results:', error);

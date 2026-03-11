@@ -513,7 +513,8 @@ class ReconciliationModel {
             place_of_supply,
             page = 1,
             page_size = 50,
-            export_mode
+            export_mode,
+            period
         } = filters;
 
         // Verify run belongs to workspace
@@ -596,6 +597,13 @@ class ReconciliationModel {
             query.where('rr.variance_amount', '!=', 0);
         }
 
+        if (period && period !== 'ALL') {
+            query.where(function () {
+                this.where('tp.period_code', period)
+                    .orWhere('gi.return_period', period);
+            });
+        }
+
         if (search) {
             query.where(function () {
                 this.where('pi.supplier_name', 'ilike', `%${search}%`)
@@ -626,9 +634,14 @@ class ReconciliationModel {
             missing: 0
         };
         statusCountsResult.forEach(row => {
-            if (row.match_status === 'matched') summary.matched = parseInt(row.count);
-            else if (row.match_status === 'mismatched') summary.mismatched = parseInt(row.count);
-            else if (row.match_status === 'missing') summary.missing = parseInt(row.count);
+            const status = row.match_status;
+            if (status === 'matched') {
+                summary.matched = parseInt(row.count);
+            } else if (status === 'mismatch') {
+                summary.mismatched = parseInt(row.count);
+            } else if (['missing_in_2b', 'missing_in_books', 'not_eligible'].includes(status)) {
+                summary.missing += parseInt(row.count);
+            }
         });
 
         // --- Prepare Main Query ---
