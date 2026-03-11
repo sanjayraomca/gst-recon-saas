@@ -223,6 +223,10 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                 : (orgGstin && custGstinClean ? orgGstin.substring(0, 2) !== custGstinClean.substring(0, 2) : false);
             const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
 
+            // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
+            const dateParts = invDate.split('-');
+            const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
             invoiceMap.set(groupKey, {
                 header: {
                     tenant_id: tenantId,
@@ -245,7 +249,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     total_sgst: 0,
                     total_cess: 0,
                     total_invoice_value: 0,
-                    filing_period: returnPeriod || null,
+                    filing_period: derivedFilingPeriod,
                 },
                 items: []
             });
@@ -409,6 +413,10 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                 : (orgGstin && supplierGstinClean ? orgGstin.substring(0, 2) !== supplierGstinClean.substring(0, 2) : false);
             const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
 
+            // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
+            const dateParts = invDate.split('-');
+            const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
             voucherMap.set(groupKey, {
                 header: {
                     tenant_id: tenantId,
@@ -436,7 +444,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     net_amount: 0,
                     itc_eligible: true,
                     itc_claimed: false,
-                    filing_period: returnPeriod || null,
+                    filing_period: derivedFilingPeriod,
                 },
                 items: []
             });

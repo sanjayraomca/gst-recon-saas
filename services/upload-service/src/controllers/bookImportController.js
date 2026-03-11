@@ -9,6 +9,8 @@ const { processSalesSheet, processPurchaseSheet } = require('../utils/bookSheetP
 const crypto = require('crypto');
 const db = require('../../../shared/src/db/connection');
 const progressEmitter = require('../utils/progressEmitter');
+const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
+
 
 async function computeFileHash(filePath) {
     return new Promise((resolve, reject) => {
@@ -111,7 +113,8 @@ class BookImportController {
 
             // 3. Resolve Tax Period ID
             const returnPeriodStr = return_period.toString();
-            const taxPeriodId = await BookImportController.ensureTaxPeriodExists(returnPeriodStr, db);
+            const taxPeriodId = await TaxPeriodService.ensureTaxPeriodExists(returnPeriodStr, db);
+
 
             // 6. Duplicate Check by Hash
             console.log(`[DEBUG] Computing file hash for ${uploadedFilePath}`);
@@ -168,7 +171,8 @@ class BookImportController {
             }
 
             console.log(`[DEBUG] Calculating financial year for ${return_period}`);
-            const financialYear = BookImportController.calculateFinancialYear(return_period);
+            const financialYear = TaxPeriodService.calculateFinancialYear(return_period);
+
             const minioMetadata = {
                 tenantUuid,
                 gstin: 'SELF',
@@ -189,6 +193,7 @@ class BookImportController {
                 gstinRecipient: 'SELF',
                 returnPeriod: return_period,
                 financialYear,
+
                 generationDate: new Date(),
                 importType: IMPORT_TYPE,
                 originalFilename: req.file.originalname || 'unknown_file',
@@ -310,66 +315,7 @@ class BookImportController {
         return BookImportController.uploadBookData(req, res, 'PURCHASE_RETURN');
     }
 
-    /**
-     * Helper: Calculate financial year from return period (MMYYYY)
-     */
-    static calculateFinancialYear(returnPeriod) {
-        const month = parseInt(returnPeriod.substring(0, 2));
-        const year = parseInt(returnPeriod.substring(2));
 
-        if (month >= 4) {
-            return `${year}-${(year + 1).toString().substring(2)}`;
-        } else {
-            return `${year - 1}-${year.toString().substring(2)}`;
-        }
-    }
-
-    /**
-     * Ensure tax period exists in the database, creating it if necessary.
-     */
-    static async ensureTaxPeriodExists(returnPeriod, db) {
-        const periodMatch = await db.raw('SELECT id FROM tax_periods WHERE period_code = ? LIMIT 1', [returnPeriod]);
-        if (periodMatch.rows.length) {
-            return periodMatch.rows[0].id;
-        }
-
-        console.log(`[ensureTaxPeriodExists] Creating missing tax period: ${returnPeriod}`);
-        const month = parseInt(returnPeriod.substring(0, 2));
-        const year = parseInt(returnPeriod.substring(2));
-        const fyCode = BookImportController.calculateFinancialYear(returnPeriod);
-
-        // 1. Get or Create Financial Year
-        let fyId;
-        const fyMatch = await db.raw('SELECT id FROM financial_years WHERE fy_code = ? LIMIT 1', [fyCode]);
-        if (fyMatch.rows.length) {
-            fyId = fyMatch.rows[0].id;
-        } else {
-            const startYear = parseInt(fyCode.split('-')[0]);
-            const startDate = `${startYear}-04-01`;
-            const endDate = `${startYear + 1}-03-31`;
-            const fyInsert = await db.raw(
-                `INSERT INTO financial_years (fy_code, display_name, start_date, end_date) 
-                 VALUES (?, ?, ?, ?) RETURNING id`,
-                [fyCode, `FY ${fyCode}`, startDate, endDate]
-            );
-            fyId = fyInsert.rows[0].id;
-        }
-
-        // 2. Create Tax Period
-        const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
-        const dateObj = new Date(year, month, 0); // Last day of month
-        const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
-        const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
-        const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-
-        const periodInsert = await db.raw(
-            `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?) RETURNING id`,
-            [fyId, month, year, returnPeriod, displayName, startDate, endDate, quarter]
-        );
-
-        return periodInsert.rows[0].id;
-    }
 }
 
 module.exports = BookImportController;

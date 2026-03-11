@@ -375,6 +375,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./services/upload-service/src:/app/services/upload-service/src
+      - ./services/shared:/app/services/shared
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`) || PathPrefix(`/gst-import`)"

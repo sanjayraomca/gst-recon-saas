@@ -44,6 +44,47 @@ class BookDataModel {
         }
     }
 
+    /**
+     * _addPeriodFilter - Helper to apply period filtering to a knex query.
+     * Supports YYYY-MM and YYYY-QX formats.
+     */
+    static _addPeriodFilter(q, period, dateCol) {
+        if (!period) return q;
+
+        // quarterly format: 2017-Q1 or Q1-2017 or Q12017
+        if (period.includes('Q') || period.startsWith('Q')) {
+            let qNum, yr;
+            if (period.includes('-')) {
+                const parts = period.split('-');
+                if (parts[0].startsWith('Q')) {
+                    qNum = parseInt(parts[0].substring(1));
+                    yr = parts[1];
+                } else {
+                    yr = parts[0];
+                    qNum = parseInt(parts[1].substring(1));
+                }
+            } else {
+                // e.g. Q12017
+                qNum = parseInt(period.substring(1, 2));
+                yr = period.substring(2);
+            }
+
+            if (isNaN(qNum) || !yr) return q;
+
+            let months = [];
+            if (qNum === 1) months = ['04', '05', '06'];
+            else if (qNum === 2) months = ['07', '08', '09'];
+            else if (qNum === 3) months = ['10', '11', '12'];
+            else if (qNum === 4) months = ['01', '02', '03'];
+
+            const conditions = months.map(mo => `${yr}-${mo}`);
+            return q.whereRaw(`to_char(${dateCol}, 'YYYY-MM') = ANY(?)`, [conditions]);
+        }
+
+        // monthly format: YYYY-MM
+        return q.whereRaw(`to_char(${dateCol}, 'YYYY-MM') = ?`, [period]);
+    }
+
     static async getByType(workspaceId, bookTypeId, filters = {}, pagination = {}) {
         const resolved = BookDataModel._resolveType(bookTypeId);
         if (!resolved) throw new Error(`Unknown book type: ${bookTypeId}`);
@@ -63,23 +104,7 @@ class BookDataModel {
             if (resolved.invoiceTypes) q = q.whereIn('si.invoice_type', resolved.invoiceTypes);
             if (resolved.bookTypes) q = q.whereIn('si.book_type', resolved.bookTypes);
 
-            if (period) {
-                if (period.startsWith('Q')) {
-                    const q = parseInt(period.substring(1, 2));
-                    const yr = period.substring(2);
-                    let months = [];
-                    if (q === 1) months = ['04', '05', '06'];
-                    else if (q === 2) months = ['07', '08', '09'];
-                    else if (q === 3) months = ['10', '11', '12'];
-                    else if (q === 4) months = ['01', '02', '03'];
-                    
-                    const conditions = months.map(mo => `${yr}-${mo}`);
-                    q = q.whereRaw(`to_char(si.invoice_date, 'YYYY-MM') = ANY(?)`, [conditions]);
-                } else {
-                    const [yr, mo] = period.split('-');
-                    if (yr && mo) q = q.whereRaw(`to_char(si.invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
-                }
-            }
+            q = BookDataModel._addPeriodFilter(q, period, 'si.invoice_date');
             if (search) {
                 q = q.where(function () {
                     this.where('si.invoice_number', 'ilike', `%${search}%`)
@@ -153,23 +178,7 @@ class BookDataModel {
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
             if (resolved.bookTypes) q = q.whereIn('ev.book_type', resolved.bookTypes);
 
-            if (period) {
-                if (period.startsWith('Q')) {
-                    const q = parseInt(period.substring(1, 2));
-                    const yr = period.substring(2);
-                    let months = [];
-                    if (q === 1) months = ['04', '05', '06'];
-                    else if (q === 2) months = ['07', '08', '09'];
-                    else if (q === 3) months = ['10', '11', '12'];
-                    else if (q === 4) months = ['01', '02', '03'];
-                    
-                    const conditions = months.map(mo => `${yr}-${mo}`);
-                    q = q.whereRaw(`to_char(ev.supplier_invoice_date, 'YYYY-MM') = ANY(?)`, [conditions]);
-                } else {
-                    const [yr, mo] = period.split('-');
-                    if (yr && mo) q = q.whereRaw(`to_char(ev.supplier_invoice_date, 'YYYY-MM') = ?`, [`${yr}-${mo}`]);
-                }
-            }
+            q = BookDataModel._addPeriodFilter(q, period, 'ev.supplier_invoice_date');
             if (search) {
                 q = q.where(function () {
                     this.where('ev.supplier_invoice_no', 'ilike', `%${search}%`)
@@ -251,30 +260,6 @@ class BookDataModel {
      * Used by the grouped cards UI to show live counts + tax breakdown per type.
      */
     static async getSummary(workspaceId, period) {
-        const periodFilter = (alias, col) => {
-            if (!period) return '';
-            // period = 'YYYY-MM' OR 'YYYY-QN' handled client-side; backend expects YYYY-MM
-            return knex.raw(`AND to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
-        };
-
-        // Helper to parse period into SQL condition
-        const addPeriod = (q, alias, col) => {
-            if (!period) return q;
-            if (period.startsWith('Q')) {
-                const qNum = parseInt(period.substring(1, 2));
-                const yr = period.substring(2);
-                let months = [];
-                if (qNum === 1) months = ['04', '05', '06'];
-                else if (qNum === 2) months = ['07', '08', '09'];
-                else if (qNum === 3) months = ['10', '11', '12'];
-                else if (qNum === 4) months = ['01', '02', '03'];
-                
-                const conditions = months.map(mo => `${yr}-${mo}`);
-                return q.whereRaw(`to_char(${alias}.${col}, 'YYYY-MM') = ANY(?)`, [conditions]);
-            }
-            return q.whereRaw(`to_char(${alias}.${col}, 'YYYY-MM') = ?`, [period]);
-        };
-
         // --- Sales types ---
         const salesTypes = [
             { id: 'sales_invoice', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'], bookTypes: null },
@@ -287,7 +272,7 @@ class BookDataModel {
             let q = knex('sales_invoices as si').where('si.workspace_id', workspaceId);
             if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
             if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
-            q = addPeriod(q, 'si', 'invoice_date');
+            q = BookDataModel._addPeriodFilter(q, period, 'si.invoice_date');
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
                 knex.raw('COALESCE(SUM(si.total_taxable_value),0) as taxable'),
@@ -321,7 +306,7 @@ class BookDataModel {
             let q = knex('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
             if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
             if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
-            q = addPeriod(q, 'ev', 'supplier_invoice_date');
+            q = BookDataModel._addPeriodFilter(q, period, 'ev.supplier_invoice_date');
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
                 knex.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),
