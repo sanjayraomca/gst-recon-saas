@@ -113,11 +113,8 @@ class BookImportController {
 
             // taxPeriodId resolution is moved to dynamic per-record mapping below
             const returnPeriodStr = return_period.toString();
-<<<<<<< HEAD
             const taxPeriodId = await TaxPeriodService.ensureTaxPeriodExists(returnPeriodStr, db);
 
-=======
->>>>>>> fixing data import issue and gstr import issue
 
             // 6. Duplicate Check by Hash
             console.log(`[DEBUG] Computing file hash for ${uploadedFilePath}`);
