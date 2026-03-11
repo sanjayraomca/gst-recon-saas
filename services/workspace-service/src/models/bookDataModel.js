@@ -329,6 +329,28 @@ class BookDataModel {
 
         return { ...salesResults, ...purchaseResults };
     }
+
+    /**
+     * getById - retrieves a single document by ID from either sales or purchase tables.
+     */
+    static async getById(workspaceId, id) {
+        // Try purchase_vouchers first (since this is mostly used for reconciliation/vouchers)
+        let record = await knex('purchase_vouchers')
+            .where({ id, workspace_id: workspaceId })
+            .first();
+
+        if (record) {
+            // Fetch items/line details if needed, for now return main record
+            return record;
+        }
+
+        // Check sales_invoices
+        record = await knex('sales_invoices')
+            .where({ id, workspace_id: workspaceId })
+            .first();
+
+        return record || null;
+    }
 }
 
 module.exports = BookDataModel;

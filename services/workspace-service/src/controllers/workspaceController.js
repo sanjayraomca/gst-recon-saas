@@ -693,35 +693,48 @@ const getTaxPeriods = async (req, res) => {
 const getDataDateRange = async (req, res) => {
     try {
         const { id } = req.params; // workspace ID
+        const { type } = req.query; // 'books', 'gstr', or 'recon'
 
-        // Queries to find min/max dates across different tables
-        const salesRange = await knex('sales_invoices')
-            .where('workspace_id', id)
-            .select(
-                knex.raw('MIN(invoice_date) as min_date'),
-                knex.raw('MAX(invoice_date) as max_date')
-            )
-            .first();
+        let minDates = [];
+        let maxDates = [];
 
-        const purchaseRange = await knex('purchase_vouchers')
-            .where('workspace_id', id)
-            .select(
-                knex.raw('MIN(supplier_invoice_date) as min_date'),
-                knex.raw('MAX(supplier_invoice_date) as max_date')
-            )
-            .first();
+        // 1. Fetch Sales/Purchase dates if type is 'books' or 'recon'
+        if (!type || type === 'books' || type === 'recon') {
+            const salesRange = await knex('sales_invoices')
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(invoice_date) as min_date'),
+                    knex.raw('MAX(invoice_date) as max_date')
+                )
+                .first();
 
-        const gstrRange = await knex('normalized_gstr2b_invoices')
-            .where('workspace_id', id)
-            .select(
-                knex.raw('MIN(document_date) as min_date'),
-                knex.raw('MAX(document_date) as max_date')
-            )
-            .first();
+            const purchaseRange = await knex('purchase_vouchers')
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(supplier_invoice_date) as min_date'),
+                    knex.raw('MAX(supplier_invoice_date) as max_date')
+                )
+                .first();
 
-        // Aggregate results
-        const minDates = [salesRange?.min_date, purchaseRange?.min_date, gstrRange?.min_date].filter(Boolean);
-        const maxDates = [salesRange?.max_date, purchaseRange?.max_date, gstrRange?.max_date].filter(Boolean);
+            if (salesRange?.min_date) minDates.push(salesRange.min_date);
+            if (salesRange?.max_date) maxDates.push(salesRange.max_date);
+            if (purchaseRange?.min_date) minDates.push(purchaseRange.min_date);
+            if (purchaseRange?.max_date) maxDates.push(purchaseRange.max_date);
+        }
+
+        // 2. Fetch GSTR dates if type is 'gstr' or 'recon'
+        if (!type || type === 'gstr' || type === 'recon') {
+            const gstrRange = await knex('normalized_gstr2b_invoices')
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(document_date) as min_date'),
+                    knex.raw('MAX(document_date) as max_date')
+                )
+                .first();
+
+            if (gstrRange?.min_date) minDates.push(gstrRange.min_date);
+            if (gstrRange?.max_date) maxDates.push(gstrRange.max_date);
+        }
 
         const absoluteMin = minDates.length > 0 ? new Date(Math.min(...minDates.map(d => new Date(d)))) : null;
         const absoluteMax = maxDates.length > 0 ? new Date(Math.max(...maxDates.map(d => new Date(d)))) : null;
