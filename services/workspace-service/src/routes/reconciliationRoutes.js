@@ -52,7 +52,8 @@ router.get('/progress', getRunProgress);
 // --- Phase 4.3: Actions ---
 const {
     takeAction,
-    getPendingActions
+    getPendingActions,
+    updateReconStatus
 } = require('../controllers/reconciliationActionController');
 
 // POST /reconciliation/results/:result_id/actions
@@ -60,6 +61,9 @@ router.post('/results/:result_id/actions', takeAction);
 
 // GET /reconciliation/actions/pending
 router.get('/actions/pending', getPendingActions);
+
+// PUT /reconciliation/status/:result_id - Update reconciliation_status table
+router.put('/status/:result_id', updateReconStatus);
 
 // GET /reconciliation/runs/:run_id/results
 router.get('/runs/:run_id/results', getRunResults);
