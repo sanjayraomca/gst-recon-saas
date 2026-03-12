@@ -132,6 +132,15 @@ const updateReconStatus = async (req, res) => {
             statusRecord = inserted;
         }
 
+        // ── Also update reconciliation_results.action_status and match_action ──
+        await knex('reconciliation_results')
+            .where({ id: resultIdInt })
+            .update({
+                action_status: recon_status,
+                match_action: recon_status,
+                updated_at: knex.fn.now()
+            });
+
         await logActivity({
             userId,
             tenantId,

@@ -679,10 +679,11 @@ const getLatestPeriod = async (req, res) => {
 
 const getTaxPeriods = async (req, res) => {
     try {
-        const periods = await knex('tax_periods')
-            .select('*')
-            .orderBy('year', 'desc')
-            .orderBy('month', 'desc');
+        const periods = await knex('tax_periods as tp')
+            .leftJoin('financial_years as fy', 'tp.fy_id', 'fy.id')
+            .select('tp.*', 'fy.fy_code')
+            .orderBy('tp.year', 'desc')
+            .orderBy('tp.month', 'desc');
         return successResponse(res, periods, 'Tax periods fetched successfully');
     } catch (error) {
         console.error('getTaxPeriods Error:', error);
