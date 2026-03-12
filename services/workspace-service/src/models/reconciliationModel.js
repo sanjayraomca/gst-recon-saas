@@ -271,6 +271,7 @@ class ReconciliationModel {
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
                         match_status: finalStatus,
+                        match_action: finalStatus === 'not_eligible' ? 'not_eligible_for_claim' : 'pending',
                         match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
                         match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
                         books_value: pNet,
@@ -362,13 +363,14 @@ class ReconciliationModel {
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
                         match_status: finalStatus,
-                        match_score: finalStatus === 'matched' ? 90.00 : 60.00, // Slightly lower score since it's fuzzy
+                        match_action: finalStatus === 'not_eligible' ? 'not_eligible_for_claim' : 'pending',
+                        match_score: finalStatus === 'matched' ? 90.00 : 60.00,
                         match_confidence: 'LOW',
                         matched_by: 'FUZZY',
                         books_value: pNet,
                         portal_value: match.document_value || 0,
                         variance_amount: pNet - (match.document_value || 0),
-                        itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE', // Always require review for fuzzy match
+                        itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
                         decision_reason: `Fuzzy Match: Matched by amount and date (+/- 30 days)`,
                         action_required: 'REVIEW_MATCH',
                         action_status: 'PENDING',
@@ -388,6 +390,7 @@ class ReconciliationModel {
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
                     match_status: 'missing_in_2b',
+                    match_action: 'pending',
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
@@ -415,6 +418,7 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
                         match_status: isEligible ? 'missing_in_books' : 'not_eligible',
+                        match_action: isEligible ? 'pending' : 'not_eligible_for_claim',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
@@ -434,7 +438,55 @@ class ReconciliationModel {
 
             if (matchResults.length > 0) {
                 await progressEmitter.emitProgress(runId, 85, 'Saving reconciliation results...');
-                await trx('reconciliation_results').insert(matchResults);
+                const insertedResults = await trx('reconciliation_results').insert(matchResults).returning('*');
+
+                // ── Auto-populate reconciliation_status table ──────────────────────────
+                await progressEmitter.emitProgress(runId, 90, 'Updating reconciliation status...');
+                const workspace = await trx('workspaces').where({ id: workspaceId }).first();
+                const tenantId = workspace?.tenant_id || workspaceId;
+
+                const statusRows = insertedResults
+                    .filter(r => r.purchase_invoice_id || r.gstr2b_invoice_id)
+                    .map(r => ({
+                        workspace_id: workspaceId,
+                        tenant_id: tenantId,
+                        book_data_id: r.purchase_invoice_id || null,
+                        book_data_type: r.purchase_invoice_id ? 'purchase_voucher' : null,
+                        gstr_data_id: r.gstr2b_invoice_id || null,
+                        gstr_type: r.gstr2b_invoice_id ? 'gstr2b' : null,
+                        recon_status: r.match_action || 'pending',
+                        status: 'Active',
+                        added_date: knex.fn.now(),
+                        updated_date: knex.fn.now(),
+                        extra_info: JSON.stringify({
+                            recon_result_id: r.id,
+                            match_status: r.match_status,
+                            match_score: r.match_score,
+                            decision_reason: r.decision_reason,
+                            recon_run_id: runId
+                        })
+                    }));
+
+                // Insert in batches of 100, skipping any that already have an entry
+                for (let i = 0; i < statusRows.length; i += 100) {
+                    const batch = statusRows.slice(i, i + 100);
+                    for (const row of batch) {
+                        // Check if entry already exists for this book/gstr data
+                        const hasBook = row.book_data_id
+                            ? await trx('reconciliation_status')
+                                .where({ workspace_id: workspaceId, book_data_id: row.book_data_id })
+                                .first()
+                            : null;
+                        const hasGstr = row.gstr_data_id && !hasBook
+                            ? await trx('reconciliation_status')
+                                .where({ workspace_id: workspaceId, gstr_data_id: row.gstr_data_id })
+                                .first()
+                            : null;
+                        if (!hasBook && !hasGstr) {
+                            await trx('reconciliation_status').insert(row);
+                        }
+                    }
+                }
             }
 
             await trx('reconciliation_runs')
@@ -511,10 +563,14 @@ class ReconciliationModel {
             date_from,
             date_to,
             place_of_supply,
+            workflow_status,
             page = 1,
             page_size = 50,
             export_mode,
-            period
+            period,
+            fy,
+            quarter,
+            month
         } = filters;
 
         // Verify run belongs to workspace
@@ -523,8 +579,20 @@ class ReconciliationModel {
 
         let query = knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            // Join with tax_periods using purchase_vouchers fk or normalized_gstr2b_invoices period_code
+            .leftJoin('tax_periods as tp', function() {
+                this.on('tp.id', '=', 'pi.tax_period_id')
+                    .orOn(function() {
+                        this.on('tp.period_code', '=', 'gi.return_period')
+                            .andOnNull('pi.tax_period_id');
+                    });
+            })
+            // Join with financial_years to support fy_code filtering
+            .leftJoin('financial_years as fymas', 'tp.fy_id', 'fymas.id')
+            // Join with reconciliation_status table to get the workflow status
+            .leftJoin('reconciliation_status as rs_pi', 'rr.purchase_invoice_id', 'rs_pi.book_data_id')
+            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id')
             .where('rr.recon_run_id', runId);
 
         // Hide records where GSTIN is missing (as per user request "else hide the data")
@@ -537,8 +605,22 @@ class ReconciliationModel {
         });
 
         // --- Apply Filters ---
-        if (match_status && match_status !== 'all') {
+        if (match_status && match_status !== 'all' && match_status !== 'ALL') {
             query.where('rr.match_status', match_status);
+        }
+
+        if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
+            if (workflow_status === 'pending') {
+                // For pending, we show rows where status is either explicitly 'pending' or NULL
+                query.where(function() {
+                    this.where(knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), 'pending');
+                });
+            } else {
+                query.where(function() {
+                    this.where('rs_pi.recon_status', workflow_status)
+                        .orWhere('rs_gi.recon_status', workflow_status);
+                });
+            }
         }
 
         if (action_required && action_required !== 'false') {
@@ -609,6 +691,22 @@ class ReconciliationModel {
                 this.where('tp.period_code', periodToUse)
                     .orWhere('gi.return_period', periodToUse);
             });
+        }
+
+        if (fy && fy !== 'ALL') {
+            if (fy.includes('-')) {
+                query.where('fymas.fy_code', fy);
+            } else {
+                query.where('tp.year', parseInt(fy));
+            }
+        }
+
+        if (quarter && quarter !== 'ALL') {
+            query.where('tp.quarter', parseInt(quarter));
+        }
+
+        if (month && month !== 'ALL') {
+            query.where('tp.month', parseInt(month));
         }
 
         if (search) {
@@ -688,7 +786,10 @@ class ReconciliationModel {
             'gi.sgst as gstr2b_sgst',
             'pi.total_igst_amount as purchase_igst',
             'pi.total_cgst_amount as purchase_cgst',
-            'pi.total_sgst_amount as purchase_sgst'
+            'pi.total_sgst_amount as purchase_sgst',
+            
+            // Workflow status from the separate table, defaulting to 'pending'
+            knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status')
         ).orderBy('rr.created_at', 'desc');
 
         // --- Apply Pagination/Export Mode ---
