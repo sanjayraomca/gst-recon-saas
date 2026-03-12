@@ -1,4 +1,4 @@
-const knex = require('./src/db/connection');
+const knex = require('../shared/src/db/connection');
 
 async function createTables() {
     try {
@@ -27,8 +27,8 @@ async function createTables() {
                 id SERIAL PRIMARY KEY,
                 recon_run_id UUID NOT NULL REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
                 workspace_id UUID NOT NULL REFERENCES workspaces(id),
-                purchase_invoice_id UUID REFERENCES purchase_invoices(id),
-                gstr2b_invoice_id UUID REFERENCES gstr2b_invoices(id),
+                purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
+                gstr2b_invoice_id UUID REFERENCES normalized_gstr2b_invoices(id),
                 
                 match_status VARCHAR(50) NOT NULL,
                 match_score DECIMAL(5,2),
@@ -47,6 +47,24 @@ async function createTables() {
                 
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS reconciliation_status (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                workspace_id UUID NOT NULL,
+                tenant_id UUID NOT NULL,
+                gstr_data_id UUID,
+                gstr_type VARCHAR(20),
+                book_data_type VARCHAR(20),
+                book_data_id UUID,
+                book_line_item_id UUID,
+                recon_status VARCHAR(50),
+                status VARCHAR(20) DEFAULT 'Active',
+                added_by UUID,
+                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by UUID,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                extra_info JSONB
             );
         `);
         console.log("Tables created successfully");

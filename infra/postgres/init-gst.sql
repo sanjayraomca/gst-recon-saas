@@ -1088,6 +1088,8 @@ CREATE TABLE purchase_vouchers (
 
     supplier_invoice_no VARCHAR(100) NOT NULL,
     supplier_invoice_date DATE,
+    book_vchr_no VARCHAR(100),
+    book_vchr_date DATE,
     due_date DATE,
 
     -- Added 2026-02-21
@@ -1518,6 +1520,25 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS reconciliation_status (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    gstr_data_id UUID,
+    gstr_type VARCHAR(20),
+    book_data_type VARCHAR(20),
+    book_data_id UUID,
+    book_line_item_id UUID,
+    recon_status VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'Active',
+    added_by UUID,
+    added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by UUID,
+    updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    extra_info JSONB
+);
+
 
 
 -- AI Reconciliation columns (idempotent migration)

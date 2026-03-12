@@ -326,6 +326,9 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     // 2. Column index lookups (mirrors processSalesSheet, just different field aliases)
     const invNumIdx = col['vchr_full_number'] ?? col['vchr_no'] ?? col['invoice_number'] ?? col['invoice_no'] ?? null;
     const invDateIdx = col['vchr_date'] ?? col['invoice_date'] ?? col['date'] ?? null;
+    const refNumIdx = col['ref_vchr_full_number'] ?? col['ref_vchr_no'] ?? null;
+    const refDateIdx = col['ref_vchr_date'] ?? null;
+    
     const vTypeIdx = col['vchr_type'] ?? col['invoice_type'] ?? col['document_type'] ?? null;
     const partyIdx = col['party_name'] ?? col['supplier_name'] ?? col['customer_name'] ?? null;
     // party_gstn_no is what this specific CSV uses; fall back to generic names
@@ -359,20 +362,30 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         const row = rows[i];
         if (!row || row.length < 5) continue;
 
-        const invNumRaw = (row[invNumIdx] ?? '').toString().trim();
-        if (!invNumRaw || invNumRaw.toUpperCase().includes('TOTAL')) continue;
-        const invNum = normalizeInvoiceNumber(invNumRaw);
-        if (!invNum) {
-            if (i < 50) console.log(`[procPurchase] Row ${i}: cannot normalize invoice# "${invNumRaw}"`);
-            continue;
-        }
+        // Resolve internal BOOK Voucher details
+        const bookVchrNoRaw = (row[invNumIdx] ?? '').toString().trim();
+        const bookVchrNo = normalizeInvoiceNumber(bookVchrNoRaw);
+        const bookVchrDate = parseDate(row[invDateIdx]);
+        
+        if (!bookVchrNo || !bookVchrDate) continue;
 
-        // ▶ CRITICAL FIX: use parseDate() not parseExcelDate() — dates are "DD-MM-YY" strings
-        const invDate = parseDate(row[invDateIdx]);
-        if (!invDate) {
-            if (i < 50) console.log(`[procPurchase] Row ${i} (${invNum}): bad date "${row[invDateIdx]}"`);
-            continue;
+        // Resolve SUPPLIER Invoice details (Mapping provided by user)
+        // ref_vchr_full_number -> supplier_invoice_no
+        // ref_vchr_date        -> supplier_invoice_date
+        let supplierInvoiceNo = null;
+        if (refNumIdx !== null) {
+            const refNumRaw = (row[refNumIdx] ?? '').toString().trim();
+            supplierInvoiceNo = normalizeInvoiceNumber(refNumRaw);
         }
+        
+        let supplierInvoiceDate = null;
+        if (refDateIdx !== null) {
+            supplierInvoiceDate = parseDate(row[refDateIdx]);
+        }
+        
+        // Fallback: If reference fields are empty, use book voucher values
+        if (!supplierInvoiceNo) supplierInvoiceNo = bookVchrNo;
+        if (!supplierInvoiceDate) supplierInvoiceDate = bookVchrDate;
 
         // GSTIN: allow empty (unregistered/exempt vendors).
         // Only reject a NON-EMPTY GSTIN that is clearly malformed.
@@ -403,7 +416,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             if (isNaN(taxRate)) taxRate = 0;
         }
 
-        const groupKey = `${invNum}__${invDate}`;
+        const groupKey = `${bookVchrNo}__${bookVchrDate}`;
 
         if (!voucherMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
@@ -414,7 +427,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
 
             // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
-            const dateParts = invDate.split('-');
+            const dateParts = bookVchrDate.split('-');
             const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
 
             voucherMap.set(groupKey, {
@@ -424,8 +437,10 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     tax_period_id: taxPeriodId || null,
                     voucher_type: voucherType,
                     book_type: bookType,
-                    supplier_invoice_no: invNum,
-                    supplier_invoice_date: invDate,
+                    book_vchr_no: bookVchrNo,
+                    book_vchr_date: bookVchrDate,
+                    supplier_invoice_no: supplierInvoiceNo,
+                    supplier_invoice_date: supplierInvoiceDate,
                     supplier_name: partyIdx !== null ? (row[partyIdx] ?? '').toString().trim() || null : null,
                     supplier_gstin: supplierGstinClean,
                     place_of_supply: pos ? pos.toString() : null,

@@ -158,15 +158,18 @@ class BookModel {
                     const headerRes = await trx.raw(`
                         INSERT INTO purchase_vouchers (
                             tenant_id, workspace_id, tax_period_id, voucher_type, book_type,
+                            book_vchr_no, book_vchr_date,
                             supplier_invoice_no, supplier_invoice_date, supplier_name, supplier_gstin,
                             place_of_supply, is_interstate, is_rcm, round_off, status, remarks, 
                             total_qty, discount,
                             taxable_total, net_amount,
                             total_cgst_amount, total_sgst_amount, total_igst_amount, total_cess_amount,
                             itc_eligible, itc_claimed, filing_period, payment_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
                         ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
                         DO UPDATE SET
+                            book_vchr_no = EXCLUDED.book_vchr_no,
+                            book_vchr_date = EXCLUDED.book_vchr_date,
                             voucher_type = EXCLUDED.voucher_type,
                             supplier_name = EXCLUDED.supplier_name,
                             supplier_gstin = EXCLUDED.supplier_gstin,
@@ -189,6 +192,7 @@ class BookModel {
                         RETURNING id, (xmax = 0) AS is_inserted
                      `, [
                         header.tenant_id, header.workspace_id, header.tax_period_id || null, header.voucher_type || null, header.book_type || 'SR',
+                        header.book_vchr_no || null, header.book_vchr_date || null,
                         String(header.supplier_invoice_no || '').substring(0, 50), header.supplier_invoice_date || null, String(header.supplier_name || '').substring(0, 255), header.supplier_gstin || null,
                         header.place_of_supply || null, header.is_interstate || 'No', header.is_rcm || false, header.round_off || 0,
                         header.status || 'DRAFT', header.remarks || null,
