@@ -20,7 +20,7 @@ class BookModel {
             let totalInserted = 0;
             const addedInvoices = [];
             const duplicateInvoices = [];
-            
+
             for (const inv of invoices) {
                 const { header, items } = inv;
                 const spName = `sales_${totalProcessed++}`;
@@ -95,9 +95,9 @@ class BookModel {
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
-                    
+
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
                     console.warn(`[BookModel] Skipped sales invoice ${header.invoice_number} due to error: ${rowErr.message}`);
@@ -233,7 +233,7 @@ class BookModel {
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);

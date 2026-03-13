@@ -333,7 +333,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const invDateIdx = col['vchr_date'] ?? col['invoice_date'] ?? col['date'] ?? null;
     const refNumIdx = col['ref_vchr_full_number'] ?? col['ref_vchr_no'] ?? null;
     const refDateIdx = col['ref_vchr_date'] ?? null;
-    
+
     const vTypeIdx = col['vchr_type'] ?? col['invoice_type'] ?? col['document_type'] ?? null;
     const partyIdx = col['party_name'] ?? col['supplier_name'] ?? col['customer_name'] ?? null;
     // party_gstn_no is what this specific CSV uses; fall back to generic names
@@ -371,7 +371,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         const bookVchrNoRaw = (row[invNumIdx] ?? '').toString().trim();
         const bookVchrNo = normalizeInvoiceNumber(bookVchrNoRaw);
         const bookVchrDate = parseDate(row[invDateIdx]);
-        
+
         if (!bookVchrNo || !bookVchrDate) continue;
 
         // Resolve SUPPLIER Invoice details (Mapping provided by user)
@@ -382,12 +382,12 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             const refNumRaw = (row[refNumIdx] ?? '').toString().trim();
             supplierInvoiceNo = normalizeInvoiceNumber(refNumRaw);
         }
-        
+
         let supplierInvoiceDate = null;
         if (refDateIdx !== null) {
             supplierInvoiceDate = parseDate(row[refDateIdx]);
         }
-        
+
         // Fallback: If reference fields are empty, use book voucher values
         if (!supplierInvoiceNo) supplierInvoiceNo = bookVchrNo;
         if (!supplierInvoiceDate) supplierInvoiceDate = bookVchrDate;
