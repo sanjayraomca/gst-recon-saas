@@ -20,7 +20,7 @@ class BookModel {
             let totalInserted = 0;
             const addedInvoices = [];
             const duplicateInvoices = [];
-            
+
             for (const inv of invoices) {
                 const { header, items } = inv;
                 const spName = `sales_${totalProcessed++}`;
@@ -95,9 +95,9 @@ class BookModel {
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
-                    
+
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
                     console.warn(`[BookModel] Skipped sales invoice ${header.invoice_number} due to error: ${rowErr.message}`);
@@ -166,7 +166,7 @@ class BookModel {
                             total_cgst_amount, total_sgst_amount, total_igst_amount, total_cess_amount,
                             itc_eligible, itc_claimed, filing_period, payment_status
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
-                        ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id, book_vchr_no)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
                             book_vchr_date = EXCLUDED.book_vchr_date,
@@ -233,7 +233,7 @@ class BookModel {
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
