@@ -588,8 +588,15 @@ class ReconciliationModel {
             .leftJoin('financial_years as fymas', 'tp.fy_id', 'fymas.id')
             // Join with reconciliation_status table to get the workflow status
             .leftJoin('reconciliation_status as rs_pi', 'rr.purchase_invoice_id', 'rs_pi.book_data_id')
-            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id')
-            .where('rr.recon_run_id', runId);
+            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id');
+
+        // Apply Run ID filter ONLY if status is not 'pending'
+        // If status is 'pending', we show all historical pending data for the workspace
+        if (workflow_status === 'pending') {
+            query.where('rr.workspace_id', workspaceId);
+        } else {
+            query.where('rr.recon_run_id', runId);
+        }
 
         // Hide records where GSTIN is missing (as per user request "else hide the data")
         query.where(function () {
@@ -675,7 +682,10 @@ class ReconciliationModel {
             query.where('rr.variance_amount', '!=', 0);
         }
 
-        if (period && period !== 'ALL') {
+        // Bypass specific period filters if we are looking at all pending historical data
+        const isPendingView = workflow_status === 'pending';
+
+        if (period && period !== 'ALL' && !isPendingView) {
             let periodToUse = period;
             // Convert YYYY-MM to MMYYYY if needed
             if (/^\d{4}-\d{2}$/.test(period)) {
@@ -689,7 +699,7 @@ class ReconciliationModel {
             });
         }
 
-        if (fy && fy !== 'ALL') {
+        if (fy && fy !== 'ALL' && !isPendingView) {
             if (fy.includes('-')) {
                 query.where('fymas.fy_code', fy);
             } else {
@@ -697,11 +707,11 @@ class ReconciliationModel {
             }
         }
 
-        if (quarter && quarter !== 'ALL') {
+        if (quarter && quarter !== 'ALL' && !isPendingView) {
             query.where('tp.quarter', parseInt(quarter));
         }
 
-        if (month && month !== 'ALL') {
+        if (month && month !== 'ALL' && !isPendingView) {
             query.where('tp.month', parseInt(month));
         }
 
