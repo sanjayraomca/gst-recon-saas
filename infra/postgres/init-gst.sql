@@ -1540,6 +1540,18 @@ CREATE TABLE IF NOT EXISTS reconciliation_status (
 );
 
 
+CREATE TABLE IF NOT EXISTS reconciliation_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reconciliation_result_id INTEGER NOT NULL REFERENCES reconciliation_results(id) ON DELETE CASCADE,
+    action_type VARCHAR(50),
+    decision VARCHAR(50),
+    decision_reason TEXT,
+    notes TEXT,
+    performed_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
 
 -- AI Reconciliation columns (idempotent migration)
 ALTER TABLE reconciliation_results
@@ -1761,3 +1773,99 @@ BEGIN
         ', tbl.table_name, tbl.table_name, tbl.table_name, tbl.table_name);
     END LOOP;
 END $$;
+
+-- ============================================
+-- DOMAIN 18: ITC & RCM MANAGEMENT
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS itc_decisions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    purchase_invoice_id UUID NOT NULL REFERENCES purchase_vouchers(id) ON DELETE CASCADE,
+    period_id UUID REFERENCES tax_periods(id),
+    itc_status VARCHAR(50) NOT NULL, -- ELIGIBLE, INELIGIBLE, BLOCKED, REVERSED
+    decision_date DATE DEFAULT CURRENT_DATE,
+    decision_by UUID REFERENCES users(id),
+    remarks TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS itc_reversal_register (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    gstin_id UUID NOT NULL,
+    period_id UUID REFERENCES tax_periods(id),
+    purchase_invoice_id UUID REFERENCES purchase_vouchers(id) ON DELETE CASCADE,
+    reversal_type VARCHAR(50), -- 180_DAY_RULE, BLOCKED, OTHER
+    reversal_amount NUMERIC(15, 2) DEFAULT 0,
+    cgst_amount NUMERIC(15, 2) DEFAULT 0,
+    sgst_amount NUMERIC(15, 2) DEFAULT 0,
+    igst_amount NUMERIC(15, 2) DEFAULT 0,
+    cess_amount NUMERIC(15, 2) DEFAULT 0,
+    is_reclaimable BOOLEAN DEFAULT FALSE,
+    reclaim_date DATE,
+    reclaim_amount NUMERIC(15, 2),
+    payment_proof_document_id UUID REFERENCES documents(id),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rcm_liability_register (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    gstin_id UUID NOT NULL,
+    period_id UUID REFERENCES tax_periods(id),
+    purchase_invoice_id UUID REFERENCES purchase_vouchers(id) ON DELETE CASCADE,
+    tax_type VARCHAR(20), -- CGST, SGST, IGST
+    tax_amount NUMERIC(15, 2) DEFAULT 0,
+    liability_status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PAID
+    cash_payment_date DATE,
+    cash_payment_amount NUMERIC(15, 2),
+    challan_number VARCHAR(100),
+    bank_ref_number VARCHAR(100),
+    payment_proof_document_id UUID REFERENCES documents(id),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================
+-- DOMAIN 19: REPORTS & CONFIGS
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS saved_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    report_type VARCHAR(50) NOT NULL,
+    report_name VARCHAR(255) NOT NULL,
+    report_config JSONB DEFAULT '{}',
+    filters_applied JSONB DEFAULT '{}',
+    generation_status VARCHAR(20) DEFAULT 'CREATED',
+    last_generated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_configs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    config_name VARCHAR(255) NOT NULL,
+    config_type VARCHAR(50), -- AUTO, MANUAL
+    invoice_number_tolerance VARCHAR(20) DEFAULT 'EXACT',
+    date_tolerance_days INTEGER DEFAULT 0,
+    amount_tolerance_percentage NUMERIC(5, 2) DEFAULT 1.00,
+    tax_tolerance_percentage NUMERIC(5, 2) DEFAULT 0.00,
+    auto_match_threshold NUMERIC(5, 2) DEFAULT 95.00,
+    require_manual_review BOOLEAN DEFAULT FALSE,
+    exclude_rcm BOOLEAN DEFAULT FALSE,
+    exclude_blocked_itc BOOLEAN DEFAULT TRUE,
+    is_active BOOLEAN DEFAULT TRUE,
+    is_default BOOLEAN DEFAULT FALSE,
+    rule_set_version VARCHAR(20) DEFAULT '1.0.0',
+    rule_set_hash VARCHAR(100),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);

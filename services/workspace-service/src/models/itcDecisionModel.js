@@ -23,11 +23,11 @@ class ItcDecisionModel {
         const offset = (page - 1) * page_size;
 
         let query = knex('itc_decisions')
-            .join('purchase_invoices', 'itc_decisions.purchase_invoice_id', 'purchase_invoices.id')
+            .join('purchase_vouchers', 'itc_decisions.purchase_invoice_id', 'purchase_vouchers.id')
             .where({ 'itc_decisions.workspace_id': workspaceId });
 
         // Apply filters
-        if (gstin_id) query = query.where({ 'purchase_invoices.gstin_id': gstin_id }); // Filter on joined table
+        if (gstin_id) query = query.where({ 'purchase_vouchers.gstin_id': gstin_id }); // Filter on joined table
         if (period_id) query = query.where({ 'itc_decisions.period_id': period_id });
         if (purchase_invoice_id) query = query.where({ 'itc_decisions.purchase_invoice_id': purchase_invoice_id });
         if (decision) query = query.where({ decision });

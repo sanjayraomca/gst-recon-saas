@@ -3,7 +3,7 @@ const crypto = require('crypto');
 
 /**
  * Purchase Invoice Model
- * Matches purchase_invoices table schema exactly
+ * Matches purchase_vouchers table schema exactly
  */
 class PurchaseInvoiceModel {
     /**
@@ -24,7 +24,7 @@ class PurchaseInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = knex('purchase_invoices')
+        let query = knex('purchase_vouchers')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
@@ -64,7 +64,7 @@ class PurchaseInvoiceModel {
      * Get single purchase invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await knex('purchase_invoices')
+        return await knex('purchase_vouchers')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId
@@ -81,7 +81,7 @@ class PurchaseInvoiceModel {
             .update(JSON.stringify(invoiceData))
             .digest('hex');
 
-        const [invoice] = await knex('purchase_invoices')
+        const [invoice] = await knex('purchase_vouchers')
             .insert({
                 id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
@@ -147,7 +147,7 @@ class PurchaseInvoiceModel {
 
         filteredData.updated_at = knex.fn.now();
 
-        const [invoice] = await knex('purchase_invoices')
+        const [invoice] = await knex('purchase_vouchers')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId

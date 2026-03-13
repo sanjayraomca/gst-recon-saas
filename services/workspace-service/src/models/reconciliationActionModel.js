@@ -58,8 +58,8 @@ class ReconciliationActionModel {
 
         const query = knex('reconciliation_results as rr')
             .join('reconciliation_runs as run', 'rr.recon_run_id', 'run.id')
-            .leftJoin('purchase_invoices as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .where('rr.workspace_id', workspaceId)
             .where('rr.action_status', 'PENDING')
             .whereNotNull('rr.action_required');
@@ -70,8 +70,8 @@ class ReconciliationActionModel {
         const results = await query.select(
             'rr.*',
             'run.period_id',
-            'pi.invoice_number as purchase_invoice_number',
-            'gi.invoice_number as gstr2b_invoice_number'
+            'pi.supplier_invoice_no as purchase_invoice_number',
+            'gi.document_number_clean as gstr2b_invoice_number'
         )
             .orderBy('rr.created_at', 'desc')
             .limit(page_size)

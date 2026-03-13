@@ -87,8 +87,8 @@ class ReconciliationModel {
                 ? JSON.parse(workspace.settings)
                 : (workspace?.settings || {});
 
-            const VAR_DAYS_MIN = parseFloat(wsSettings.variance_days_min) || 1;
-            const VAR_DAYS_MAX = parseFloat(wsSettings.variance_days_max) || 1;
+            const VAR_DAYS_MIN = parseFloat(wsSettings.variance_days_min) || 2;
+            const VAR_DAYS_MAX = parseFloat(wsSettings.variance_days_max) || 2;
             const VAR_TAXABLE_MIN = parseFloat(wsSettings.variance_taxable_min) || 1;
             const VAR_TAXABLE_MAX = parseFloat(wsSettings.variance_taxable_max) || 1;
             const VAR_TAX_MIN = parseFloat(wsSettings.variance_tax_min) || 1;
@@ -249,10 +249,10 @@ class ReconciliationModel {
                     const taxableNear = diffTaxable >= -(VAR_TAXABLE_MAX + 0.01) && diffTaxable <= (VAR_TAXABLE_MIN + 0.01);
                     const taxNear = diffTax >= -(VAR_TAX_MAX + 0.01) && diffTax <= (VAR_TAX_MIN + 0.01);
 
-                    if (dateNear && exactTaxable && exactTax) { matchType = 'MISMATCH'; return true; }
-                    if (exactDate && taxableNear && exactTax) { matchType = 'MISMATCH'; return true; }
-                    if (exactDate && exactTaxable && taxNear) { matchType = 'MISMATCH'; return true; }
-                    if (exactDate && taxNear && !exactTaxable) { matchType = 'MISMATCH'; return true; }
+                    if (dateNear && taxableNear && taxNear) {
+                        matchType = (exactDate && exactTaxable && exactTax) ? 'MATCHED' : 'MISMATCH';
+                        return true;
+                    }
 
                     return false;
                 });
@@ -270,17 +270,16 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_status: finalStatus,
-                        match_action: finalStatus === 'not_eligible' ? 'not_eligible_for_claim' : 'pending',
+                        match_action: finalStatus, // Holds the logic result (matched, mismatch, etc.)
                         match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
                         match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
                         books_value: pNet,
                         portal_value: match.document_value || 0,
                         variance_amount: pNet - (match.document_value || 0),
-                        itc_decision: isEligible ? (matchType === 'MATCHED' ? 'ELIGIBLE' : 'PENDING') : 'INELIGIBLE',
-                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (matchType === 'MATCHED' ? 'Exact match found' : 'Partial match / variance detected'),
-                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (matchType === 'MISMATCH' ? 'REVIEW_AMOUNT' : null),
-                        action_status: 'PENDING',
+                        itc_decision: isEligible ? (finalStatus === 'matched' ? 'ELIGIBLE' : 'PENDING') : 'INELIGIBLE',
+                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (finalStatus === 'matched' ? 'Exact match found' : 'Partial match / variance detected'),
+                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (finalStatus === 'mismatch' ? 'REVIEW_AMOUNT' : null),
+                        action_status: 'pending', // Initially pending
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
                     });
@@ -362,8 +361,7 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_status: finalStatus,
-                        match_action: finalStatus === 'not_eligible' ? 'not_eligible_for_claim' : 'pending',
+                        match_action: finalStatus,
                         match_score: finalStatus === 'matched' ? 90.00 : 60.00,
                         match_confidence: 'LOW',
                         matched_by: 'FUZZY',
@@ -373,7 +371,7 @@ class ReconciliationModel {
                         itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
                         decision_reason: `Fuzzy Match: Matched by amount and date (+/- 30 days)`,
                         action_required: 'REVIEW_MATCH',
-                        action_status: 'PENDING',
+                        action_status: 'pending',
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
                     });
@@ -389,8 +387,7 @@ class ReconciliationModel {
                     recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
-                    match_status: 'missing_in_2b',
-                    match_action: 'pending',
+                    match_action: 'missing_in_2b',
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
@@ -400,7 +397,7 @@ class ReconciliationModel {
                     decision_reason: 'Not found in GSTR2B',
                     action_required: 'FOLLOW_UP_SUPPLIER',
                     action_priority: 'HIGH',
-                    action_status: 'PENDING',
+                    action_status: 'pending',
                     created_at: knex.fn.now(),
                     updated_at: knex.fn.now()
                 });
@@ -417,8 +414,7 @@ class ReconciliationModel {
                         recon_run_id: runId,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
-                        match_status: isEligible ? 'missing_in_books' : 'not_eligible',
-                        match_action: isEligible ? 'pending' : 'not_eligible_for_claim',
+                        match_action: isEligible ? 'missing_in_books' : 'not_eligible',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
@@ -428,7 +424,7 @@ class ReconciliationModel {
                         decision_reason: isEligible ? 'Not found in records' : 'ITC Not Available in GSTR2B',
                         action_required: isEligible ? 'ADD_TO_BOOKS' : 'REVIEW_ELIGIBILITY',
                         action_priority: 'MEDIUM',
-                        action_status: 'PENDING',
+                        action_status: 'pending',
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
                     });
@@ -460,7 +456,7 @@ class ReconciliationModel {
                         updated_date: knex.fn.now(),
                         extra_info: JSON.stringify({
                             recon_result_id: r.id,
-                            match_status: r.match_status,
+                            match_action: r.match_action,
                             match_score: r.match_score,
                             decision_reason: r.decision_reason,
                             recon_run_id: runId
@@ -499,8 +495,8 @@ class ReconciliationModel {
                     missing_count: missingCount,
                     completed_at: knex.fn.now(),
                     result_summary: JSON.stringify({
-                        purchase_invoices: purchaseInvoices.length,
-                        gstr2b_invoices: gstr2bInvoices.length,
+                        purchase_vouchers: purchaseInvoices.length,
+                        normalized_gstr2b_invoices: gstr2bInvoices.length,
                         matched: matchedCount,
                         mismatched: mismatchedCount,
                         missing: missingCount
@@ -606,7 +602,7 @@ class ReconciliationModel {
 
         // --- Apply Filters ---
         if (match_status && match_status !== 'all' && match_status !== 'ALL') {
-            query.where('rr.match_status', match_status);
+            query.where('rr.match_action', match_status);
         }
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
@@ -728,9 +724,9 @@ class ReconciliationModel {
         // --- Calculate filtered counts by status ---
         const statusCountsQuery = query.clone()
             .clearSelect()
-            .select('rr.match_status')
+            .select('rr.match_action')
             .count('* as count')
-            .groupBy('rr.match_status');
+            .groupBy('rr.match_action');
         const statusCountsResult = await statusCountsQuery;
 
         const summary = {
@@ -739,7 +735,7 @@ class ReconciliationModel {
             missing: 0
         };
         statusCountsResult.forEach(row => {
-            const status = row.match_status;
+            const status = row.match_action;
             if (status === 'matched') {
                 summary.matched = parseInt(row.count);
             } else if (status === 'mismatch') {
@@ -751,7 +747,21 @@ class ReconciliationModel {
 
         // --- Prepare Main Query ---
         query.select(
-            'rr.*',
+            'rr.id',
+            'rr.recon_run_id',
+            'rr.workspace_id',
+            'rr.match_action',
+            'rr.match_score',
+            'rr.match_confidence',
+            'rr.itc_decision',
+            'rr.decision_reason',
+            'rr.action_required',
+            'rr.action_status',
+            'rr.books_value',
+            'rr.portal_value',
+            'rr.variance_amount',
+            'rr.created_at',
+            'rr.updated_at',
             
             // Row identification
             'pi.id as purchase_invoice_id',

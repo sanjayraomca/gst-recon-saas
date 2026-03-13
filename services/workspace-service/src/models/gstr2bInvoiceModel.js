@@ -1,8 +1,8 @@
 const knex = require('../../../shared/src/db/connection');
 
 /**
- * GSTR2B Invoice Model (Read-only)
- * Matches gstr2b_invoices table schema
+ * GSTR2B Invoice Model
+ * Matches normalized_gstr2b_invoices table schema
  */
 class Gstr2bInvoiceModel {
     /**
@@ -21,15 +21,15 @@ class Gstr2bInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = knex('gstr2b_invoices')
+        let query = knex('normalized_gstr2b_invoices')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
         if (gstin_id) query = query.where({ gstin_id });
         if (match_status) query = query.where({ match_status });
         if (supplier_gstin) query = query.where({ supplier_gstin });
-        if (invoice_date_from) query = query.where('invoice_date', '>=', invoice_date_from);
-        if (invoice_date_to) query = query.where('invoice_date', '<=', invoice_date_to);
+        if (invoice_date_from) query = query.where('document_date', '>=', invoice_date_from);
+        if (invoice_date_to) query = query.where('document_date', '<=', invoice_date_to);
 
         // Get total count
         const countQuery = query.clone();
@@ -37,7 +37,7 @@ class Gstr2bInvoiceModel {
 
         // Get paginated results
         const invoices = await query
-            .orderBy('invoice_date', 'desc')
+            .orderBy('document_date', 'desc')
             .limit(page_size)
             .offset(offset);
 
@@ -56,7 +56,7 @@ class Gstr2bInvoiceModel {
      * Get single GSTR2B invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await knex('gstr2b_invoices')
+        return await knex('normalized_gstr2b_invoices')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId
