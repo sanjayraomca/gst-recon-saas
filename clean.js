@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 
 console.log("==========================================");
-console.log("Cleaning Database, Keycloak, and Minio...");
+console.log("Cleaning Database, Keycloak, and Minio....");
 console.log("==========================================");
 
 try {
