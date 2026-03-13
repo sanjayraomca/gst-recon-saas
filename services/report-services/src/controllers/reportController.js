@@ -78,10 +78,10 @@ exports.getReconMismatches = async (req, res) => {
                 'pi.net_amount as pr_value',
                 db.raw('(gi.taxable_value + gi.total_tax) as gstr2b_value'),
                 'rr.variance_amount as variance',
-                'rr.match_action as status'
+                'rr.match_status as status'
             )
             .where('rr.workspace_id', workspaceId)
-            .whereNot('rr.match_action', 'matched');
+            .whereNot('rr.match_status', 'matched');
 
         if (gstin_id) query.where('rr.gstin_id', gstin_id);
         if (match_status) query.where('rr.match_status', match_status);

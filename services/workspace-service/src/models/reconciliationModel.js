@@ -270,7 +270,7 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_action: finalStatus, // Holds the logic result (matched, mismatch, etc.)
+                        match_status: finalStatus, // Holds the logic result (matched, mismatch, etc.)
                         match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
                         match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
                         books_value: pNet,
@@ -361,7 +361,7 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_action: finalStatus,
+                        match_status: finalStatus,
                         match_score: finalStatus === 'matched' ? 90.00 : 60.00,
                         match_confidence: 'LOW',
                         matched_by: 'FUZZY',
@@ -387,7 +387,7 @@ class ReconciliationModel {
                     recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: purchaseInv.id,
-                    match_action: 'missing_in_2b',
+                    match_status: 'missing_in_2b',
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
@@ -414,7 +414,7 @@ class ReconciliationModel {
                         recon_run_id: runId,
                         workspace_id: workspaceId,
                         gstr2b_invoice_id: gstr2bInv.id,
-                        match_action: isEligible ? 'missing_in_books' : 'not_eligible',
+                        match_status: isEligible ? 'missing_in_books' : 'not_eligible',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
@@ -450,13 +450,13 @@ class ReconciliationModel {
                         book_data_type: r.purchase_invoice_id ? 'purchase_voucher' : null,
                         gstr_data_id: r.gstr2b_invoice_id || null,
                         gstr_type: r.gstr2b_invoice_id ? 'gstr2b' : null,
-                        recon_status: r.match_action || 'pending',
+                        recon_status: 'pending',
                         status: 'Active',
                         added_date: knex.fn.now(),
                         updated_date: knex.fn.now(),
                         extra_info: JSON.stringify({
                             recon_result_id: r.id,
-                            match_action: r.match_action,
+                            match_status: r.match_status,
                             match_score: r.match_score,
                             decision_reason: r.decision_reason,
                             recon_run_id: runId
@@ -602,7 +602,7 @@ class ReconciliationModel {
 
         // --- Apply Filters ---
         if (match_status && match_status !== 'all' && match_status !== 'ALL') {
-            query.where('rr.match_action', match_status);
+            query.where('rr.match_status', match_status);
         }
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
@@ -724,9 +724,9 @@ class ReconciliationModel {
         // --- Calculate filtered counts by status ---
         const statusCountsQuery = query.clone()
             .clearSelect()
-            .select('rr.match_action')
+            .select('rr.match_status')
             .count('* as count')
-            .groupBy('rr.match_action');
+            .groupBy('rr.match_status');
         const statusCountsResult = await statusCountsQuery;
 
         const summary = {
@@ -735,7 +735,7 @@ class ReconciliationModel {
             missing: 0
         };
         statusCountsResult.forEach(row => {
-            const status = row.match_action;
+            const status = row.match_status;
             if (status === 'matched') {
                 summary.matched = parseInt(row.count);
             } else if (status === 'mismatch') {
@@ -750,7 +750,7 @@ class ReconciliationModel {
             'rr.id',
             'rr.recon_run_id',
             'rr.workspace_id',
-            'rr.match_action',
+            'rr.match_status',
             'rr.match_score',
             'rr.match_confidence',
             'rr.itc_decision',
