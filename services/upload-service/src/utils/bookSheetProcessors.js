@@ -27,9 +27,10 @@ const { isValidGSTIN, normalizeInvoiceNumber, parseExcelDate, cleanAmount } = re
 // ─────────────────────────────────────────────────────────────────────────────
 const parseDate = (val) => {
     if (!val && val !== 0) return null;
-    if (typeof val === 'number') return parseExcelDate(val);
     const s = val.toString().trim();
-    if (!s) return null;
+    if (!s || s === '0000-00-00' || s === '""') return null;
+
+    if (typeof val === 'number') return parseExcelDate(val);
 
     // Matches DD-MM-YY, DD-MM-YYYY, MM-DD-YY, MM-DD-YYYY separated by / or -
     const dm = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
@@ -58,7 +59,11 @@ const parseDate = (val) => {
 
     // YYYY-MM-DD  /  YYYY/MM/DD
     const ym = s.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
-    if (ym) return s.replace(/\//g, '-');
+    if (ym) {
+        const clean = s.replace(/\//g, '-');
+        if (clean === '0000-00-00') return null;
+        return clean;
+    }
 
     return parseExcelDate(val); // last-resort for Excel serial numbers
 };

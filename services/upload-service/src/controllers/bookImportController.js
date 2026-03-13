@@ -118,27 +118,27 @@ class BookImportController {
             const taxPeriodId = await TaxPeriodService.ensureTaxPeriodExists(returnPeriodStr, db);
 
 
-            // 6. Duplicate Check by Hash
+            // 6. Duplicate Check by Hash (DISABLED to allow re-uploads)
             console.log(`[DEBUG] Computing file hash for ${uploadedFilePath}`);
             const fileHash = await computeFileHash(uploadedFilePath);
             console.log(`[DEBUG] File hash: ${fileHash}`);
             const IMPORT_TYPE = type === 'SALES' ? 'SALES_REGISTER' : 'PURCHASE_REGISTER';
 
-            console.log(`[DEBUG] Checking for duplicate import: type=${IMPORT_TYPE}, period=${return_period}`);
-            const { exactDuplicate, previousImport } = await GSTRImportModel.checkDuplicateByHash(
-                tenantUuid,
-                'SELF',
-                return_period,
-                IMPORT_TYPE,
-                fileHash,
-                req.file.originalname
-            );
+            // console.log(`[DEBUG] Checking for duplicate import: type=${IMPORT_TYPE}, period=${return_period}`);
+            // const { exactDuplicate, previousImport } = await GSTRImportModel.checkDuplicateByHash(
+            //     tenantUuid,
+            //     'SELF',
+            //     return_period,
+            //     IMPORT_TYPE,
+            //     fileHash,
+            //     req.file.originalname
+            // );
 
-            if (exactDuplicate) {
-                console.log(`[DEBUG] Exact duplicate found: ${previousImport.import_filing_id}`);
-                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
-                return successResponse(res, { duplicate: true, previousImport }, 'File already imported.');
-            }
+            // if (exactDuplicate) {
+            //     console.log(`[DEBUG] Exact duplicate found: ${previousImport.import_filing_id}`);
+            //     if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+            //     return successResponse(res, { duplicate: true, previousImport }, 'File already imported.');
+            // }
 
             // 7. Parse & Validate File GSTIN
             if (upload_id) {

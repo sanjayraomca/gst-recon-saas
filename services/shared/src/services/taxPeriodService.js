@@ -12,9 +12,17 @@ class TaxPeriodService {
      * Calculate financial year code (e.g., 2023-24) from a return period (MMYYYY).
      */
     static calculateFinancialYear(returnPeriod) {
-        if (!returnPeriod || returnPeriod.length !== 6) return null;
-        const month = parseInt(returnPeriod.substring(0, 2));
-        const year = parseInt(returnPeriod.substring(2));
+        if (!returnPeriod || (returnPeriod.length !== 6)) return null;
+
+        let month, year;
+        // Check if format is YYYYMM (e.g. 202510) instead of MMYYYY (e.g. 102025)
+        if (returnPeriod.startsWith('20') && parseInt(returnPeriod.substring(4)) <= 12) {
+            year = parseInt(returnPeriod.substring(0, 4));
+            month = parseInt(returnPeriod.substring(4));
+        } else {
+            month = parseInt(returnPeriod.substring(0, 2));
+            year = parseInt(returnPeriod.substring(2));
+        }
 
         if (isNaN(month) || isNaN(year)) {
             console.error(`[TaxPeriodService] Invalid month/year parsed from returnPeriod: ${returnPeriod}`);
@@ -48,8 +56,17 @@ class TaxPeriodService {
         }
 
         console.log(`[TaxPeriodService] Creating missing tax period: ${returnPeriod}`);
-        const month = parseInt(returnPeriod.substring(0, 2));
-        const year = parseInt(returnPeriod.substring(2));
+        
+        let month, year;
+        // Handle YYYYMM (e.g. 202510) or MMYYYY (e.g. 102025)
+        if (returnPeriod.startsWith('20') && parseInt(returnPeriod.substring(4)) <= 12) {
+            year = parseInt(returnPeriod.substring(0, 4));
+            month = parseInt(returnPeriod.substring(4));
+        } else {
+            month = parseInt(returnPeriod.substring(0, 2));
+            year = parseInt(returnPeriod.substring(2));
+        }
+
         const fyCode = TaxPeriodService.calculateFinancialYear(returnPeriod);
 
         // 2. Resolve or Create Financial Year
@@ -89,9 +106,10 @@ class TaxPeriodService {
         }
 
         // 3. Create Tax Period
-        const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
+        const mStr = month.toString().padStart(2, '0');
+        const startDate = `${year}-${mStr}-01`;
         const dateObj = new Date(year, month, 0); // Last day of month
-        const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
+        const endDate = `${year}-${mStr}-${dateObj.getDate().toString().padStart(2, '0')}`;
         const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
         const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
 

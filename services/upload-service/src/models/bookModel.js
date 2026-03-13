@@ -166,7 +166,7 @@ class BookModel {
                             total_cgst_amount, total_sgst_amount, total_igst_amount, total_cess_amount,
                             itc_eligible, itc_claimed, filing_period, payment_status
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
-                        ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id, book_vchr_no)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
                             book_vchr_date = EXCLUDED.book_vchr_date,
