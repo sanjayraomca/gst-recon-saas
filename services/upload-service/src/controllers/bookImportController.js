@@ -35,6 +35,8 @@ class BookImportController {
             uploadedFilePath = req.file.path;
 
             const { return_period, workspace_id, gstin_id, upload_id } = req.body;
+            console.log(`[DEBUG] uploadBookData Params: return_period=${return_period}, workspace_id=${workspace_id}, gstin_id=${gstin_id}`);
+
             if (!return_period) {
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
                 if (upload_id) await progressEmitter.emitProgress(upload_id, 100, 'Missing return_period', true);
@@ -332,18 +334,33 @@ class BookImportController {
     static async assignDynamicPeriods(documents, db) {
         const periodCache = {};
         for (const doc of documents) {
-            const dateStr = doc.header.invoice_date || doc.header.supplier_invoice_date;
-            if (dateStr) {
-                // dateStr is guaranteed to be YYYY-MM-DD from parseDate
-                const [yyyy, mm] = dateStr.split('-');
-                if (yyyy && mm) {
-                    const mmyyyy = `${mm}${yyyy}`;
-                    if (!periodCache[mmyyyy]) {
-                        periodCache[mmyyyy] = await TaxPeriodService.ensureTaxPeriodExists(mmyyyy, db);
+            // Check all possible date fields produced by different mappers
+            const dateStr = doc.header.book_vchr_date ||
+                doc.header.invoice_date ||
+                doc.header.supplier_invoice_date ||
+                doc.header.vchr_date ||
+                doc.header.date;
+
+            if (dateStr && typeof dateStr === 'string' && dateStr.includes('-')) {
+                const parts = dateStr.split('-');
+                if (parts.length >= 2) {
+                    const yyyy = parts[0];
+                    const mm = parts[1];
+
+                    if (yyyy !== 'NaN' && mm !== 'NaN') {
+                        const mmyyyy = `${mm}${yyyy}`;
+                        if (!periodCache[mmyyyy]) {
+                            console.log(`[DEBUG] Resolving tax period for mmyyyy=${mmyyyy} from dateStr=${dateStr}`);
+                            periodCache[mmyyyy] = await TaxPeriodService.ensureTaxPeriodExists(mmyyyy, db);
+                        }
+                        doc.header.tax_period_id = periodCache[mmyyyy];
+                        doc.header.filing_period = mmyyyy;
+                    } else {
+                        console.warn(`[DEBUG] Skipping dynamic period resolution for invalid parts: yyyy=${yyyy}, mm=${mm}, dateStr=${dateStr}`);
                     }
-                    doc.header.tax_period_id = periodCache[mmyyyy];
-                    doc.header.filing_period = mmyyyy;
                 }
+            } else {
+                console.log(`[DEBUG] Skipping dynamic period resolution: dateStr=${dateStr}`);
             }
         }
     }

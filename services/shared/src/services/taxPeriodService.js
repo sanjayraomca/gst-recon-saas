@@ -16,6 +16,11 @@ class TaxPeriodService {
         const month = parseInt(returnPeriod.substring(0, 2));
         const year = parseInt(returnPeriod.substring(2));
 
+        if (isNaN(month) || isNaN(year)) {
+            console.error(`[TaxPeriodService] Invalid month/year parsed from returnPeriod: ${returnPeriod}`);
+            return null;
+        }
+
         if (month >= 4) {
             return `${year}-${(year + 1).toString().substring(2)}`;
         } else {
@@ -29,7 +34,7 @@ class TaxPeriodService {
      */
     static async ensureTaxPeriodExists(returnPeriod, trx = null) {
         if (!returnPeriod || returnPeriod.length !== 6) return null;
-        
+
         const query = (trx || db);
 
         // 1. Check if Tax Period exists
@@ -37,7 +42,7 @@ class TaxPeriodService {
             .select('id')
             .where('period_code', returnPeriod)
             .first();
-            
+
         if (periodMatch) {
             return periodMatch.id;
         }
@@ -53,23 +58,34 @@ class TaxPeriodService {
             .select('id')
             .where('fy_code', fyCode)
             .first();
-            
+
         if (fyMatch) {
             fyId = fyMatch.id;
         } else {
+            console.log(`[TaxPeriodService] Creating missing financial year: ${fyCode}`);
             const startYear = parseInt(fyCode.split('-')[0]);
+
+            if (isNaN(startYear)) {
+                throw new Error(`Failed to parse startYear from fyCode: ${fyCode}`);
+            }
+
             const startDate = `${startYear}-04-01`;
             const endDate = `${startYear + 1}-03-31`;
-            
-            const [insertedFy] = await query('financial_years')
-                .insert({
-                    fy_code: fyCode,
-                    display_name: `FY ${fyCode}`,
-                    start_date: startDate,
-                    end_date: endDate
-                })
-                .returning('id');
-            fyId = insertedFy?.id ?? insertedFy;
+
+            try {
+                const [insertedFy] = await query('financial_years')
+                    .insert({
+                        fy_code: fyCode,
+                        display_name: `FY ${fyCode}`,
+                        start_date: startDate,
+                        end_date: endDate
+                    })
+                    .returning('id');
+                fyId = insertedFy?.id ?? insertedFy;
+            } catch (dbErr) {
+                console.error(`[TaxPeriodService] Error inserting FY ${fyCode}:`, dbErr.message);
+                throw dbErr;
+            }
         }
 
         // 3. Create Tax Period
