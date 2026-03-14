@@ -354,6 +354,22 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const descIdx = col['description'] ?? col['item_desc'] ?? null;
     const taxPerIdx = col['tax_per'] ?? col['gst_rate'] ?? col['tax_rate'] ?? null;
 
+    // Amendment / Original Fields
+    const isAmendmentIdx = col['is_amendment'] ?? null;
+    const origInvNoIdx = col['original_supplier_invoice_no'] ?? null;
+    const origInvDateIdx = col['original_supplier_invoice_date'] ?? null;
+    const origVchrNoIdx = col['original_book_vchr_no'] ?? null;
+    const origVchrDateIdx = col['original_book_vchr_date'] ?? null;
+    const origNetAmtIdx = col['original_net_amount'] ?? null;
+    
+    // Original Item Fields
+    const origTaxableIdx = col['original_taxable_amount'] ?? null;
+    const origIgstIdx = col['original_igst_amount'] ?? null;
+    const origCgstIdx = col['original_cgst_amount'] ?? null;
+    const origSgstIdx = col['original_sgst_amount'] ?? null;
+    const origCessIdx = col['original_cess_amount'] ?? null;
+    const origTaxPerIdx = col['original_tax_per'] ?? null;
+
     if (invNumIdx === null || invDateIdx === null) {
         console.log('[processPurchaseSheet] ERROR: missing invoice_number or date column');
         return [];
@@ -465,6 +481,12 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     itc_eligible: true,
                     itc_claimed: false,
                     filing_period: derivedFilingPeriod,
+                    is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
+                    original_supplier_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
+                    original_supplier_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
+                    original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
+                    original_book_vchr_date: origVchrDateIdx !== null ? parseDate(row[origVchrDateIdx]) : null,
+                    original_net_amount: origNetAmtIdx !== null ? cleanAmount(row[origNetAmtIdx]) : 0,
                 },
                 items: []
             });
@@ -491,7 +513,13 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cess,
-            total_amount_with_tax: itemTotal
+            total_amount_with_tax: itemTotal,
+            original_taxable_amount: origTaxableIdx !== null ? cleanAmount(row[origTaxableIdx]) : 0,
+            original_igst_amount: origIgstIdx !== null ? cleanAmount(row[origIgstIdx]) : 0,
+            original_cgst_amount: origCgstIdx !== null ? cleanAmount(row[origCgstIdx]) : 0,
+            original_sgst_amount: origSgstIdx !== null ? cleanAmount(row[origSgstIdx]) : 0,
+            original_cess_amount: origCessIdx !== null ? cleanAmount(row[origCessIdx]) : 0,
+            original_tax_per: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0
         });
     }
 

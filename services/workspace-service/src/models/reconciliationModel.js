@@ -185,15 +185,15 @@ class ReconciliationModel {
             for (const purchaseInv of validPurchaseInvoices) {
                 const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
-                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_cgst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_sgst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_cess_amount) || 0);
-                
+                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_sgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cess_amount) || 0);
+
                 const pDate = new Date(purchaseInv.supplier_invoice_date);
                 const pNormalizedInv = this.normalizeInvoiceNumber(purchaseInv.supplier_invoice_no);
                 const pCategory = mapCategory(purchaseInv.voucher_type);
-                
+
                 let matchType = null;
                 const match = validGstr2bInvoices.find(gstr2bInv => {
                     if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
@@ -204,9 +204,9 @@ class ReconciliationModel {
                     const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
                     const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
                     const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
-                    
+
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
-                    
+
                     // 2. Category Match (Invoice vs Note vs Import vs ISD)
                     if (pCategory !== gCategory) {
                         if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
@@ -218,17 +218,17 @@ class ReconciliationModel {
                     const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
                     const gOriginalInv = this.normalizeInvoiceNumber(gstr2bInv.original_invoice_number);
                     const invMatch = (pNormalizedInv === gNormalizedInv) || (gOriginalInv && pNormalizedInv === gOriginalInv);
-                    
+
                     if (!invMatch) return false;
-                    
+
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = (parseFloat(gstr2bInv.igst) || 0) + 
-                                 (parseFloat(gstr2bInv.cgst) || 0) + 
-                                 (parseFloat(gstr2bInv.sgst) || 0) + 
-                                 (parseFloat(gstr2bInv.cess) || 0);
+                    const gTax = (parseFloat(gstr2bInv.igst) || 0) +
+                        (parseFloat(gstr2bInv.cgst) || 0) +
+                        (parseFloat(gstr2bInv.sgst) || 0) +
+                        (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
-                    
+
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
                     const exactDate = dateDiff === 0;
                     const exactTaxable = Math.abs(pTaxable - gTaxable) < 0.01;
@@ -260,7 +260,7 @@ class ReconciliationModel {
                 if (match) {
                     matchedGstr2bIds.add(match.id);
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
-                    
+
                     let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
                     if (finalStatus === 'matched') matchedCount++;
                     else if (finalStatus === 'mismatch') mismatchedCount++;
@@ -294,14 +294,14 @@ class ReconciliationModel {
             for (const purchaseInv of unmatchedPurchases) {
                 const pNet = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
                 const pTaxable = isNaN(parseFloat(purchaseInv.taxable_total)) ? 0 : parseFloat(purchaseInv.taxable_total);
-                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_cgst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_sgst_amount) || 0) + 
-                             (parseFloat(purchaseInv.total_cess_amount) || 0);
-                
+                const pTax = (parseFloat(purchaseInv.total_igst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_sgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cess_amount) || 0);
+
                 const pDate = new Date(purchaseInv.supplier_invoice_date);
                 const pCategory = mapCategory(purchaseInv.voucher_type);
-                
+
                 let matchType = null;
                 const match = validGstr2bInvoices.find(gstr2bInv => {
                     if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
@@ -312,9 +312,9 @@ class ReconciliationModel {
                     const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
                     const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
                     const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
-                    
+
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
-                    
+
                     // 2. Category Match
                     if (pCategory !== gCategory) {
                         if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
@@ -325,12 +325,12 @@ class ReconciliationModel {
                     // 3. Amount + Date Match (Fuzzy)
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = (parseFloat(gstr2bInv.igst) || 0) + 
-                                 (parseFloat(gstr2bInv.cgst) || 0) + 
-                                 (parseFloat(gstr2bInv.sgst) || 0) + 
-                                 (parseFloat(gstr2bInv.cess) || 0);
+                    const gTax = (parseFloat(gstr2bInv.igst) || 0) +
+                        (parseFloat(gstr2bInv.cgst) || 0) +
+                        (parseFloat(gstr2bInv.sgst) || 0) +
+                        (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
-                    
+
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
                     const diffTaxable = Math.abs(pTaxable - gTaxable);
                     const diffTax = Math.abs(pTax - gTax);
@@ -351,7 +351,7 @@ class ReconciliationModel {
                 if (match) {
                     matchedGstr2bIds.add(match.id);
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
-                    
+
                     let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
                     if (finalStatus === 'matched') matchedCount++;
                     else if (finalStatus === 'mismatch') mismatchedCount++;
@@ -409,7 +409,7 @@ class ReconciliationModel {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
                     const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const isEligible = gstr2bInv.itc_available !== false && gstr2bInv.itc_eligibility !== 'No' && gstr2bInv.itc_eligibility !== 'N';
-                    
+
                     matchResults.push({
                         recon_run_id: runId,
                         workspace_id: workspaceId,
@@ -443,11 +443,11 @@ class ReconciliationModel {
                 if (purchaseIds.length > 0 || gstr2bIds.length > 0) {
                     const deleteQuery = trx('reconciliation_results')
                         .where('workspace_id', workspaceId)
-                        .where(function() {
+                        .where(function () {
                             if (purchaseIds.length > 0) this.whereIn('purchase_invoice_id', purchaseIds);
                             if (gstr2bIds.length > 0) this.orWhereIn('gstr2b_invoice_id', gstr2bIds);
                         });
-                    
+
                     const deletedCount = await deleteQuery.delete();
                     if (deletedCount > 0) {
                         console.log(`[Recon Task] Cleared ${deletedCount} existing results for run ${runId}`);
@@ -607,9 +607,9 @@ class ReconciliationModel {
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             // Join with tax_periods using purchase_vouchers fk or normalized_gstr2b_invoices period_code
-            .leftJoin('tax_periods as tp', function() {
+            .leftJoin('tax_periods as tp', function () {
                 this.on('tp.id', '=', 'pi.tax_period_id')
-                    .orOn(function() {
+                    .orOn(function () {
                         this.on('tp.period_code', '=', 'gi.return_period')
                             .andOnNull('pi.tax_period_id');
                     });
@@ -645,11 +645,11 @@ class ReconciliationModel {
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
             if (workflow_status === 'pending') {
                 // For pending, we show rows where status is either explicitly 'pending' or NULL
-                query.where(function() {
+                query.where(function () {
                     this.where(knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), 'pending');
                 });
             } else {
-                query.where(function() {
+                query.where(function () {
                     this.where('rs_pi.recon_status', workflow_status)
                         .orWhere('rs_gi.recon_status', workflow_status);
                 });
@@ -669,14 +669,14 @@ class ReconciliationModel {
 
         if (date_from) {
             query.where(function () {
-                this.where('pi.due_date', '>=', date_from)
+                this.where('pi.supplier_invoice_date', '>=', date_from)
                     .orWhere('gi.document_date', '>=', date_from);
             });
         }
 
         if (date_to) {
             query.where(function () {
-                this.where('pi.due_date', '<=', date_to)
+                this.where('pi.supplier_invoice_date', '<=', date_to)
                     .orWhere('gi.document_date', '<=', date_to);
             });
         }
@@ -723,7 +723,7 @@ class ReconciliationModel {
                 .join('financial_years as fymas2', 'tp.fy_id', 'fymas2.id')
                 .select('tp.end_date')
                 .orderBy('tp.end_date', 'desc');
-            
+
             if (fy && fy !== 'ALL') {
                 if (fy.includes('-')) {
                     periodQuery.where('fymas2.fy_code', fy);
@@ -731,15 +731,15 @@ class ReconciliationModel {
                     periodQuery.where('tp.year', parseInt(fy));
                 }
             }
-            
+
             if (quarter && quarter !== 'ALL') {
                 periodQuery.where('tp.quarter', parseInt(quarter));
             }
-            
+
             if (month && month !== 'ALL') {
                 periodQuery.where('tp.month', parseInt(month));
             }
-            
+
             const latestPeriod = await periodQuery.first();
             if (latestPeriod) {
                 dateLimit = latestPeriod.end_date;
@@ -749,7 +749,7 @@ class ReconciliationModel {
         if (dateLimit) {
             query.where('tp.end_date', '<=', dateLimit);
             // Also strictly limit invoice dates to ensure no data from future periods appears
-            query.where(function() {
+            query.where(function () {
                 this.where('pi.supplier_invoice_date', '<=', dateLimit)
                     .orWhere('gi.document_date', '<=', dateLimit);
             });
@@ -838,7 +838,7 @@ class ReconciliationModel {
             'rr.variance_amount',
             'rr.created_at',
             'rr.updated_at',
-            
+
             // Row identification
             'pi.id as purchase_invoice_id',
             'gi.id as gstr2b_invoice_id',
@@ -884,7 +884,7 @@ class ReconciliationModel {
             'gi.filing_date as gstr2b_filing_date',
             'gi.reverse_charge as gstr2b_reverse_charge',
             'gi.place_of_supply as gstr2b_pos',
-            
+
             // Dynamic GST & Tax Type Mappings
             'gi.source_section as gstr2b_source_section',
             'pi.voucher_type as purchase_voucher_type',
@@ -894,7 +894,7 @@ class ReconciliationModel {
             'pi.total_igst_amount as purchase_igst',
             'pi.total_cgst_amount as purchase_cgst',
             'pi.total_sgst_amount as purchase_sgst',
-            
+
             // Workflow status from the separate table, defaulting to 'pending'
             knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status')
         ).orderBy('rr.created_at', 'desc');
@@ -933,14 +933,14 @@ class ReconciliationModel {
     static calculateSimilarity(s1, s2) {
         if (!s1 || !s2) return 0;
         if (s1 === s2) return 1;
-        
+
         const m = s1.length;
         const n = s2.length;
         const dp = Array.from(Array(m + 1), () => Array(n + 1).fill(0));
-        
+
         for (let i = 0; i <= m; i++) dp[i][0] = i;
         for (let j = 0; j <= n; j++) dp[0][j] = j;
-        
+
         for (let i = 1; i <= m; i++) {
             for (let j = 1; j <= n; j++) {
                 if (s1[i - 1] === s2[j - 1]) {
@@ -954,7 +954,7 @@ class ReconciliationModel {
                 }
             }
         }
-        
+
         const maxLen = Math.max(m, n);
         const distance = dp[m][n];
         return (maxLen - distance) / maxLen;

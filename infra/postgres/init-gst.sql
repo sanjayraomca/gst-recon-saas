@@ -1121,6 +1121,12 @@ CREATE TABLE purchase_vouchers (
     payment_status VARCHAR(20) DEFAULT 'UNPAID'
         CHECK (payment_status IN ('UNPAID','PARTIAL','PAID','OVERDUE')),
     amount_paid NUMERIC(15,2) DEFAULT 0,
+    is_amendment BOOLEAN DEFAULT FALSE,
+    original_supplier_invoice_date DATE,
+    original_supplier_invoice_no VARCHAR(100),
+    original_book_vchr_no VARCHAR(100),
+    original_book_vchr_date DATE,
+    original_net_amount NUMERIC(15, 2),
 
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -1164,6 +1170,12 @@ CREATE TABLE purchase_items (
 
     -- Reverse Charge
     is_rcm BOOLEAN DEFAULT FALSE,
+    original_taxable_amount NUMERIC(15, 2),
+    original_igst_amount NUMERIC(15, 2),
+    original_cgst_amount NUMERIC(15, 2),
+    original_sgst_amount NUMERIC(15, 2),
+    original_cess_amount NUMERIC(15, 2),
+    original_tax_per NUMERIC(5, 2),
 
     -- ITC Blocking (Added 2026-02-21)
     itc_eligible BOOLEAN DEFAULT TRUE,
