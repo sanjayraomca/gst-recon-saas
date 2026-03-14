@@ -718,16 +718,18 @@ class ReconciliationModel {
 
         // --- NEW: Cumulative Period Filtering (Month as End Date) ---
         let dateLimit = null;
-        if (fy && fy !== 'ALL') {
+        if ((fy && fy !== 'ALL') || (month && month !== 'ALL') || (quarter && quarter !== 'ALL')) {
             const periodQuery = knex('tax_periods as tp')
                 .join('financial_years as fymas2', 'tp.fy_id', 'fymas2.id')
                 .select('tp.end_date')
                 .orderBy('tp.end_date', 'desc');
             
-            if (fy.includes('-')) {
-                periodQuery.where('fymas2.fy_code', fy);
-            } else {
-                periodQuery.where('tp.year', parseInt(fy));
+            if (fy && fy !== 'ALL') {
+                if (fy.includes('-')) {
+                    periodQuery.where('fymas2.fy_code', fy);
+                } else {
+                    periodQuery.where('tp.year', parseInt(fy));
+                }
             }
             
             if (quarter && quarter !== 'ALL') {
@@ -777,9 +779,17 @@ class ReconciliationModel {
         }
 
         // --- Calculate Totals before limit/offset ---
-        const countQuery = query.clone().clearSelect().count('* as total');
-        const countResult = await countQuery.first();
-        const total = parseInt(countResult.total);
+        const totalsQuery = query.clone()
+            .clearSelect()
+            .select(
+                knex.raw('SUM(gi.taxable_value) as gstr2b_taxable_total'),
+                knex.raw('SUM(pi.taxable_total) as purchase_taxable_total'),
+                knex.raw('SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2b_tax_total'),
+                knex.raw('SUM(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0)) as purchase_tax_total'),
+                knex.raw('COUNT(*) as total')
+            );
+        const totalsResult = await totalsQuery.first();
+        const total = parseInt(totalsResult.total || 0);
 
         // --- Calculate filtered counts by status ---
         const statusCountsQuery = query.clone()
@@ -792,7 +802,13 @@ class ReconciliationModel {
         const summary = {
             matched: 0,
             mismatched: 0,
-            missing: 0
+            missing: 0,
+            totals: {
+                gstr2b_taxable: parseFloat(totalsResult.gstr2b_taxable_total || 0),
+                purchase_taxable: parseFloat(totalsResult.purchase_taxable_total || 0),
+                gstr2b_tax: parseFloat(totalsResult.gstr2b_tax_total || 0),
+                purchase_tax: parseFloat(totalsResult.purchase_tax_total || 0)
+            }
         };
         statusCountsResult.forEach(row => {
             const status = row.match_status;
@@ -834,11 +850,21 @@ class ReconciliationModel {
 
             // Purchase/Books mapping
             'pi.supplier_invoice_no as purchase_invoice_number',
-            'pi.due_date as purchase_invoice_date',
+            knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date) as purchase_invoice_date'),
             'pi.net_amount as purchase_invoice_total',
             'pi.taxable_total as purchase_taxable',
             knex.raw('COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0) as purchase_tax'),
             knex.raw('CASE WHEN pi.taxable_total > 0 THEN ROUND(((COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0)) / pi.taxable_total) * 100) ELSE 0 END as purchase_tax_rate'),
+            'pi.is_rcm as purchase_is_rcm',
+            'pi.total_cess_amount as purchase_cess',
+            'pi.is_interstate as purchase_is_interstate',
+            'pi.book_vchr_no',
+            'pi.book_vchr_date',
+            'pi.book_type',
+            'pi.filing_period as purchase_filing_period',
+            'pi.filing_date as purchase_filing_date',
+            'pi.itc_eligible as purchase_itc_eligible',
+            'pi.place_of_supply as purchase_pos',
 
             // GSTR-2B mapping
             'gi.document_number_clean as gstr2b_invoice_number',
@@ -847,6 +873,17 @@ class ReconciliationModel {
             'gi.taxable_value as gstr2b_taxable',
             knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax'),
             knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr2b_tax_rate'),
+            'gi.applicable_tax_rate_percent as gstr2b_tax_rate_percent',
+            'gi.itc_available as gstr2b_itc_available',
+            'gi.itc_eligibility as gstr2b_itc_eligibility',
+            'gi.itc_reason as gstr2b_itc_reason',
+            'gi.cess as gstr2b_cess',
+            'gi.original_invoice_number as gstr2b_original_invoice_number',
+            'gi.original_invoice_date as gstr2b_original_invoice_date',
+            'gi.filing_period as gstr2b_filing_period',
+            'gi.filing_date as gstr2b_filing_date',
+            'gi.reverse_charge as gstr2b_reverse_charge',
+            'gi.place_of_supply as gstr2b_pos',
             
             // Dynamic GST & Tax Type Mappings
             'gi.source_section as gstr2b_source_section',
