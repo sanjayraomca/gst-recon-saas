@@ -1558,6 +1558,15 @@ ALTER TABLE reconciliation_results
   ADD COLUMN IF NOT EXISTS matched_by VARCHAR(20) DEFAULT 'RULE',
   ADD COLUMN IF NOT EXISTS ai_confidence_score DECIMAL(5,2),
   ADD COLUMN IF NOT EXISTS ai_match_reason TEXT;
+
+-- Prevent duplicates by ensuring purchase_invoice_id and gstr2b_invoice_id are unique per workspace
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_purchase_inv 
+ON reconciliation_results (workspace_id, purchase_invoice_id) 
+WHERE purchase_invoice_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_gstr2b_inv 
+ON reconciliation_results (workspace_id, gstr2b_invoice_id) 
+WHERE gstr2b_invoice_id IS NOT NULL;
 -- Migration: Add GSTR-2A raw tables
 -- Mirroring GSTR-2B structure for consistency
 

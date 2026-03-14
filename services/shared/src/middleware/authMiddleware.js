@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
+const knex = require('../db/connection');
 
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     console.log(`verifyToken: Token present=${!!token}`);
@@ -45,7 +46,20 @@ const verifyToken = (req, res, next) => {
             email: (decoded.email || decoded.preferred_username || '').toLowerCase() // Normalize email casing
         };
 
-        console.log(`verifyToken: Success, sub=${req.user.sub}, email=${req.user.email}`);
+        // Resolve internal DB user ID (UUID)
+        try {
+            let dbUser = await knex('users').where({ auth_provider_id: sub }).select('id').first();
+            if (!dbUser && req.user.email) {
+                dbUser = await knex('users').where({ email: req.user.email }).select('id').first();
+            }
+            if (dbUser) {
+                req.user.db_id = dbUser.id; // Correct internal UUID
+            }
+        } catch (dbErr) {
+            console.error('[authMiddleware] DB lookup failed:', dbErr.message);
+        }
+
+        console.log(`verifyToken: Success, sub=${req.user.sub}, email=${req.user.email}, db_id=${req.user.db_id}`);
         next();
     } catch (err) {
         console.error('Token verification failed:', err.message);

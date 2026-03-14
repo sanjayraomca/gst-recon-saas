@@ -7,12 +7,12 @@ const takeAction = async (req, res) => {
     try {
         const workspaceId = req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
-        const userId = req.user.sub || req.user.id; // From authMiddleware
+        // userId should be the internal UUID (db_id) resolved by authMiddleware
+        const userId = req.user.db_id || req.user.sub || req.user.id; 
         const actionData = req.body;
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        // TODO: Verify result belongs to workspace (Model or query constraint)
         const action = await ReconciliationActionModel.createAction(resultId, actionData, userId);
 
         await logActivity({
@@ -50,72 +50,78 @@ const getPendingActions = async (req, res) => {
  * This records the user's decision (claimed, wrong_entry_portal, etc.) in the DB.
  */
 const updateReconStatus = async (req, res) => {
+    const trx = await knex.transaction();
     try {
         const workspaceId = req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
-        const userId = req.user?.sub || req.user?.id;
-        const tenantId = req.user?.tenant_id;
+        const userId = req.user.db_id || req.user.sub || req.user.id;
         const { recon_status } = req.body;
 
         const VALID_STATUSES = ['pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim'];
 
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
-        if (!resultId) return errorResponse(res, 'result_id is required', 400);
+        if (!workspaceId) {
+            await trx.rollback();
+            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        }
 
-        // reconciliation_results.id is an INTEGER primary key
         const resultIdInt = parseInt(resultId, 10);
         if (isNaN(resultIdInt)) {
+            await trx.rollback();
             return errorResponse(res, 'result_id must be a valid integer', 400);
         }
 
-        if (!recon_status) return errorResponse(res, 'recon_status is required', 400);
-        if (!VALID_STATUSES.includes(recon_status)) {
-            return errorResponse(res, `Invalid recon_status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
+        if (!recon_status || !VALID_STATUSES.includes(recon_status)) {
+            await trx.rollback();
+            return errorResponse(res, `Invalid or missing recon_status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
         }
 
-        // Fetch the reconciliation result to get invoice IDs
-        const reconResult = await knex('reconciliation_results')
-            .where({ id: resultIdInt })
+        // 1. Fetch the reconciliation result to get invoice IDs and verify ownership
+        const reconResult = await trx('reconciliation_results')
+            .where({ id: resultIdInt, workspace_id: workspaceId })
             .first();
 
         if (!reconResult) {
-            return errorResponse(res, 'Reconciliation result not found', 404);
+            await trx.rollback();
+            return errorResponse(res, 'Reconciliation result not found for this workspace', 404);
+        }
+
+        // 2. Resolve Tenant ID robustly
+        let tenantId = req.user?.tenant_id;
+        if (!tenantId) {
+            const workspace = await trx('workspaces').where({ id: workspaceId }).select('tenant_id').first();
+            tenantId = workspace?.tenant_id || workspaceId; 
         }
 
         const { purchase_invoice_id, gstr2b_invoice_id } = reconResult;
 
-        // Upsert logic: if a matching record exists, update it; otherwise insert
-        // We match by workspace_id + (book_data_id OR gstr_data_id)
+        // 3. Upsert logic for reconciliation_status
         let existing = null;
         if (purchase_invoice_id) {
-            existing = await knex('reconciliation_status')
+            existing = await trx('reconciliation_status')
                 .where({ workspace_id: workspaceId, book_data_id: purchase_invoice_id })
                 .first();
         }
         if (!existing && gstr2b_invoice_id) {
-            existing = await knex('reconciliation_status')
+            existing = await trx('reconciliation_status')
                 .where({ workspace_id: workspaceId, gstr_data_id: gstr2b_invoice_id })
                 .first();
         }
 
         let statusRecord;
         if (existing) {
-            // Update existing record
-            const [updated] = await knex('reconciliation_status')
+            [statusRecord] = await trx('reconciliation_status')
                 .where({ id: existing.id })
                 .update({
                     recon_status,
                     updated_by: userId || null,
-                    updated_date: knex.fn.now()
+                    updated_date: trx.fn.now()
                 })
                 .returning('*');
-            statusRecord = updated;
         } else {
-            // Insert new record
-            const [inserted] = await knex('reconciliation_status')
+            [statusRecord] = await trx('reconciliation_status')
                 .insert({
                     workspace_id: workspaceId,
-                    tenant_id: tenantId || workspaceId, // fallback if tenant_id missing from token
+                    tenant_id: tenantId,
                     book_data_id: purchase_invoice_id || null,
                     book_data_type: purchase_invoice_id ? 'purchase_voucher' : null,
                     gstr_data_id: gstr2b_invoice_id || null,
@@ -123,24 +129,26 @@ const updateReconStatus = async (req, res) => {
                     recon_status,
                     status: 'Active',
                     added_by: userId || null,
-                    added_date: knex.fn.now(),
+                    added_date: trx.fn.now(),
                     updated_by: userId || null,
-                    updated_date: knex.fn.now(),
-                    extra_info: JSON.stringify({ recon_result_id: resultId })
+                    updated_date: trx.fn.now(),
+                    extra_info: { recon_result_id: resultIdInt }
                 })
                 .returning('*');
-            statusRecord = inserted;
         }
 
-        // ── Also update reconciliation_results.action_status ──
-        await knex('reconciliation_results')
+        // 4. Update reconciliation_results table directly for fast filtering/UI
+        await trx('reconciliation_results')
             .where({ id: resultIdInt })
             .update({
                 action_status: recon_status,
-                updated_at: knex.fn.now()
+                updated_at: trx.fn.now()
             });
 
-        await logActivity({
+        await trx.commit();
+
+        // 5. Async Log Activity (outside transaction)
+        logActivity({
             userId,
             tenantId,
             workspaceId,
@@ -149,11 +157,12 @@ const updateReconStatus = async (req, res) => {
             entityId: statusRecord.id,
             details: { resultId, recon_status },
             req
-        });
+        }).catch(err => console.error('[ActivityLog] Error:', err));
 
         return successResponse(res, statusRecord, 'Reconciliation status updated successfully');
     } catch (error) {
-        console.error('Error updating reconciliation status:', error);
+        if (trx) await trx.rollback();
+        console.error('[updateReconStatus] Critical Error:', error);
         return errorResponse(res, error.message, 500);
     }
 };

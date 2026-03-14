@@ -13,7 +13,7 @@ const dbConfig = {
 
 const minioClient = new MinioClient({
     endPoint: (process.env.MINIO_ENDPOINT === 'minio' ? '127.0.0.1' : process.env.MINIO_ENDPOINT) || '127.0.0.1',
-    port: parseInt(process.env.MINIO_PORT || '9000'),
+    port: parseInt(process.env.MINIO_PORT || '9091'),
     useSSL: process.env.MINIO_USE_SSL === 'true',
     accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
     secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin'
@@ -35,6 +35,7 @@ const tablesToTruncate = [
     'sales_invoice_items',
     'sales_invoices',
     'reconciliation_results',
+    'reconciliation_status',
     'reconciliation_runs',
     'tax_periods',
     'financial_years'

@@ -40,7 +40,7 @@ const createRun = async (req, res) => {
         const runId = await ReconciliationModel.createRun(workspaceId, runData);
 
         await logActivity({
-            userId: req.user?.id,
+            userId: req.user?.db_id || req.user?.id,
             tenantId: req.user?.tenant_id,
             workspaceId,
             actionType: 'RECONCILIATION_RUN',

@@ -434,12 +434,33 @@ class ReconciliationModel {
 
             if (matchResults.length > 0) {
                 await progressEmitter.emitProgress(runId, 85, 'Saving reconciliation results...');
+
+                // collection of invoice IDs to clear previous results
+                const purchaseIds = matchResults.map(r => r.purchase_invoice_id).filter(id => id);
+                const gstr2bIds = matchResults.map(r => r.gstr2b_invoice_id).filter(id => id);
+
+                // --- 1. Prevent Duplicates: Delete existing results for these invoices in this workspace ---
+                if (purchaseIds.length > 0 || gstr2bIds.length > 0) {
+                    const deleteQuery = trx('reconciliation_results')
+                        .where('workspace_id', workspaceId)
+                        .where(function() {
+                            if (purchaseIds.length > 0) this.whereIn('purchase_invoice_id', purchaseIds);
+                            if (gstr2bIds.length > 0) this.orWhereIn('gstr2b_invoice_id', gstr2bIds);
+                        });
+                    
+                    const deletedCount = await deleteQuery.delete();
+                    if (deletedCount > 0) {
+                        console.log(`[Recon Task] Cleared ${deletedCount} existing results for run ${runId}`);
+                    }
+                }
+
+                // --- 2. Insert New Results ---
                 const insertedResults = await trx('reconciliation_results').insert(matchResults).returning('*');
 
-                // ── Auto-populate reconciliation_status table ──────────────────────────
+                // ── 3. Auto-populate/Update reconciliation_status table ──────────────────────────
                 await progressEmitter.emitProgress(runId, 90, 'Updating reconciliation status...');
-                const workspace = await trx('workspaces').where({ id: workspaceId }).first();
-                const tenantId = workspace?.tenant_id || workspaceId;
+                const workspaceData = await trx('workspaces').where({ id: workspaceId }).first();
+                const tenantId = workspaceData?.tenant_id || workspaceId;
 
                 const statusRows = insertedResults
                     .filter(r => r.purchase_invoice_id || r.gstr2b_invoice_id)
@@ -452,7 +473,7 @@ class ReconciliationModel {
                         gstr_type: r.gstr2b_invoice_id ? 'gstr2b' : null,
                         recon_status: 'pending',
                         status: 'Active',
-                        added_date: knex.fn.now(),
+                        // added_date: knex.fn.now(), // Only for new records
                         updated_date: knex.fn.now(),
                         extra_info: JSON.stringify({
                             recon_result_id: r.id,
@@ -463,24 +484,33 @@ class ReconciliationModel {
                         })
                     }));
 
-                // Insert in batches of 100, skipping any that already have an entry
-                for (let i = 0; i < statusRows.length; i += 100) {
-                    const batch = statusRows.slice(i, i + 100);
-                    for (const row of batch) {
-                        // Check if entry already exists for this book/gstr data
-                        const hasBook = row.book_data_id
-                            ? await trx('reconciliation_status')
-                                .where({ workspace_id: workspaceId, book_data_id: row.book_data_id })
-                                .first()
-                            : null;
-                        const hasGstr = row.gstr_data_id && !hasBook
-                            ? await trx('reconciliation_status')
-                                .where({ workspace_id: workspaceId, gstr_data_id: row.gstr_data_id })
-                                .first()
-                            : null;
-                        if (!hasBook && !hasGstr) {
-                            await trx('reconciliation_status').insert(row);
-                        }
+                // Process in batches, updating existing records or matching new ones
+                for (const row of statusRows) {
+                    const existing = row.book_data_id
+                        ? await trx('reconciliation_status')
+                            .where({ workspace_id: workspaceId, book_data_id: row.book_data_id })
+                            .first()
+                        : await trx('reconciliation_status')
+                            .where({ workspace_id: workspaceId, gstr_data_id: row.gstr_data_id })
+                            .first();
+
+                    if (existing) {
+                        // Update existing status with latest result reference
+                        await trx('reconciliation_status')
+                            .where({ id: existing.id })
+                            .update({
+                                book_data_id: row.book_data_id,
+                                gstr_data_id: row.gstr_data_id,
+                                extra_info: row.extra_info,
+                                updated_date: row.updated_date
+                                // Note: we DON'T override recon_status if it's already claimed/mismatched
+                            });
+                    } else {
+                        // Insert new status
+                        await trx('reconciliation_status').insert({
+                            ...row,
+                            added_date: knex.fn.now()
+                        });
                     }
                 }
             }
@@ -683,11 +713,47 @@ class ReconciliationModel {
         }
 
         // Bypass specific period filters if we are looking at all pending historical data
+        // UNLESS a month/fy filter is explicitly selected to act as an end-date (per user request)
         const isPendingView = workflow_status === 'pending';
 
-        if (period && period !== 'ALL' && !isPendingView) {
+        // --- NEW: Cumulative Period Filtering (Month as End Date) ---
+        let dateLimit = null;
+        if (fy && fy !== 'ALL') {
+            const periodQuery = knex('tax_periods as tp')
+                .join('financial_years as fymas2', 'tp.fy_id', 'fymas2.id')
+                .select('tp.end_date')
+                .orderBy('tp.end_date', 'desc');
+            
+            if (fy.includes('-')) {
+                periodQuery.where('fymas2.fy_code', fy);
+            } else {
+                periodQuery.where('tp.year', parseInt(fy));
+            }
+            
+            if (quarter && quarter !== 'ALL') {
+                periodQuery.where('tp.quarter', parseInt(quarter));
+            }
+            
+            if (month && month !== 'ALL') {
+                periodQuery.where('tp.month', parseInt(month));
+            }
+            
+            const latestPeriod = await periodQuery.first();
+            if (latestPeriod) {
+                dateLimit = latestPeriod.end_date;
+            }
+        }
+
+        if (dateLimit) {
+            query.where('tp.end_date', '<=', dateLimit);
+            // Also strictly limit invoice dates to ensure no data from future periods appears
+            query.where(function() {
+                this.where('pi.supplier_invoice_date', '<=', dateLimit)
+                    .orWhere('gi.document_date', '<=', dateLimit);
+            });
+        } else if (period && period !== 'ALL' && !isPendingView) {
+            // Fallback to exact period if dateLimit wasn't calculated (legacy behavior)
             let periodToUse = period;
-            // Convert YYYY-MM to MMYYYY if needed
             if (/^\d{4}-\d{2}$/.test(period)) {
                 const [year, month] = period.split('-');
                 periodToUse = `${month}${year}`;
@@ -697,22 +763,6 @@ class ReconciliationModel {
                 this.where('tp.period_code', periodToUse)
                     .orWhere('gi.return_period', periodToUse);
             });
-        }
-
-        if (fy && fy !== 'ALL' && !isPendingView) {
-            if (fy.includes('-')) {
-                query.where('fymas.fy_code', fy);
-            } else {
-                query.where('tp.year', parseInt(fy));
-            }
-        }
-
-        if (quarter && quarter !== 'ALL' && !isPendingView) {
-            query.where('tp.quarter', parseInt(quarter));
-        }
-
-        if (month && month !== 'ALL' && !isPendingView) {
-            query.where('tp.month', parseInt(month));
         }
 
         if (search) {
