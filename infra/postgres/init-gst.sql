@@ -976,6 +976,7 @@ CREATE TABLE sales_invoices (
         CHECK (filing_status IN ('NOT_FILED', 'READY', 'FILED', 'FAILED')),
     filing_date DATE,
     filing_period CHAR(6),
+    return_period VARCHAR(10),
 
     -- Document Identification
     invoice_number VARCHAR(100) NOT NULL,
@@ -1004,6 +1005,14 @@ CREATE TABLE sales_invoices (
     total_sgst NUMERIC(15, 2) DEFAULT 0,
     total_cess NUMERIC(15, 2) DEFAULT 0,
     total_invoice_value NUMERIC(15, 2) DEFAULT 0,
+    original_invoice_no VARCHAR(100),
+    original_invoice_date DATE,
+    original_book_vchr_no VARCHAR(100),
+    original_book_vchr_date DATE,
+    original_net_amount NUMERIC(15, 2),
+    return_date DATE,
+    original_return_period VARCHAR(10),
+    original_return_date DATE,
     round_off NUMERIC(8, 2) DEFAULT 0,
 
     -- Payment Tracking
@@ -1043,6 +1052,12 @@ CREATE TABLE sales_invoice_items (
 
     taxable_value NUMERIC(15, 2) NOT NULL,
     gst_rate_percent NUMERIC(5, 2),
+    original_taxable_value NUMERIC(15, 2),
+    original_igst_amount NUMERIC(15, 2),
+    original_cgst_amount NUMERIC(15, 2),
+    original_sgst_amount NUMERIC(15, 2),
+    original_cess_amount NUMERIC(15, 2),
+    original_gst_rate_percent NUMERIC(5, 2),
 
     igst_amount NUMERIC(15, 2) DEFAULT 0,
     cgst_amount NUMERIC(15, 2) DEFAULT 0,
@@ -1081,6 +1096,7 @@ CREATE TABLE purchase_vouchers (
     filing_status VARCHAR(20) DEFAULT 'NOT_FILED',
     filing_date DATE,
     filing_period CHAR(6),
+    return_period VARCHAR(10),
 
     supplier_id UUID REFERENCES supplier_master(id),
     supplier_name VARCHAR(500),
@@ -1127,6 +1143,9 @@ CREATE TABLE purchase_vouchers (
     original_book_vchr_no VARCHAR(100),
     original_book_vchr_date DATE,
     original_net_amount NUMERIC(15, 2),
+    return_date DATE,
+    original_return_period VARCHAR(10),
+    original_return_date DATE,
 
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,

@@ -41,8 +41,11 @@ class BookModel {
                             invoice_number, invoice_date, book_type, customer_name, customer_gstin,
                             place_of_supply, reverse_charge, is_amendment, round_off, total_taxable_value, 
                             total_igst, total_cgst, total_sgst, total_cess,
-                            total_invoice_value, filing_period, payment_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
+                            total_invoice_value, filing_period, return_period, payment_status,
+                            original_invoice_no, original_invoice_date, original_book_vchr_no, 
+                            original_book_vchr_date, original_net_amount, return_date, 
+                            original_return_period, original_return_date
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id) 
                         DO UPDATE SET 
                             total_invoice_value = EXCLUDED.total_invoice_value,
@@ -53,6 +56,15 @@ class BookModel {
                             total_cess = EXCLUDED.total_cess,
                             is_amendment = EXCLUDED.is_amendment,
                             round_off = EXCLUDED.round_off,
+                            return_period = EXCLUDED.return_period,
+                            original_invoice_no = EXCLUDED.original_invoice_no,
+                            original_invoice_date = EXCLUDED.original_invoice_date,
+                            original_book_vchr_no = EXCLUDED.original_book_vchr_no,
+                            original_book_vchr_date = EXCLUDED.original_book_vchr_date,
+                            original_net_amount = EXCLUDED.original_net_amount,
+                            return_date = EXCLUDED.return_date,
+                            original_return_period = EXCLUDED.original_return_period,
+                            original_return_date = EXCLUDED.original_return_date,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
@@ -60,7 +72,10 @@ class BookModel {
                         header.invoice_number, header.invoice_date, header.book_type || 'SA', header.customer_name || null, header.customer_gstin || null,
                         header.place_of_supply || null, header.reverse_charge || false, header.is_amendment || false, header.round_off || 0, header.total_taxable_value || 0,
                         header.total_igst || 0, header.total_cgst || 0, header.total_sgst || 0, header.total_cess || 0,
-                        header.total_invoice_value || 0, header.filing_period || null
+                        header.total_invoice_value || 0, header.filing_period || null, header.return_period || header.filing_period || null,
+                        header.original_invoice_no || null, header.original_invoice_date || null, header.original_book_vchr_no || null,
+                        header.original_book_vchr_date || null, header.original_net_amount || 0, header.return_date || null,
+                        header.original_return_period || null, header.original_return_date || null
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;
@@ -91,7 +106,13 @@ class BookModel {
                             cgst_amount: item.cgst_amount || 0,
                             sgst_amount: item.sgst_amount || 0,
                             cess_amount: item.cess_amount || 0,
-                            total_amount_with_tax: item.total_amount_with_tax || 0
+                            total_amount_with_tax: item.total_amount_with_tax || 0,
+                            original_taxable_value: item.original_taxable_value || 0,
+                            original_igst_amount: item.original_igst_amount || 0,
+                            original_cgst_amount: item.original_cgst_amount || 0,
+                            original_sgst_amount: item.original_sgst_amount || 0,
+                            original_cess_amount: item.original_cess_amount || 0,
+                            original_gst_rate_percent: item.original_gst_rate_percent || 0
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
@@ -164,8 +185,11 @@ class BookModel {
                             total_qty, discount,
                             taxable_total, net_amount,
                             total_cgst_amount, total_sgst_amount, total_igst_amount, total_cess_amount,
-                            itc_eligible, itc_claimed, filing_period, payment_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID')
+                            itc_eligible, itc_claimed, filing_period, return_period, payment_status,
+                            is_amendment, original_supplier_invoice_no, original_supplier_invoice_date,
+                            original_book_vchr_no, original_book_vchr_date, original_net_amount,
+                            return_date, original_return_period, original_return_date
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id, book_vchr_no)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
@@ -188,6 +212,16 @@ class BookModel {
                             total_igst_amount = EXCLUDED.total_igst_amount,
                             total_cess_amount = EXCLUDED.total_cess_amount,
                             itc_eligible = EXCLUDED.itc_eligible,
+                            return_period = EXCLUDED.return_period,
+                            is_amendment = EXCLUDED.is_amendment,
+                            original_supplier_invoice_no = EXCLUDED.original_supplier_invoice_no,
+                            original_supplier_invoice_date = EXCLUDED.original_supplier_invoice_date,
+                            original_book_vchr_no = EXCLUDED.original_book_vchr_no,
+                            original_book_vchr_date = EXCLUDED.original_book_vchr_date,
+                            original_net_amount = EXCLUDED.original_net_amount,
+                            return_date = EXCLUDED.return_date,
+                            original_return_period = EXCLUDED.original_return_period,
+                            original_return_date = EXCLUDED.original_return_date,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                      `, [
@@ -199,7 +233,10 @@ class BookModel {
                         header.total_qty || 0, header.discount || 0,
                         header.taxable_total || 0, header.net_amount || 0,
                         header.total_cgst_amount || 0, header.total_sgst_amount || 0, header.total_igst_amount || 0, header.total_cess_amount || 0,
-                        header.itc_eligible !== undefined ? header.itc_eligible : null, header.itc_claimed !== undefined ? header.itc_claimed : null, header.filing_period || null
+                        header.itc_eligible !== undefined ? header.itc_eligible : null, header.itc_claimed !== undefined ? header.itc_claimed : null, header.filing_period || null, header.return_period || header.filing_period || null,
+                        header.is_amendment || false, header.original_supplier_invoice_no || null, header.original_supplier_invoice_date || null,
+                        header.original_book_vchr_no || null, header.original_book_vchr_date || null, header.original_net_amount || 0,
+                        header.return_date || null, header.original_return_period || null, header.original_return_date || null
                     ]);
 
                     const voucherId = headerRes.rows[0].id;
@@ -229,7 +266,13 @@ class BookModel {
                             cgst_amount: item.cgst_amount || 0,
                             sgst_amount: item.sgst_amount || 0,
                             cess_amount: item.cess_amount || 0,
-                            total_amount_with_tax: item.total_amount_with_tax || 0
+                            total_amount_with_tax: item.total_amount_with_tax || 0,
+                            original_taxable_amount: item.original_taxable_amount || 0,
+                            original_igst_amount: item.original_igst_amount || 0,
+                            original_cgst_amount: item.original_cgst_amount || 0,
+                            original_sgst_amount: item.original_sgst_amount || 0,
+                            original_cess_amount: item.original_cess_amount || 0,
+                            original_tax_per: item.original_tax_per || 0
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }

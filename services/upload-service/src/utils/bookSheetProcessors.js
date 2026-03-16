@@ -172,6 +172,24 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
     const descIdx = col['description'] ?? null;
     const taxPerIdx = col['tax_per'] ?? col['tax_rate'] ?? col['gst_rate'] ?? null;
     const itemTotalIdx = col['row_wise_total_amount'] ?? col['total_amount_with_tax'] ?? null;
+    
+    // Additional Amendment Fields
+    const origInvNoIdx = col['original_invoice_no'] ?? col['original_supplier_invoice_no'] ?? null;
+    const origInvDateIdx = col['original_invoice_date'] ?? col['original_supplier_invoice_date'] ?? null;
+    const origVchrNoIdx = col['original_book_vchr_no'] ?? null;
+    const origVchrDateIdx = col['original_book_vchr_date'] ?? null;
+    const origNetAmtIdx = col['original_net_amount'] ?? null;
+    const returnDateIdx = col['return_date'] ?? null;
+    const origReturnPeriodIdx = col['original_return_period'] ?? null;
+    const origReturnDateIdx = col['original_return_date'] ?? null;
+
+    // Original Item Fields
+    const origTaxableIdx = col['original_taxable_amount'] ?? col['original_taxable_value'] ?? null;
+    const origIgstIdx = col['original_igst_amount'] ?? null;
+    const origCgstIdx = col['original_cgst_amount'] ?? null;
+    const origSgstIdx = col['original_sgst_amount'] ?? null;
+    const origCessIdx = col['original_cess_amount'] ?? null;
+    const origTaxPerIdx = col['original_tax_per'] ?? col['original_gst_rate_percent'] ?? null;
 
     if (invNumIdx === null || invDateIdx === null) {
         console.log('[processSalesSheet] ERROR: missing invoice_number or date column');
@@ -255,6 +273,15 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     total_cess: 0,
                     total_invoice_value: 0,
                     filing_period: derivedFilingPeriod,
+                    return_period: derivedFilingPeriod,
+                    original_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
+                    original_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
+                    original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
+                    original_book_vchr_date: origVchrDateIdx !== null ? parseDate(row[origVchrDateIdx]) : null,
+                    original_net_amount: origNetAmtIdx !== null ? cleanAmount(row[origNetAmtIdx]) : 0,
+                    return_date: returnDateIdx !== null ? parseDate(row[returnDateIdx]) : null,
+                    original_return_period: origReturnPeriodIdx !== null ? (row[origReturnPeriodIdx] ?? '').toString().trim() : null,
+                    original_return_date: origReturnDateIdx !== null ? parseDate(row[origReturnDateIdx]) : null,
                 },
                 items: []
             });
@@ -281,7 +308,13 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cess,
-            total_amount_with_tax: itemTotal
+            total_amount_with_tax: itemTotal,
+            original_taxable_value: origTaxableIdx !== null ? cleanAmount(row[origTaxableIdx]) : 0,
+            original_igst_amount: origIgstIdx !== null ? cleanAmount(row[origIgstIdx]) : 0,
+            original_cgst_amount: origCgstIdx !== null ? cleanAmount(row[origCgstIdx]) : 0,
+            original_sgst_amount: origSgstIdx !== null ? cleanAmount(row[origSgstIdx]) : 0,
+            original_cess_amount: origCessIdx !== null ? cleanAmount(row[origCessIdx]) : 0,
+            original_gst_rate_percent: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0
         });
     }
 
@@ -361,6 +394,9 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const origVchrNoIdx = col['original_book_vchr_no'] ?? null;
     const origVchrDateIdx = col['original_book_vchr_date'] ?? null;
     const origNetAmtIdx = col['original_net_amount'] ?? null;
+    const returnDateIdx = col['return_date'] ?? null;
+    const origReturnPeriodIdx = col['original_return_period'] ?? null;
+    const origReturnDateIdx = col['original_return_date'] ?? null;
     
     // Original Item Fields
     const origTaxableIdx = col['original_taxable_amount'] ?? null;
@@ -481,12 +517,16 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     itc_eligible: true,
                     itc_claimed: false,
                     filing_period: derivedFilingPeriod,
+                    return_period: derivedFilingPeriod,
                     is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
                     original_supplier_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_supplier_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
                     original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
                     original_book_vchr_date: origVchrDateIdx !== null ? parseDate(row[origVchrDateIdx]) : null,
                     original_net_amount: origNetAmtIdx !== null ? cleanAmount(row[origNetAmtIdx]) : 0,
+                    return_date: returnDateIdx !== null ? parseDate(row[returnDateIdx]) : null,
+                    original_return_period: origReturnPeriodIdx !== null ? (row[origReturnPeriodIdx] ?? '').toString().trim() : null,
+                    original_return_date: origReturnDateIdx !== null ? parseDate(row[origReturnDateIdx]) : null,
                 },
                 items: []
             });
@@ -521,6 +561,27 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             original_cess_amount: origCessIdx !== null ? cleanAmount(row[origCessIdx]) : 0,
             original_tax_per: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0
         });
+
+        // VALIDATION LOGIC FOR AMENDMENTS
+        const header = v.header;
+        if (header.is_amendment) {
+            const hasOrigDate = header.original_supplier_invoice_date || header.original_book_vchr_date;
+            if (hasOrigDate) {
+                const voucherDate = new Date(header.book_vchr_date);
+                const origSuppDate = header.original_supplier_invoice_date ? new Date(header.original_supplier_invoice_date) : null;
+                const origBookDate = header.original_book_vchr_date ? new Date(header.original_book_vchr_date) : null;
+
+                const isSuppDateValid = !origSuppDate || origSuppDate <= voucherDate;
+                const isBookDateValid = !origBookDate || origBookDate <= voucherDate;
+
+                // Rule: original_supplier_invoice_date OR original_book_vchr_date must be <= voucher date
+                if (!(isSuppDateValid || isBookDateValid)) {
+                    console.warn(`[VALIDATION] Amendment validation failed for voucher ${header.book_vchr_no}: Original dates must be <= voucher date.`);
+                }
+            } else {
+                 console.warn(`[VALIDATION] Amendment validation failed for voucher ${header.book_vchr_no}: is_amendment is YES but no original dates found.`);
+            }
+        }
     }
 
     // Round and fallback net_amount
