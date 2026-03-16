@@ -173,12 +173,13 @@ class ReconciliationModel {
             const validPurchaseInvoices = purchaseInvoices;
             const validGstr2bInvoices = gstr2bInvoices;
 
-            // Helper to map Books categories to Portal categories
             const mapCategory = (booksType) => {
-                const type = (booksType || 'PURCHASE').toUpperCase();
-                if (type === 'CREDIT_NOTE') return 'CREDIT_NOTE';
-                if (type === 'DEBIT_NOTE') return 'DEBIT_NOTE';
-                return 'INVOICE'; // PURCHASE, EXPENSE -> INVOICE
+                const type = (booksType || '').toString().toUpperCase();
+                if (type.includes('CREDIT')) return 'CREDIT_NOTE';
+                if (type.includes('DEBIT')) return 'DEBIT_NOTE';
+                if (type.includes('IMPORT') || type.includes('BOE')) return 'IMPORT';
+                if (type.includes('ISD')) return 'ISD';
+                return 'INVOICE';
             };
 
             // STEP 1: MATCH BY INVOICE NUMBER (STRICT)
@@ -207,12 +208,8 @@ class ReconciliationModel {
 
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
 
-                    // 2. Category Match (Invoice vs Note vs Import vs ISD)
-                    if (pCategory !== gCategory) {
-                        if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
-                            return false;
-                        }
-                    }
+                    // 2. Category Match
+                    if (!this.areCategoriesCompatible(pCategory, gCategory)) return false;
 
                     // 3. Invoice Number Match (Including Amendment check)
                     const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
@@ -231,8 +228,10 @@ class ReconciliationModel {
 
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
                     const exactDate = dateDiff === 0;
-                    const exactTaxable = Math.abs(pTaxable - gTaxable) < 0.01;
-                    const exactTax = Math.abs(pTax - gTax) < 0.01;
+                    
+                    // Use absolute values for amount matching to handle sign differences (Books vs Portal)
+                    const exactTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable)) < 0.01;
+                    const exactTax = Math.abs(Math.abs(pTax) - Math.abs(gTax)) < 0.01;
 
                     // Case 1: Exact Match
                     if (exactDate && exactTaxable && exactTax) {
@@ -316,11 +315,7 @@ class ReconciliationModel {
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
 
                     // 2. Category Match
-                    if (pCategory !== gCategory) {
-                        if (!(pCategory === 'INVOICE' && ['IMPORT', 'ISD'].includes(gCategory))) {
-                            return false;
-                        }
-                    }
+                    if (!this.areCategoriesCompatible(pCategory, gCategory)) return false;
 
                     // 3. Amount + Date Match (Fuzzy)
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
@@ -332,8 +327,8 @@ class ReconciliationModel {
                     const gDate = new Date(gstr2bInv.document_date);
 
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
-                    const diffTaxable = Math.abs(pTaxable - gTaxable);
-                    const diffTax = Math.abs(pTax - gTax);
+                    const diffTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable));
+                    const diffTax = Math.abs(Math.abs(pTax) - Math.abs(gTax));
 
                     // Thresholds for fuzzy matching
                     const dateNear = dateDiff <= 30; // Within 30 days
@@ -962,6 +957,23 @@ class ReconciliationModel {
 
     static normalizeGstin(gstin) {
         return (gstin || '').trim().toUpperCase();
+    }
+
+    /**
+     * Determines if two document categories are compatible for reconciliation.
+     * We allow all categories to be cross-matched to handle different terminology 
+     * between buyer and supplier (e.g. Buyer's Debit Note = Supplier's Credit Note).
+     */
+    static areCategoriesCompatible(pCat, gCat) {
+        if (!pCat || !gCat) return false;
+        
+        // As per user request "dont do hardcode" and "clear all possible outcomes",
+        // we allow matching between all documented financial types.
+        const validTypes = ['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'IMPORT', 'ISD'];
+        
+        // If both are recognized financial categories, they are "compatible" 
+        // and we let the Invoice Number + Amount + GSTIN define the actual match.
+        return validTypes.includes(pCat) && validTypes.includes(gCat);
     }
 
     /**

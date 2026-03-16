@@ -425,6 +425,43 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+ 
+  json-import-service:
+    build:
+      context: .
+      dockerfile: services/json-import-service/Dockerfile
+    container_name: gst-json-import-service
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "3007:3007"
+    environment:
+      - DB_HOST=postgres-main
+      - DB_NAME=gst_recon
+      - DB_USER=gstadmin
+      - DB_PASSWORD=GstAdmin123
+      - NATS_URL=nats://nats:4222
+      - PORT=3007
+    command: npm run dev
+    volumes:
+      - ./services/json-import-service/src:/app/services/json-import-service/src
+      - ./services/shared:/app/services/shared
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.json-import-service.rule=PathPrefix(`/json-import`)"
+      - "traefik.http.services.json-import-service.loadbalancer.server.port=3007"
+    networks:
+      - gst-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   notification-service:
     build:
