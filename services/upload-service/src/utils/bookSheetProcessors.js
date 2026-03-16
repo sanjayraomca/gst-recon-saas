@@ -180,6 +180,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
     const origVchrDateIdx = col['original_book_vchr_date'] ?? null;
     const origNetAmtIdx = col['original_net_amount'] ?? null;
     const returnDateIdx = col['return_date'] ?? null;
+    const returnPeriodIdx = col['return_period'] ?? null;
     const origReturnPeriodIdx = col['original_return_period'] ?? null;
     const origReturnDateIdx = col['original_return_date'] ?? null;
 
@@ -273,7 +274,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     total_cess: 0,
                     total_invoice_value: 0,
                     filing_period: derivedFilingPeriod,
-                    return_period: derivedFilingPeriod,
+                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
                     original_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
                     original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
@@ -395,6 +396,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const origVchrDateIdx = col['original_book_vchr_date'] ?? null;
     const origNetAmtIdx = col['original_net_amount'] ?? null;
     const returnDateIdx = col['return_date'] ?? null;
+    const returnPeriodIdx = col['return_period'] ?? null;
     const origReturnPeriodIdx = col['original_return_period'] ?? null;
     const origReturnDateIdx = col['original_return_date'] ?? null;
     
@@ -517,7 +519,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     itc_eligible: true,
                     itc_claimed: false,
                     filing_period: derivedFilingPeriod,
-                    return_period: derivedFilingPeriod,
+                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
                     is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
                     original_supplier_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_supplier_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
