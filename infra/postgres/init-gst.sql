@@ -1151,9 +1151,8 @@ CREATE TABLE purchase_vouchers (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
-    -- Unique constraint to prevent duplicates
     CONSTRAINT uq_purchase_voucher_invoice 
-    UNIQUE (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id)
+    UNIQUE (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
 );
 
 

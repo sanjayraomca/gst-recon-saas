@@ -190,7 +190,7 @@ class BookModel {
                             original_book_vchr_no, original_book_vchr_date, original_net_amount,
                             return_date, original_return_period, original_return_date
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (tenant_id, workspace_id, book_type, supplier_invoice_no, tax_period_id, book_vchr_no)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
                             book_vchr_date = EXCLUDED.book_vchr_date,
