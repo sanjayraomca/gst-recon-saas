@@ -9,6 +9,7 @@ router.post('/', verifyToken, workspaceController.createWorkspace);
 router.get('/', verifyToken, workspaceController.listWorkspaces);
 router.get('/:id', verifyToken, workspaceController.getWorkspace);
 router.get('/:id/dashboard-metrics', verifyToken, workspaceController.getDashboardMetrics);
+router.get('/:id/sidebar-counts', verifyToken, workspaceController.getSidebarCounts);
 router.get('/:id/latest-period', verifyToken, workspaceController.getLatestPeriod);
 router.get('/:id/tax-periods', verifyToken, workspaceController.getTaxPeriods);
 router.get('/:id/data-date-range', verifyToken, workspaceController.getDataDateRange);

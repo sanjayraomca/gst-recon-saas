@@ -255,7 +255,7 @@ class BookImportController {
             }
             console.log(`[DEBUG] DB insertion completed. inserted=${result.inserted}`);
 
-            if (result.inserted === 0) {
+            if (result.inserted === 0 && result.duplicateInvoices.length === 0) {
                 await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {
                     minioPath: minioResult.objectPath,
                     reason: 'No valid records found in file'

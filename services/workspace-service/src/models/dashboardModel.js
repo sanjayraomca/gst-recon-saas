@@ -250,6 +250,49 @@ class DashboardModel {
         const yyyy = maxDate.getFullYear();
         return { period: `${mm}${yyyy}` };
     }
+
+    /**
+     * Gets counts for sidebar badges
+     * 1. Book Data Import count (pending/recent)
+     * 2. GST Data Import count (pending/recent)
+     * 3. Reconciliation count (pending)
+     */
+    static async getSidebarCounts(workspaceId) {
+        // 1. & 2. GST/Book Import Counts from gstr_import_master
+        // For simplicity, we count imports in the last 7 days that are completed
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const importCounts = await knex('gstr_import_master')
+            .where({ workspace_id: workspaceId })
+            .where('upload_timestamp', '>=', sevenDaysAgo)
+            .select('import_type')
+            .count('* as count')
+            .groupBy('import_type');
+
+        const gstImportTypes = ['GSTR1', 'GSTR2A', 'GSTR2B', 'GSTR3B'];
+        const bookImportTypes = ['SALES_REGISTER', 'PURCHASE_REGISTER', 'SALES_RETURN', 'PURCHASE_RETURN'];
+
+        const gstImportCount = importCounts
+            .filter(i => gstImportTypes.includes(i.import_type))
+            .reduce((sum, i) => sum + parseInt(i.count), 0);
+
+        const bookImportCount = importCounts
+            .filter(i => bookImportTypes.includes(i.import_type))
+            .reduce((sum, i) => sum + parseInt(i.count), 0);
+
+        // 3. Reconciliation Count from reconciliation_status
+        const reconCount = await knex('reconciliation_status')
+            .where({ workspace_id: workspaceId, recon_status: 'pending' })
+            .count('* as count')
+            .first();
+
+        return {
+            book_import_count: bookImportCount || 0,
+            gst_import_count: gstImportCount || 0,
+            reconciliation_count: parseInt(reconCount?.count) || 0
+        };
+    }
 }
 
 module.exports = DashboardModel;

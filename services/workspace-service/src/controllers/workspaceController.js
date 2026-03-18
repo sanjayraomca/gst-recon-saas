@@ -677,6 +677,17 @@ const getLatestPeriod = async (req, res) => {
     }
 };
 
+const getSidebarCounts = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const counts = await DashboardModel.getSidebarCounts(id);
+        return successResponse(res, counts, 'Sidebar counts fetched successfully');
+    } catch (error) {
+        console.error('getSidebarCounts Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 const getTaxPeriods = async (req, res) => {
     try {
         const periods = await knex('tax_periods as tp')
@@ -804,6 +815,7 @@ module.exports = {
     inviteUser,
     getDashboardMetrics,
     getLatestPeriod,
+    getSidebarCounts,
     getTaxPeriods,
     getDataDateRange,
     updateWorkspace

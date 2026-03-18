@@ -120,7 +120,8 @@ const resolvePurchaseBookType = (vchType) => {
 const buildColMap = (headerRow) => {
     const col = {};
     headerRow.forEach((cell, idx) => {
-        const h = (cell || '').toString().toLowerCase().trim().replace(/\s+/g, '_');
+        // Remove BOM (\ufeff) and other non-printable characters before processing
+        const h = (cell || '').toString().replace(/^\ufeff/, '').toLowerCase().trim().replace(/\s+/g, '_');
         if (h) col[h] = idx;
     });
     return col;
