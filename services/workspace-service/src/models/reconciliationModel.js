@@ -591,7 +591,10 @@ class ReconciliationModel {
             period,
             fy,
             quarter,
-            month
+            month,
+            column_filters, // Object like { gstin: '...', invoice_no: '...' }
+            sort_by = 'created_at',
+            sort_order = 'desc'
         } = filters;
 
         // Verify run belongs to workspace
@@ -762,6 +765,31 @@ class ReconciliationModel {
             });
         }
 
+        if (column_filters && typeof column_filters === 'object') {
+            const mapping = {
+                gstin: ['pi.supplier_gstin', 'gi.supplier_gstin'],
+                name: ['pi.supplier_name', 'gi.supplier_name'],
+                invoice_no: ['pi.supplier_invoice_no', 'gi.document_number_clean'],
+                invoice_date: ['pi.supplier_invoice_date', 'gi.document_date'],
+                status: ['rr.match_status'],
+                action_status: [knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')')]
+            };
+
+            Object.entries(column_filters).forEach(([key, value]) => {
+                if (value && value !== '') {
+                    const cols = mapping[key];
+                    if (cols) {
+                        query.where(function() {
+                            cols.forEach((col, idx) => {
+                                if (idx === 0) this.where(col, 'ilike', `%${value}%`);
+                                else this.orWhere(col, 'ilike', `%${value}%`);
+                            });
+                        });
+                    }
+                }
+            });
+        }
+
         if (search) {
             query.where(function () {
                 this.where('pi.supplier_name', 'ilike', `%${search}%`)
@@ -891,8 +919,35 @@ class ReconciliationModel {
             'pi.total_sgst_amount as purchase_sgst',
 
             // Workflow status from the separate table, defaulting to 'pending'
+            // Workflow status from the separate table, defaulting to 'pending'
             knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status')
-        ).orderBy('rr.created_at', 'desc');
+        );
+
+        // Map frontend sort keys to DB columns if necessary
+        const sortMapping = {
+            'gstin': 'supplier_gstin',
+            'supplier_name': 'supplier_name',
+            'gst_type': 'gi.source_section',
+            'invoice_no': 'purchase_invoice_number',
+            'date': 'purchase_invoice_date',
+            'gstr2b_taxable': 'gstr2b_taxable',
+            'purchase_taxable': 'purchase_taxable',
+            'gstr2b_igst': 'gi.igst',
+            'gstr2b_cgst': 'gi.cgst',
+            'gstr2b_sgst': 'gi.sgst',
+            'purchase_igst': 'pi.total_igst_amount',
+            'purchase_cgst': 'pi.total_cgst_amount',
+            'purchase_sgst': 'pi.total_sgst_amount',
+            'gstr2b_tax': 'gstr2b_tax',
+            'purchase_tax': 'purchase_tax',
+            'difference': 'rr.variance_amount',
+            'match_analysis': 'rr.match_status',
+            'action_status': 'reconciliation_status', // Use the aliased workflow status
+            'created_at': 'rr.created_at'
+        };
+
+        const orderByCol = sortMapping[sort_by] || sort_by || 'rr.created_at';
+        query.orderBy(orderByCol, sort_order || 'desc');
 
         // --- Apply Pagination/Export Mode ---
         let results;
