@@ -809,6 +809,12 @@ class ReconciliationModel {
                 knex.raw('SUM(pi.taxable_total) as purchase_taxable_total'),
                 knex.raw('SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2b_tax_total'),
                 knex.raw('SUM(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0)) as purchase_tax_total'),
+                knex.raw('SUM(gi.cgst) as gstr2b_cgst_total'),
+                knex.raw('SUM(gi.sgst) as gstr2b_sgst_total'),
+                knex.raw('SUM(gi.cess) as gstr2b_cess_total'),
+                knex.raw('SUM(pi.total_cgst_amount) as purchase_cgst_total'),
+                knex.raw('SUM(pi.total_sgst_amount) as purchase_sgst_total'),
+                knex.raw('SUM(pi.total_cess_amount) as purchase_cess_total'),
                 knex.raw('COUNT(*) as total')
             );
         const totalsResult = await totalsQuery.first();
@@ -830,7 +836,13 @@ class ReconciliationModel {
                 gstr2b_taxable: parseFloat(totalsResult.gstr2b_taxable_total || 0),
                 purchase_taxable: parseFloat(totalsResult.purchase_taxable_total || 0),
                 gstr2b_tax: parseFloat(totalsResult.gstr2b_tax_total || 0),
-                purchase_tax: parseFloat(totalsResult.purchase_tax_total || 0)
+                purchase_tax: parseFloat(totalsResult.purchase_tax_total || 0),
+                gstr2b_cgst: parseFloat(totalsResult.gstr2b_cgst_total || 0),
+                gstr2b_sgst: parseFloat(totalsResult.gstr2b_sgst_total || 0),
+                gstr2b_cess: parseFloat(totalsResult.gstr2b_cess_total || 0),
+                purchase_cgst: parseFloat(totalsResult.purchase_cgst_total || 0),
+                purchase_sgst: parseFloat(totalsResult.purchase_sgst_total || 0),
+                purchase_cess: parseFloat(totalsResult.purchase_cess_total || 0)
             }
         };
         statusCountsResult.forEach(row => {
