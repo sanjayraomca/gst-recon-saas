@@ -888,6 +888,7 @@ class ReconciliationModel {
             'pi.filing_date as purchase_filing_date',
             'pi.itc_eligible as purchase_itc_eligible',
             'pi.place_of_supply as purchase_pos',
+            'pi.source_section as purchase_source_section',
 
             // GSTR-2B mapping
             'gi.document_number_clean as gstr2b_invoice_number',
@@ -910,6 +911,7 @@ class ReconciliationModel {
 
             // Dynamic GST & Tax Type Mappings
             'gi.source_section as gstr2b_source_section',
+            knex.raw('COALESCE(pi.source_section, gi.source_section) as gst_type'),
             'pi.voucher_type as purchase_voucher_type',
             'gi.igst as gstr2b_igst',
             'gi.cgst as gstr2b_cgst',
@@ -927,7 +929,7 @@ class ReconciliationModel {
         const sortMapping = {
             'gstin': 'supplier_gstin',
             'supplier_name': 'supplier_name',
-            'gst_type': 'gi.source_section',
+            'gst_type': knex.raw('COALESCE(pi.source_section, gi.source_section)'),
             'invoice_no': 'purchase_invoice_number',
             'date': 'purchase_invoice_date',
             'gstr2b_taxable': 'gstr2b_taxable',
