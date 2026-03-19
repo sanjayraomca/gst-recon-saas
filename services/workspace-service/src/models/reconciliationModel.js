@@ -637,19 +637,21 @@ class ReconciliationModel {
 
         // --- Apply Filters ---
         if (match_status && match_status !== 'all' && match_status !== 'ALL') {
-            query.where('rr.match_status', match_status);
+            const statusList = Array.isArray(match_status) ? match_status : match_status.split(',').map(s => s.trim());
+            query.whereIn('rr.match_status', statusList);
         }
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
-            if (workflow_status === 'pending') {
+            const statusList = Array.isArray(workflow_status) ? workflow_status : workflow_status.split(',').map(s => s.trim());
+            if (statusList.includes('pending')) {
                 // For pending, we show rows where status is either explicitly 'pending' or NULL
                 query.where(function () {
-                    this.where(knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), 'pending');
+                    this.whereIn(knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), statusList);
                 });
             } else {
                 query.where(function () {
-                    this.where('rs_pi.recon_status', workflow_status)
-                        .orWhere('rs_gi.recon_status', workflow_status);
+                    this.whereIn('rs_pi.recon_status', statusList)
+                        .orWhereIn('rs_gi.recon_status', statusList);
                 });
             }
         }
@@ -659,9 +661,10 @@ class ReconciliationModel {
         }
 
         if (supplier_gstin) {
+            const gstinList = Array.isArray(supplier_gstin) ? supplier_gstin : supplier_gstin.split(',').map(s => s.trim());
             query.where(function () {
-                this.where('pi.supplier_gstin', supplier_gstin)
-                    .orWhere('gi.supplier_gstin', supplier_gstin);
+                this.whereIn('pi.supplier_gstin', gstinList)
+                    .orWhereIn('gi.supplier_gstin', gstinList);
             });
         }
 
@@ -766,27 +769,42 @@ class ReconciliationModel {
         }
 
         if (column_filters && typeof column_filters === 'object') {
-            const mapping = {
-                gstin: ['pi.supplier_gstin', 'gi.supplier_gstin'],
-                name: ['pi.supplier_name', 'gi.supplier_name'],
-                invoice_no: ['pi.supplier_invoice_no', 'gi.document_number_clean'],
-                invoice_date: ['pi.supplier_invoice_date', 'gi.document_date'],
-                status: ['rr.match_status'],
-                action_status: [knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')')]
+            // Maps frontend filter keys to DB columns (array = OR between columns)
+            const colMapping = {
+                gstin:              { cols: ['pi.supplier_gstin', 'gi.supplier_gstin'], exact: true },
+                name:               { cols: ['pi.supplier_name', 'gi.supplier_name'] },
+                gst_type:           { cols: ['pi.source_section', 'gi.source_section'] },
+                invoice_no:         { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
+                invoice_date:       { cols: ['pi.supplier_invoice_date', 'gi.document_date'] },
+                status:             { cols: ['rr.match_status'], exact: true },
+                action_status:      { cols: [knex.raw("COALESCE(rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
             };
 
             Object.entries(column_filters).forEach(([key, value]) => {
-                if (value && value !== '') {
-                    const cols = mapping[key];
-                    if (cols) {
-                        query.where(function() {
-                            cols.forEach((col, idx) => {
-                                if (idx === 0) this.where(col, 'ilike', `%${value}%`);
-                                else this.orWhere(col, 'ilike', `%${value}%`);
+                const isEmpty = !value || (Array.isArray(value) && value.length === 0) || value === '';
+                if (isEmpty) return;
+
+                const def = colMapping[key];
+                if (!def) return;
+
+                const valueList = Array.isArray(value) ? value.filter(Boolean) : [value];
+                if (valueList.length === 0) return;
+
+                query.where(function () {
+                    def.cols.forEach((col, idx) => {
+                        if (def.exact) {
+                            // Use whereIn for exact-match multi-select filters
+                            if (idx === 0) this.whereIn(col, valueList);
+                            else this.orWhereIn(col, valueList);
+                        } else {
+                            // Use ilike for text search filters
+                            valueList.forEach((v, vi) => {
+                                const method = (idx === 0 && vi === 0) ? 'where' : 'orWhere';
+                                this[method](col, 'ilike', `%${v}%`);
                             });
-                        });
-                    }
-                }
+                        }
+                    });
+                });
             });
         }
 
