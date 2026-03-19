@@ -44,8 +44,8 @@ class BookModel {
                             total_invoice_value, filing_period, return_period, payment_status,
                             original_invoice_no, original_invoice_date, original_book_vchr_no, 
                             original_book_vchr_date, original_net_amount, return_date, 
-                            original_return_period, original_return_date
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?)
+                            original_return_period, original_return_date, source_section
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id) 
                         DO UPDATE SET 
                             total_invoice_value = EXCLUDED.total_invoice_value,
@@ -75,7 +75,8 @@ class BookModel {
                         header.total_invoice_value || 0, header.filing_period || null, header.return_period || header.filing_period || null,
                         header.original_invoice_no || null, header.original_invoice_date || null, header.original_book_vchr_no || null,
                         header.original_book_vchr_date || null, header.original_net_amount || 0, header.return_date || null,
-                        header.original_return_period || null, header.original_return_date || null
+                        header.original_return_period || null, header.original_return_date || null,
+                        header.source_section || null
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;
@@ -188,8 +189,8 @@ class BookModel {
                             itc_eligible, itc_claimed, filing_period, return_period, payment_status,
                             is_amendment, original_supplier_invoice_no, original_supplier_invoice_date,
                             original_book_vchr_no, original_book_vchr_date, original_net_amount,
-                            return_date, original_return_period, original_return_date
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            return_date, original_return_period, original_return_date, source_section
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
@@ -236,7 +237,8 @@ class BookModel {
                         header.itc_eligible !== undefined ? header.itc_eligible : null, header.itc_claimed !== undefined ? header.itc_claimed : null, header.filing_period || null, header.return_period || header.filing_period || null,
                         header.is_amendment || false, header.original_supplier_invoice_no || null, header.original_supplier_invoice_date || null,
                         header.original_book_vchr_no || null, header.original_book_vchr_date || null, header.original_net_amount || 0,
-                        header.return_date || null, header.original_return_period || null, header.original_return_date || null
+                        header.return_date || null, header.original_return_period || null, header.original_return_date || null,
+                        header.source_section || null
                     ]);
 
                     const voucherId = headerRes.rows[0].id;

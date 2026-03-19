@@ -965,6 +965,7 @@ CREATE TABLE sales_invoices (
             'B2B','B2C_SMALL','B2C_LARGE',
             'EXPORT','SEZ','DEBIT_NOTE','CREDIT_NOTE'
         )),
+    source_section VARCHAR(50) DEFAULT NULL,
 
     -- Amendment Tracking
     original_invoice_id UUID REFERENCES sales_invoices(id) ON DELETE SET NULL,
@@ -1089,6 +1090,7 @@ CREATE TABLE purchase_vouchers (
         CHECK (voucher_type IN (
             'PURCHASE','EXPENSE','DEBIT_NOTE','CREDIT_NOTE'
         )),
+    source_section VARCHAR(50) DEFAULT NULL,
 
     parent_voucher_id UUID 
         REFERENCES purchase_vouchers(id) ON DELETE SET NULL,

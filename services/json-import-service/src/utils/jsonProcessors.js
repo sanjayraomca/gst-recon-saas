@@ -33,7 +33,18 @@ const resolvePurchaseBookType = (vchType) => {
     if (t === 'EXP' || t === 'EXPENSE') return 'EXP';
     if (t === 'DN' || t === 'DEBIT_NOTE' || t === 'DEBIT NOTE') return 'DN';
     if (t === 'CN' || t === 'CREDIT_NOTE' || t === 'CREDIT NOTE') return 'CN';
+    if (t === 'SR' || t === 'PR') return 'SR';
     return 'PA';
+};
+
+const resolveSourceSection = (bookType, isAmendment, gstin) => {
+    if (isAmendment) return 'b2ba';
+    const t = (bookType || '').toString().toUpperCase().trim();
+    if (t === 'CN') return 'cdnr-c';
+    if (t === 'DN') return 'cdnr-d';
+    if (t === 'SR' || t === 'PR') return 'cdnr-r';
+    if ((t === 'PA' || t === 'EXP' || t === 'SA') && gstin) return 'b2b';
+    return null;
 };
 
 /**
@@ -83,10 +94,11 @@ const processSalesJson = (data, tenantId, workspaceId, taxPeriodId, returnPeriod
                     invoice_date: invDate,
                     customer_name: row.party_name || row.customer_name || null,
                     customer_gstin: custGstinClean,
-                    place_of_supply: row.party_state || (custGstinClean ? custGstinClean.substring(0, 2) : null),
+                    place_of_supply: row.party_state || (custGstinClean ? custGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null)),
                     is_interstate: row.inter_state === 'Yes' || row.inter_state === true,
                     reverse_charge: row.reverse_charge === 'Yes' || row.reverse_charge === true,
                     is_amendment: row.is_amendment === 'Yes' || row.is_amendment === true,
+                    source_section: resolveSourceSection(bookType, row.is_amendment === 'Yes' || row.is_amendment === true, custGstinClean),
                     round_off: cleanAmount(row.round_off || 0),
                     total_taxable_value: 0,
                     total_igst: 0,
@@ -167,11 +179,11 @@ const processPurchaseJson = (data, tenantId, workspaceId, taxPeriodId, returnPer
                     book_type: bookType,
                     book_vchr_no: bookVchrNo,
                     book_vchr_date: bookVchrDate,
-                    supplier_invoice_no: row.ref_vchr_full_number || bookVchrNo,
-                    supplier_invoice_date: row.ref_vchr_date || bookVchrDate,
+                    supplier_invoice_no: row.ref_vchr_full_number || row.ref_vchr_no || null,
+                    supplier_invoice_date: row.ref_vchr_date || null,
                     supplier_name: row.party_name || row.supplier_name || null,
                     supplier_gstin: supplierGstinClean,
-                    place_of_supply: row.party_state || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : null),
+                    place_of_supply: row.party_state || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null)),
                     is_interstate: row.inter_state === 'Yes' || row.inter_state === true ? 'Yes' : 'No',
                     is_rcm: row.reverse_charge === 'Yes' || row.reverse_charge === true,
                     round_off: cleanAmount(row.round_off || 0),
@@ -184,7 +196,8 @@ const processPurchaseJson = (data, tenantId, workspaceId, taxPeriodId, returnPer
                     net_amount: netAmount,
                     filing_period: derivedFilingPeriod,
                     return_period: row.return_period || derivedFilingPeriod,
-                    is_amendment: row.is_amendment === 'Yes' || row.is_amendment === true
+                    is_amendment: row.is_amendment === 'Yes' || row.is_amendment === true,
+                    source_section: resolveSourceSection(bookType, row.is_amendment === 'Yes' || row.is_amendment === true, supplierGstinClean),
                 },
                 items: []
             });

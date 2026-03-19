@@ -111,7 +111,19 @@ const resolvePurchaseBookType = (vchType) => {
     if (t === 'EXP' || t === 'EXPENSE') return 'EXP';
     if (t === 'DN' || t === 'DEBIT_NOTE' || t === 'DEBIT NOTE') return 'DN';
     if (t === 'CN' || t === 'CREDIT_NOTE' || t === 'CREDIT NOTE') return 'CN';
+    if (t === 'SR' || t === 'PR') return 'SR';
     return 'PA';
+};
+
+/** Derives source_section based on user request logic */
+const resolveSourceSection = (bookType, isAmendment, gstin) => {
+    if (isAmendment) return 'b2ba';
+    const t = (bookType || '').toString().toUpperCase().trim();
+    if (t === 'CN') return 'cdnr-c';
+    if (t === 'DN') return 'cdnr-d';
+    if (t === 'SR' || t === 'PR') return 'cdnr-r';
+    if ((t === 'PA' || t === 'EXP' || t === 'SA') && gstin) return 'b2b';
+    return null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +254,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
 
         if (!invoiceMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
-            const pos = partyState || (custGstinClean ? custGstinClean.substring(0, 2) : null);
+            const pos = partyState || (custGstinClean ? custGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
             const isInter = interIdx !== null
                 ? (row[interIdx] ?? '').toString().toUpperCase().startsWith('Y')
                 : (orgGstin && custGstinClean ? orgGstin.substring(0, 2) !== custGstinClean.substring(0, 2) : false);
@@ -267,6 +279,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     is_interstate: isInter,
                     reverse_charge: rc,
                     is_amendment: isAmendment,
+                    source_section: resolveSourceSection(bookType, isAmendment, custGstinClean),
                     round_off: 0,
                     total_taxable_value: 0,
                     total_igst: 0,
@@ -443,10 +456,6 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             supplierInvoiceDate = parseDate(row[refDateIdx]);
         }
         
-        // Fallback: If reference fields are empty, use book voucher values
-        if (!supplierInvoiceNo) supplierInvoiceNo = bookVchrNo;
-        if (!supplierInvoiceDate) supplierInvoiceDate = bookVchrDate;
-
         // GSTIN: allow empty (unregistered/exempt vendors).
         // Only reject a NON-EMPTY GSTIN that is clearly malformed.
         const gstinRaw = gstinIdx !== null ? (row[gstinIdx] ?? '').toString().trim() : '';
@@ -480,7 +489,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
 
         if (!voucherMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
-            const pos = partyState || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : null);
+            const pos = partyState || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
             const isInter = interIdx !== null
                 ? (row[interIdx] ?? '').toString().toUpperCase().startsWith('Y')
                 : (orgGstin && supplierGstinClean ? orgGstin.substring(0, 2) !== supplierGstinClean.substring(0, 2) : false);
@@ -522,6 +531,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     filing_period: derivedFilingPeriod,
                     return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
                     is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
+                    source_section: resolveSourceSection(bookType, isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false, supplierGstinClean),
                     original_supplier_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_supplier_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
                     original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
