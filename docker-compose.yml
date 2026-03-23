@@ -34,7 +34,7 @@ services:
       POSTGRES_USER: gstadmin
       POSTGRES_PASSWORD: GstAdmin123
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - postgres_main_data:/var/lib/postgresql/data
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro

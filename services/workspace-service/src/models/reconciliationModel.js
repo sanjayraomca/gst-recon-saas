@@ -221,8 +221,8 @@ class ReconciliationModel {
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
                     const gTax = (parseFloat(gstr2bInv.igst) || 0) +
-                        (parseFloat(gstr2bInv.cgst) || 0) +
-                        (parseFloat(gstr2bInv.sgst) || 0) +
+                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
+                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
                         (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
 
@@ -232,6 +232,9 @@ class ReconciliationModel {
                     // Use absolute values for amount matching to handle sign differences (Books vs Portal)
                     const exactTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable)) < 0.01;
                     const exactTax = Math.abs(Math.abs(pTax) - Math.abs(gTax)) < 0.01;
+
+                    // Store calculated tax on the object for later use in result saving
+                    gstr2bInv._calculated_tax = gTax;
 
                     // Case 1: Exact Match
                     if (exactDate && exactTaxable && exactTax) {
@@ -249,7 +252,15 @@ class ReconciliationModel {
                     const taxNear = diffTax >= -(VAR_TAX_MAX + 0.01) && diffTax <= (VAR_TAX_MIN + 0.01);
 
                     if (dateNear && taxableNear && taxNear) {
-                        matchType = (exactDate && exactTaxable && exactTax) ? 'MATCHED' : 'MISMATCH';
+                        // Within tolerance: treat as MATCHED (invoice number matched, amounts within tolerance)
+                        matchType = 'MATCHED';
+                        if (!exactDate || !exactTaxable || !exactTax) {
+                            let r = [];
+                            if (!exactTax) r.push(`tax ±${Math.abs(diffTax).toFixed(2)} rs`);
+                            if (!exactDate) r.push(`date ±${Math.abs(diffDays)} days`);
+                            if (!exactTaxable) r.push(`taxable ±${Math.abs(diffTaxable).toFixed(2)} rs`);
+                            gstr2bInv._tolerance_reason = `Matched within tolerance: ${r.join(', ')}`;
+                        }
                         return true;
                     }
 
@@ -269,15 +280,15 @@ class ReconciliationModel {
                         workspace_id: workspaceId,
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
-                        match_status: finalStatus, // Holds the logic result (matched, mismatch, etc.)
+                        match_status: finalStatus,
                         match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
                         match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
-                        books_value: pNet,
-                        portal_value: match.document_value || 0,
-                        variance_amount: pNet - (match.document_value || 0),
+                        books_value: pTax,
+                        portal_value: match._calculated_tax || 0,
+                        variance_amount: pTax - (match._calculated_tax || 0),
                         itc_decision: isEligible ? (finalStatus === 'matched' ? 'ELIGIBLE' : 'PENDING') : 'INELIGIBLE',
-                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (finalStatus === 'matched' ? 'Exact match found' : 'Partial match / variance detected'),
-                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (finalStatus === 'mismatch' ? 'REVIEW_AMOUNT' : null),
+                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (match._tolerance_reason || (finalStatus === 'matched' ? 'Exact match found' : 'Partial match / variance detected')),
+                        action_required: !isEligible ? 'REVIEW_ELIGIBILITY' : (finalStatus === 'mismatch' || finalStatus === 'partial_match' ? 'REVIEW_AMOUNT' : null),
                         action_status: 'pending', // Initially pending
                         created_at: knex.fn.now(),
                         updated_at: knex.fn.now()
@@ -321,8 +332,8 @@ class ReconciliationModel {
                     const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
                     const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
                     const gTax = (parseFloat(gstr2bInv.igst) || 0) +
-                        (parseFloat(gstr2bInv.cgst) || 0) +
-                        (parseFloat(gstr2bInv.sgst) || 0) +
+                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
+                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
                         (parseFloat(gstr2bInv.cess) || 0);
                     const gDate = new Date(gstr2bInv.document_date);
 
@@ -330,13 +341,17 @@ class ReconciliationModel {
                     const diffTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable));
                     const diffTax = Math.abs(Math.abs(pTax) - Math.abs(gTax));
 
+                    // Store calculated tax
+                    gstr2bInv._calculated_tax = gTax;
+
                     // Thresholds for fuzzy matching
                     const dateNear = dateDiff <= 30; // Within 30 days
                     const taxableMatch = diffTaxable < (VAR_TAXABLE_MAX + 1);
                     const taxMatch = diffTax < (VAR_TAX_MAX + 1);
 
                     if (dateNear && taxableMatch && taxMatch) {
-                        matchType = (dateDiff === 0 && diffTaxable < 0.01) ? 'MATCHED' : 'MISMATCH';
+                        matchType = (dateDiff === 0 && diffTaxable < 0.01) ? 'PARTIAL_MATCH' : 'PARTIAL_MATCH';
+                        gstr2bInv._partial_reason = `Fuzzy Match: Invoice number mismatch, but matched by amount and date (+/- 30 days)`;
                         return true;
                     }
 
@@ -348,8 +363,8 @@ class ReconciliationModel {
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
 
                     let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
-                    if (finalStatus === 'matched') matchedCount++;
-                    else if (finalStatus === 'mismatch') mismatchedCount++;
+                    if (finalStatus === 'matched' || finalStatus === 'tolerance_match') matchedCount++;
+                    else if (finalStatus === 'mismatch' || finalStatus === 'partial_match') mismatchedCount++;
 
                     matchResults.push({
                         recon_run_id: runId,
@@ -357,14 +372,14 @@ class ReconciliationModel {
                         purchase_invoice_id: purchaseInv.id,
                         gstr2b_invoice_id: match.id,
                         match_status: finalStatus,
-                        match_score: finalStatus === 'matched' ? 90.00 : 60.00,
+                        match_score: finalStatus === 'matched' ? 90.00 : (finalStatus === 'partial_match' ? 80.00 : 60.00),
                         match_confidence: 'LOW',
                         matched_by: 'FUZZY',
-                        books_value: pNet,
-                        portal_value: match.document_value || 0,
-                        variance_amount: pNet - (match.document_value || 0),
+                        books_value: pTax,
+                        portal_value: match._calculated_tax || 0,
+                        variance_amount: pTax - (match._calculated_tax || 0),
                         itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
-                        decision_reason: `Fuzzy Match: Matched by amount and date (+/- 30 days)`,
+                        decision_reason: !isEligible ? 'ITC Not Available in GSTR2B' : (match._partial_reason || `Fuzzy Match: Matched by amount and date (+/- 30 days)`),
                         action_required: 'REVIEW_MATCH',
                         action_status: 'pending',
                         created_at: knex.fn.now(),
@@ -377,7 +392,10 @@ class ReconciliationModel {
 
             // 4c. Process unmatched purchases
             for (const purchaseInv of remainingPurchases) {
-                const pTotal = isNaN(parseFloat(purchaseInv.net_amount)) ? 0 : parseFloat(purchaseInv.net_amount);
+                const pTaxAmount = (parseFloat(purchaseInv.total_igst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_sgst_amount) || 0) +
+                    (parseFloat(purchaseInv.total_cess_amount) || 0);
                 matchResults.push({
                     recon_run_id: runId,
                     workspace_id: workspaceId,
@@ -386,8 +404,8 @@ class ReconciliationModel {
                     match_score: 0.00,
                     match_confidence: 'HIGH',
                     matched_by: 'RULE',
-                    books_value: pTotal,
-                    variance_amount: pTotal,
+                    books_value: pTaxAmount,
+                    variance_amount: pTaxAmount,
                     itc_decision: 'INELIGIBLE',
                     decision_reason: 'Not found in GSTR2B',
                     action_required: 'FOLLOW_UP_SUPPLIER',
@@ -402,7 +420,10 @@ class ReconciliationModel {
             // 4d. Unmatched GSTR-2B invoices
             for (const gstr2bInv of validGstr2bInvoices) {
                 if (!matchedGstr2bIds.has(gstr2bInv.id)) {
-                    const gTotal = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
+                    const gTaxAmount = (parseFloat(gstr2bInv.igst) || 0) +
+                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
+                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
+                        (parseFloat(gstr2bInv.cess) || 0);
                     const isEligible = gstr2bInv.itc_available !== false && gstr2bInv.itc_eligibility !== 'No' && gstr2bInv.itc_eligibility !== 'N';
 
                     matchResults.push({
@@ -413,8 +434,8 @@ class ReconciliationModel {
                         match_score: 0.00,
                         match_confidence: 'HIGH',
                         matched_by: 'RULE',
-                        portal_value: gTotal,
-                        variance_amount: -gTotal,
+                        portal_value: gTaxAmount,
+                        variance_amount: -gTaxAmount,
                         itc_decision: isEligible ? 'PENDING' : 'INELIGIBLE',
                         decision_reason: isEligible ? 'Not found in records' : 'ITC Not Available in GSTR2B',
                         action_required: isEligible ? 'ADD_TO_BOOKS' : 'REVIEW_ELIGIBILITY',
@@ -713,49 +734,88 @@ class ReconciliationModel {
             query.where('rr.variance_amount', '!=', 0);
         }
 
-        // Bypass specific period filters if we are looking at all pending historical data
-        // UNLESS a month/fy filter is explicitly selected to act as an end-date (per user request)
+        // --- Period Filtering: Exact Month / Quarter / FY on invoice dates ---
+        // We filter directly on the actual invoice/document date columns so that
+        // a record with invoice_date = 15/04/2025 correctly appears when Month=April is selected.
         const isPendingView = workflow_status === 'pending';
+        const hasPeriodFilter = (fy && fy !== 'ALL') || (month && month !== 'ALL') || (quarter && quarter !== 'ALL');
 
-        // --- NEW: Cumulative Period Filtering (Month as End Date) ---
-        let dateLimit = null;
-        if ((fy && fy !== 'ALL') || (month && month !== 'ALL') || (quarter && quarter !== 'ALL')) {
-            const periodQuery = knex('tax_periods as tp')
-                .join('financial_years as fymas2', 'tp.fy_id', 'fymas2.id')
-                .select('tp.end_date')
-                .orderBy('tp.end_date', 'desc');
-
+        if (hasPeriodFilter) {
+            // Resolve year from FY code (e.g. "2025-26" → start year 2025)
+            let filterYear = null;
             if (fy && fy !== 'ALL') {
                 if (fy.includes('-')) {
-                    periodQuery.where('fymas2.fy_code', fy);
+                    // "2025-26" → year depends on month (Apr-Dec = 2025, Jan-Mar = 2026)
+                    filterYear = parseInt(fy.split('-')[0]);
                 } else {
-                    periodQuery.where('tp.year', parseInt(fy));
+                    filterYear = parseInt(fy);
                 }
             }
 
-            if (quarter && quarter !== 'ALL') {
-                periodQuery.where('tp.quarter', parseInt(quarter));
-            }
-
-            if (month && month !== 'ALL') {
-                periodQuery.where('tp.month', parseInt(month));
-            }
-
-            const latestPeriod = await periodQuery.first();
-            if (latestPeriod) {
-                dateLimit = latestPeriod.end_date;
-            }
-        }
-
-        if (dateLimit) {
-            query.where('tp.end_date', '<=', dateLimit);
-            // Also strictly limit invoice dates to ensure no data from future periods appears
             query.where(function () {
-                this.where('pi.supplier_invoice_date', '<=', dateLimit)
-                    .orWhere('gi.document_date', '<=', dateLimit);
+                const self = this;
+
+                if (month && month !== 'ALL') {
+                    const m = parseInt(month);
+                    // For Indian FY: April (4) – December (12) → start year; Jan (1) – Mar (3) → start year + 1
+                    let yearForMonth = filterYear;
+                    if (filterYear && m >= 1 && m <= 3) {
+                        yearForMonth = filterYear + 1;
+                    }
+
+                    self.where(function () {
+                        // Books invoice date
+                        this.whereRaw('EXTRACT(MONTH FROM pi.supplier_invoice_date) = ?', [m]);
+                        if (yearForMonth) {
+                            this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForMonth]);
+                        }
+                    }).orWhere(function () {
+                        // Portal document date
+                        this.whereRaw('EXTRACT(MONTH FROM gi.document_date) = ?', [m]);
+                        if (yearForMonth) {
+                            this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForMonth]);
+                        }
+                    });
+                } else if (quarter && quarter !== 'ALL') {
+                    // Determine which months belong to this quarter (Indian FY)
+                    const q = parseInt(quarter);
+                    const quarterMonthMap = { 1: [4,5,6], 2: [7,8,9], 3: [10,11,12], 4: [1,2,3] };
+                    const qMonths = quarterMonthMap[q] || [];
+
+                    self.where(function () {
+                        this.whereIn(knex.raw('EXTRACT(MONTH FROM pi.supplier_invoice_date)::int'), qMonths);
+                        if (filterYear) {
+                            const yearForQ = q === 4 ? filterYear + 1 : filterYear;
+                            this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForQ]);
+                        }
+                    }).orWhere(function () {
+                        this.whereIn(knex.raw('EXTRACT(MONTH FROM gi.document_date)::int'), qMonths);
+                        if (filterYear) {
+                            const yearForQ = q === 4 ? filterYear + 1 : filterYear;
+                            this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForQ]);
+                        }
+                    });
+                } else if (filterYear) {
+                    // Only FY selected – entire Indian fiscal year (Apr start_year to Mar start_year+1)
+                    const startYear = filterYear;
+                    const endYear = filterYear + 1;
+                    self.where(function () {
+                        this.whereRaw(
+                            `(EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) >= 4
+                            OR EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) <= 3)`,
+                            [startYear, endYear]
+                        );
+                    }).orWhere(function () {
+                        this.whereRaw(
+                            `(EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4
+                            OR EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)`,
+                            [startYear, endYear]
+                        );
+                    });
+                }
             });
         } else if (period && period !== 'ALL' && !isPendingView) {
-            // Fallback to exact period if dateLimit wasn't calculated (legacy behavior)
+            // Fallback to exact period if no fy/month/quarter specified (legacy behavior)
             let periodToUse = period;
             if (/^\d{4}-\d{2}$/.test(period)) {
                 const [year, month] = period.split('-');
@@ -769,15 +829,38 @@ class ReconciliationModel {
         }
 
         if (column_filters && typeof column_filters === 'object') {
-            // Maps frontend filter keys to DB columns (array = OR between columns)
+            // Maps frontend filter keys to DB columns
             const colMapping = {
-                gstin:              { cols: ['pi.supplier_gstin', 'gi.supplier_gstin'], exact: true },
-                name:               { cols: ['pi.supplier_name', 'gi.supplier_name'] },
-                gst_type:           { cols: ['pi.source_section', 'gi.source_section'] },
-                invoice_no:         { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
-                invoice_date:       { cols: ['pi.supplier_invoice_date', 'gi.document_date'] },
-                status:             { cols: ['rr.match_status'], exact: true },
-                action_status:      { cols: [knex.raw("COALESCE(rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
+                // Identity
+                gstin:                { cols: ['pi.supplier_gstin', 'gi.supplier_gstin'], exact: true },
+                name:                 { cols: ['pi.supplier_name', 'gi.supplier_name'] },
+                gst_type:             { cols: ['pi.source_section', 'gi.source_section'] },
+                invoice_no:           { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
+                invoice_date:         { cols: ['pi.supplier_invoice_date', 'gi.document_date'], dateCol: true },
+                voucher_no:           { cols: ['pi.book_vchr_no'] },
+                voucher_date:         { cols: ['pi.book_vchr_date'], dateCol: true },
+                // Match status / action
+                status:               { cols: ['rr.match_status'], exact: true },
+                action_status:        { cols: [knex.raw("COALESCE(rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
+                // GSTR-2B amounts
+                gstr_invoice_total:   { cols: ['gi.document_value'], numeric: true },
+                gstr_taxable:         { cols: ['gi.taxable_value'], numeric: true },
+                gstr_tax_rate:        { cols: [knex.raw("CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))/gi.taxable_value)*100) ELSE 0 END")], numeric: true },
+                gstr_tax:             { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
+                gstr_igst:            { cols: ['gi.igst'], numeric: true },
+                gstr_cgst:            { cols: ['gi.cgst'], numeric: true },
+                gstr_sgst:            { cols: ['gi.sgst'], numeric: true },
+                gstr_cess:            { cols: ['gi.cess'], numeric: true },
+                // Books amounts
+                book_invoice_total:   { cols: ['pi.net_amount'], numeric: true },
+                book_taxable:         { cols: ['pi.taxable_total'], numeric: true },
+                book_tax_rate:        { cols: [knex.raw("CASE WHEN pi.taxable_total > 0 THEN ROUND(((COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(pi.total_cess_amount,0))/pi.taxable_total)*100) ELSE 0 END")], numeric: true },
+                book_tax:             { cols: [knex.raw("COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(pi.total_cess_amount,0)")], numeric: true },
+                book_igst:            { cols: ['pi.total_igst_amount'], numeric: true },
+                book_cgst:            { cols: ['pi.total_cgst_amount'], numeric: true },
+                book_sgst:            { cols: ['pi.total_sgst_amount'], numeric: true },
+                book_cess:            { cols: ['pi.total_cess_amount'], numeric: true },
+                tax_diff:             { cols: ['rr.variance_amount'], numeric: true },
             };
 
             Object.entries(column_filters).forEach(([key, value]) => {
@@ -790,21 +873,56 @@ class ReconciliationModel {
                 const valueList = Array.isArray(value) ? value.filter(Boolean) : [value];
                 if (valueList.length === 0) return;
 
-                query.where(function () {
-                    def.cols.forEach((col, idx) => {
-                        if (def.exact) {
-                            // Use whereIn for exact-match multi-select filters
+                if (def.dateCol) {
+                    // Date filters: frontend sends DD/MM/YYYY, convert to YYYY-MM-DD for DB comparison
+                    query.where(function () {
+                        const self = this;
+                        valueList.forEach((v, vi) => {
+                            // Try to convert DD/MM/YYYY → YYYY-MM-DD
+                            let dbDate = v;
+                            const parts = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                            if (parts) dbDate = `${parts[3]}-${parts[2]}-${parts[1]}`;
+
+                            def.cols.forEach((col, ci) => {
+                                const condition = knex.raw(`${col}::date = ?`, [dbDate]);
+                                if (vi === 0 && ci === 0) self.where(knex.raw(`${col}::date = ?`, [dbDate]));
+                                else self.orWhere(knex.raw(`${col}::date = ?`, [dbDate]));
+                            });
+                        });
+                    });
+                } else if (def.numeric) {
+                    // Numeric filters: cast value and compare with tolerance
+                    query.where(function () {
+                        const self = this;
+                        valueList.forEach((v, vi) => {
+                            const num = parseFloat(v);
+                            if (isNaN(num)) return;
+                            def.cols.forEach((col, ci) => {
+                                const cond = knex.raw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                                if (vi === 0 && ci === 0) self.whereRaw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                                else self.orWhereRaw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                            });
+                        });
+                    });
+                } else if (def.exact) {
+                    // Exact match (whereIn) for status/gstin
+                    query.where(function () {
+                        def.cols.forEach((col, idx) => {
                             if (idx === 0) this.whereIn(col, valueList);
                             else this.orWhereIn(col, valueList);
-                        } else {
-                            // Use ilike for text search filters
+                        });
+                    });
+                } else {
+                    // Text search (ilike) for name, gst_type, invoice_no, voucher_no etc.
+                    query.where(function () {
+                        def.cols.forEach((col, idx) => {
                             valueList.forEach((v, vi) => {
                                 const method = (idx === 0 && vi === 0) ? 'where' : 'orWhere';
                                 this[method](col, 'ilike', `%${v}%`);
                             });
-                        }
+                        });
                     });
-                });
+                }
             });
         }
 
