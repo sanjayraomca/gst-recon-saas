@@ -752,68 +752,94 @@ class ReconciliationModel {
                 }
             }
 
-            query.where(function () {
-                const self = this;
-
+            // Calculate ending date for cumulative pending view
+            let endDate = null;
+            if (isPendingView) {
                 if (month && month !== 'ALL') {
                     const m = parseInt(month);
-                    // For Indian FY: April (4) – December (12) → start year; Jan (1) – Mar (3) → start year + 1
                     let yearForMonth = filterYear;
-                    if (filterYear && m >= 1 && m <= 3) {
-                        yearForMonth = filterYear + 1;
-                    }
-
-                    self.where(function () {
-                        // Books invoice date
-                        this.whereRaw('EXTRACT(MONTH FROM pi.supplier_invoice_date) = ?', [m]);
-                        if (yearForMonth) {
-                            this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForMonth]);
-                        }
-                    }).orWhere(function () {
-                        // Portal document date
-                        this.whereRaw('EXTRACT(MONTH FROM gi.document_date) = ?', [m]);
-                        if (yearForMonth) {
-                            this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForMonth]);
-                        }
-                    });
+                    if (filterYear && m >= 1 && m <= 3) yearForMonth = filterYear + 1;
+                    if (yearForMonth) endDate = new Date(yearForMonth, m, 0);
                 } else if (quarter && quarter !== 'ALL') {
-                    // Determine which months belong to this quarter (Indian FY)
                     const q = parseInt(quarter);
-                    const quarterMonthMap = { 1: [4,5,6], 2: [7,8,9], 3: [10,11,12], 4: [1,2,3] };
-                    const qMonths = quarterMonthMap[q] || [];
-
-                    self.where(function () {
-                        this.whereIn(knex.raw('EXTRACT(MONTH FROM pi.supplier_invoice_date)::int'), qMonths);
-                        if (filterYear) {
-                            const yearForQ = q === 4 ? filterYear + 1 : filterYear;
-                            this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForQ]);
-                        }
-                    }).orWhere(function () {
-                        this.whereIn(knex.raw('EXTRACT(MONTH FROM gi.document_date)::int'), qMonths);
-                        if (filterYear) {
-                            const yearForQ = q === 4 ? filterYear + 1 : filterYear;
-                            this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForQ]);
-                        }
-                    });
+                    const lastMonthOfQ = { 1: 6, 2: 9, 3: 12, 4: 3 }[q];
+                    let yearForQ = (q === 4 && filterYear) ? filterYear + 1 : filterYear;
+                    if (yearForQ) endDate = new Date(yearForQ, lastMonthOfQ, 0);
                 } else if (filterYear) {
-                    // Only FY selected – entire Indian fiscal year (Apr start_year to Mar start_year+1)
-                    const startYear = filterYear;
-                    const endYear = filterYear + 1;
-                    self.where(function () {
-                        this.whereRaw(
-                            `(EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) >= 4
-                            OR EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) <= 3)`,
-                            [startYear, endYear]
-                        );
-                    }).orWhere(function () {
-                        this.whereRaw(
-                            `(EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4
-                            OR EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)`,
-                            [startYear, endYear]
-                        );
-                    });
+                    endDate = new Date(filterYear + 1, 3, 0); // End of FY
                 }
-            });
+            }
+
+            if (isPendingView && endDate) {
+                const dateStr = endDate.toISOString().split('T')[0];
+                query.where(function () {
+                    this.where('pi.supplier_invoice_date', '<=', dateStr)
+                        .orWhere('gi.document_date', '<=', dateStr);
+                });
+            } else {
+                query.where(function () {
+                    const self = this;
+
+                    if (month && month !== 'ALL') {
+                        const m = parseInt(month);
+                        // For Indian FY: April (4) – December (12) → start year; Jan (1) – Mar (3) → start year + 1
+                        let yearForMonth = filterYear;
+                        if (filterYear && m >= 1 && m <= 3) {
+                            yearForMonth = filterYear + 1;
+                        }
+
+                        self.where(function () {
+                            // Books invoice date
+                            this.whereRaw('EXTRACT(MONTH FROM pi.supplier_invoice_date) = ?', [m]);
+                            if (yearForMonth) {
+                                this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForMonth]);
+                            }
+                        }).orWhere(function () {
+                            // Portal document date
+                            this.whereRaw('EXTRACT(MONTH FROM gi.document_date) = ?', [m]);
+                            if (yearForMonth) {
+                                this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForMonth]);
+                            }
+                        });
+                    } else if (quarter && quarter !== 'ALL') {
+                        // Determine which months belong to this quarter (Indian FY)
+                        const q = parseInt(quarter);
+                        const quarterMonthMap = { 1: [4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12], 4: [1, 2, 3] };
+                        const qMonths = quarterMonthMap[q] || [];
+
+                        self.where(function () {
+                            this.whereIn(knex.raw('EXTRACT(MONTH FROM pi.supplier_invoice_date)::int'), qMonths);
+                            if (filterYear) {
+                                const yearForQ = q === 4 ? filterYear + 1 : filterYear;
+                                this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForQ]);
+                            }
+                        }).orWhere(function () {
+                            this.whereIn(knex.raw('EXTRACT(MONTH FROM gi.document_date)::int'), qMonths);
+                            if (filterYear) {
+                                const yearForQ = q === 4 ? filterYear + 1 : filterYear;
+                                this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForQ]);
+                            }
+                        });
+                    } else if (filterYear) {
+                        // Only FY selected – entire Indian fiscal year (Apr start_year to Mar start_year+1)
+                        const startYear = filterYear;
+                        const endYear = filterYear + 1;
+                        self.where(function () {
+                            this.whereRaw(
+                                `(EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) >= 4
+                                OR EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) <= 3)`,
+                                [startYear, endYear]
+                            );
+                        }).orWhere(function () {
+                            this.whereRaw(
+                                `(EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4
+                                OR EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)`,
+                                [startYear, endYear]
+                            );
+                        });
+                    }
+                });
+            }
         } else if (period && period !== 'ALL' && !isPendingView) {
             // Fallback to exact period if no fy/month/quarter specified (legacy behavior)
             let periodToUse = period;
