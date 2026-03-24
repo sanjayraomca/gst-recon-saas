@@ -635,7 +635,7 @@ class GSTRImportController {
                     finalStatus,
                     `${totalInserted} inserted, ${totalSkipped} skipped across all sections`
                 );
-                
+
                 // Update master record with added/duplicate info in extra_info
                 await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, finalStatus, totalInserted, {
                     added_invoices: allAddedInvoices,

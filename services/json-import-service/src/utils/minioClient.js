@@ -111,6 +111,64 @@ class MinioClient {
     }
 
     /**
+     * Upload raw data (e.g. JSON object) to MinIO
+     */
+    async uploadData(data, metadata) {
+        await this.initialize();
+
+        const {
+            tenantUuid,
+            gstin,
+            financialYear,
+            gstrType,
+            originalFilename
+        } = metadata;
+
+        const now = new Date();
+        const pad = (n, len = 2) => String(n).padStart(len, '0');
+        const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${pad(now.getMilliseconds(), 3)}`;
+        const uniqueFilename = `${timestamp}_${originalFilename || 'data.json'}`;
+        const objectPath = `${tenantUuid}/${gstin}/${financialYear}/${gstrType}/${uniqueFilename}`;
+
+        try {
+            const buffer = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+            const fileMetadata = {
+                'Content-Type': 'application/json',
+                'x-amz-meta-tenant': tenantUuid,
+                'x-amz-meta-gstin': gstin,
+                'x-amz-meta-period': metadata.returnPeriod || '',
+                'x-amz-meta-type': gstrType
+            };
+
+            await this.client.putObject(
+                this.bucketName,
+                objectPath,
+                buffer,
+                buffer.length,
+                fileMetadata
+            );
+
+            console.log(`✅ Data uploaded to MinIO: ${objectPath}`);
+
+            const presignedUrl = await this.client.presignedGetObject(
+                this.bucketName,
+                objectPath,
+                7 * 24 * 60 * 60
+            );
+
+            return {
+                success: true,
+                objectPath,
+                presignedUrl,
+                bucket: this.bucketName
+            };
+        } catch (error) {
+            console.error('❌ MinIO direct upload error:', error);
+            throw new Error(`Failed to upload data to MinIO: ${error.message}`);
+        }
+    }
+
+    /**
      * Get presigned URL for an existing object
      * @param {string} objectPath - MinIO object path
      * @param {number} expirySeconds - URL expiry time in seconds (default: 7 days)

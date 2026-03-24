@@ -4,6 +4,7 @@ const { processGstrJson } = require('../utils/gstrJsonProcessors');
 const { publishEvent } = require('../nats/natsClient');
 const crypto = require('crypto');
 const db = require('../../../shared/src/db/connection');
+const minioClient = require('../utils/minioClient');
 
 /**
  * Controller for GSTR JSON Data Import
@@ -68,8 +69,83 @@ class GstrJsonImportController {
             // 4. Compute Hash for duplicate detection
             const fileHash = crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
 
-            // 5. Create Master Record
+            // 5. Check for exact duplicate file (same hash)
+            const duplicateCheck = await GSTRImportModel.checkDuplicateByHash(
+                resolvedTenantId,
+                gstinRecipient,
+                returnPeriod,
+                gstrType.toUpperCase(),
+                fileHash,
+                `json_import_${Date.now()}.json`
+            );
+
+            if (duplicateCheck.exactDuplicate) {
+                console.log(`[GstrJsonImport] Exact duplicate detected for hash: ${fileHash}`);
+                return res.json({
+                    success: true,
+                    data: {
+                        duplicate: true,
+                        previousImport: duplicateCheck.previousImport,
+                        new_records: 0,
+                        skipped_records: duplicateCheck.previousImport.total_record || 0
+                    },
+                    message: 'This file has already been imported. All records are already in the system.'
+                });
+            }
+
+            // 5.5 Check for ANY existing successful import for this period (Excel or JSON)
+            const periodCheck = await db('gstr_import_master')
+                .where({
+                    tenant_uuid: resolvedTenantId,
+                    gstin_recipient: gstinRecipient,
+                    return_period: returnPeriod,
+                    import_type: gstrType.toUpperCase(),
+                    status: 'Completed'
+                })
+                .select('import_filing_id', 'import_type', 'original_filename', 'upload_timestamp')
+                .first();
+
+            if (periodCheck) {
+                console.log(`[GstrJsonImport] Existing import found for period ${returnPeriod} (${periodCheck.import_type})`);
+                return res.json({
+                    success: true,
+                    data: {
+                        duplicate: true,
+                        previousImport: {
+                            import_filing_id: periodCheck.import_filing_id,
+                            original_filename: periodCheck.original_filename,
+                            uploaded_at: periodCheck.upload_timestamp,
+                            import_type: periodCheck.import_type
+                        },
+                        new_records: 0,
+                        skipped_records: 0 
+                    },
+                    message: `Data for ${returnPeriod} has already been imported via ${periodCheck.import_type === 'JSON_IMPORT' ? 'JSON' : 'Excel'}.`
+                });
+            }
+
+            // 6. Create Master Record
             const financialYear = GstrJsonImportController.calculateFinancialYear(returnPeriod);
+
+            // 6.5 Upload JSON Data to MinIO
+            const minioMetadata = {
+                tenantUuid: resolvedTenantId,
+                gstin: gstinRecipient,
+                financialYear,
+                gstrType: gstrType.toUpperCase(),
+                originalFilename: `json_import_${returnPeriod}.json`,
+                returnPeriod
+            };
+
+            let minioResult = { presignedUrl: null, objectPath: null };
+            try {
+                minioResult = await minioClient.uploadData(data, minioMetadata);
+            } catch (minioErr) {
+                console.error('[GstrJsonImport] MinIO upload failed, continuing with DB only:', minioErr.message);
+            }
+
+            // Ensure Tax Period exists (with quarterly auto-filling)
+            await GstrJsonImportController.ensureTaxPeriodExists(returnPeriod, db);
             
             // Final safety check for undefined bindings
             const finalTenantId = resolvedTenantId || null;
@@ -86,10 +162,13 @@ class GstrJsonImportController {
                 financialYear: financialYear,
                 generationDate: new Date(),
                 importType: gstrType.toUpperCase(),
-                originalFilename: `json_import_${Date.now()}.json`,
-                uploadedFilepath: 'json_direct_import',
-                uploadedFileUrl: '',
-                extraInfo: { source: 'JSON_IMPORT' },
+                originalFilename: minioMetadata.originalFilename,
+                uploadedFilepath: null,
+                uploadedFileUrl: minioResult.presignedUrl,
+                extraInfo: {
+                    source: 'JSON_IMPORT',
+                    minioPath: minioResult.objectPath
+                },
                 importedBy: finalUserId,
                 userEmail: finalEmail,
                 fileHash: fileHash
@@ -99,6 +178,9 @@ class GstrJsonImportController {
 
             // 5. Batch Insert into section tables
             let totalInserted = 0;
+            let totalSkipped = 0;
+            const allAddedInvoices = [];
+            const allDuplicateInvoices = [];
             const sectionCounters = { b2b: 0, b2ba: 0, cdnr: 0, cdnra: 0, impg: 0, isd: 0, normalized: 0 };
             const normCtx = {
                 tenantId: finalTenantId,
@@ -136,54 +218,84 @@ class GstrJsonImportController {
                 });
 
                 let result;
+                let keyField = 'invoice_number';
+
                 if (table.includes('b2b_invoices')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, invoice_number, return_period)', 'invoice_number');
+                    keyField = 'invoice_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, invoice_number, return_period)', keyField);
                     sectionCounters.b2b += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapB2B(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('b2ba_invoices')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)', 'revised_invoice_number');
+                    keyField = 'revised_invoice_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)', keyField);
                     sectionCounters.b2ba += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapB2BA(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('cdnr')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, note_number, return_period)', 'note_number');
+                    keyField = 'note_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, note_number, return_period)', keyField);
                     sectionCounters.cdnr += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapCDNR(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('cdnra')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_note_number, revised_note_number, return_period)', 'revised_note_number');
+                    keyField = 'revised_note_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_note_number, revised_note_number, return_period)', keyField);
                     sectionCounters.cdnra += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapCDNRA(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('impg')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, boe_number, port_code, return_period)', 'boe_number');
+                    keyField = 'boe_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, boe_number, port_code, return_period)', keyField);
                     sectionCounters.impg += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapIMPG(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('isd')) {
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, gstin_isd, document_number, return_period)', 'document_number');
+                    keyField = 'document_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, gstin_isd, document_number, return_period)', keyField);
                     sectionCounters.isd += result.inserted;
                     const normRows = NormalizedGstr2bModel.mapISD(records, normCtx);
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 }
                 
-                totalInserted += result?.inserted || 0;
+                const inserted = result?.inserted || 0;
+                const skipped = records.length - inserted;
+                totalInserted += inserted;
+                totalSkipped += skipped;
+
+                if (result?.addedInvoices) {
+                    allAddedInvoices.push(...result.addedInvoices);
+                    const addedSet = new Set(result.addedInvoices);
+                    records.forEach(r => {
+                        const val = r[keyField];
+                        if (val && !addedSet.has(val)) {
+                            allDuplicateInvoices.push(val);
+                        }
+                    });
+                }
             }
 
             // 6. Finalize
+            const finalStatus = totalInserted > 0 ? 'Completed' : 'PartiallyCompleted';
             await GSTRImportModel.updateImportStatusWithCounters(
                 importRecord.import_filing_id,
                 sectionCounters,
-                'Completed',
-                `JSON Import Successful: ${totalInserted} records added.`
+                finalStatus,
+                `JSON Import ${finalStatus}: ${totalInserted} inserted, ${totalSkipped} skipped.`
             );
+
+            // Update master record with added/duplicate info in extra_info (Align with Excel)
+            await GSTRImportModel.updateImportStatus(importRecord.import_filing_id, finalStatus, totalInserted, {
+                source: 'JSON_IMPORT',
+                added_invoices: allAddedInvoices,
+                duplicate_invoices: allDuplicateInvoices
+            });
 
             // 7. Publish NATS Event
             publishEvent('gstr-data-imported', {
@@ -195,10 +307,16 @@ class GstrJsonImportController {
 
             res.json({
                 success: true,
-                message: `Import successful: ${totalInserted} records have been added.`,
+                message: totalInserted > 0 
+                    ? `Import successful: ${totalInserted} records have been added.` 
+                    : `No new records found. ${totalSkipped} already existed.`,
                 data: {
                     import_filing_id: importRecord.import_filing_id,
-                    total_inserted: totalInserted,
+                    total_record: totalInserted,
+                    new_records: totalInserted,
+                    skipped_records: totalSkipped,
+                    added_invoices: allAddedInvoices,
+                    duplicate_invoices: allDuplicateInvoices,
                     section_counters: sectionCounters
                 }
             });
@@ -216,6 +334,88 @@ class GstrJsonImportController {
             return `${year - 1}-${year.toString().substring(2)}`;
         }
         return `${year}-${(year + 1).toString().substring(2)}`;
+    }
+
+    /**
+     * Ensure tax period exists in the database, creating it if necessary.
+     * Replica of GSTRImportController.ensureTaxPeriodExists for microservice isolation.
+     */
+    static async ensureTaxPeriodExists(returnPeriod, db) {
+        const periodMatch = await db.raw('SELECT id FROM tax_periods WHERE period_code = ? LIMIT 1', [returnPeriod]);
+        if (periodMatch.rows.length) {
+            return periodMatch.rows[0].id;
+        }
+
+        console.log(`[ensureTaxPeriodExists] Creating missing tax period: ${returnPeriod}`);
+        const month = parseInt(returnPeriod.substring(0, 2));
+        const year = parseInt(returnPeriod.substring(2));
+        const fyCode = GstrJsonImportController.calculateFinancialYear(returnPeriod);
+
+        // 1. Get or Create Financial Year
+        let fyId;
+        const fyMatch = await db.raw('SELECT id FROM financial_years WHERE fy_code = ? LIMIT 1', [fyCode]);
+        if (fyMatch.rows.length) {
+            fyId = fyMatch.rows[0].id;
+        } else {
+            const startYear = parseInt(fyCode.split('-')[0]);
+            const startDate = `${startYear}-04-01`;
+            const endDate = `${startYear + 1}-03-31`;
+            const fyInsert = await db.raw(
+                `INSERT INTO financial_years (fy_code, display_name, start_date, end_date) 
+                 VALUES (?, ?, ?, ?) RETURNING id`,
+                [fyCode, `FY ${fyCode}`, startDate, endDate]
+            );
+            fyId = fyInsert.rows[0].id;
+        }
+
+        // 2. Create Tax Period
+        const startDate = `${year}-${returnPeriod.substring(0, 2)}-01`;
+        const dateObj = new Date(year, month, 0); // Last day of month
+        const endDate = `${year}-${returnPeriod.substring(0, 2)}-${dateObj.getDate()}`;
+        const quarter = month >= 4 ? Math.floor((month - 4) / 3) + 1 : 4;
+        const displayName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        const periodInsert = await db.raw(
+            `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?) RETURNING id`,
+            [fyId, month, year, returnPeriod, displayName, startDate, endDate, quarter]
+        );
+
+        const newId = periodInsert.rows[0].id;
+
+        // 3. Ensure siblings for the quarter exist for UI consistency
+        try {
+            const fyStartYear = parseInt(fyCode.split('-')[0]);
+            let monthsInfo = [];
+            if (quarter === 1) monthsInfo = [4, 5, 6].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 2) monthsInfo = [7, 8, 9].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 3) monthsInfo = [10, 11, 12].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 4) monthsInfo = [1, 2, 3].map(m => ({ m, y: fyStartYear + 1 }));
+
+            for (const { m, y } of monthsInfo) {
+                const code = `${m.toString().padStart(2, '0')}${y}`;
+                if (code === returnPeriod) continue;
+
+                const exists = await db.raw('SELECT id FROM tax_periods WHERE period_code = ? LIMIT 1', [code]);
+                if (exists.rows.length === 0) {
+                    const mStr = m.toString().padStart(2, '0');
+                    const sDate = `${y}-${mStr}-01`;
+                    const dObj = new Date(y, m, 0);
+                    const eDate = `${y}-${mStr}-${dObj.getDate()}`;
+                    const dName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+                    await db.raw(
+                        `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?)`,
+                        [fyId, m, y, code, dName, sDate, eDate, quarter]
+                    );
+                }
+            }
+        } catch (err) {
+            console.error('[ensureTaxPeriodExists] Error ensuring quarterly siblings:', err.message);
+        }
+
+        return newId;
     }
 }
 
