@@ -1259,7 +1259,47 @@ class ReconciliationModel {
             })
             .returning('id');
 
-        return newPeriod.id;
+        const periodId = newPeriod.id;
+
+        // 3. Ensure siblings for the quarter exist for UI consistency
+        try {
+            const fyStartYear = parseInt(fyCode.split('-')[0]);
+            let monthsInfo = [];
+            if (quarter === 1) monthsInfo = [4, 5, 6].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 2) monthsInfo = [7, 8, 9].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 3) monthsInfo = [10, 11, 12].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 4) monthsInfo = [1, 2, 3].map(m => ({ m, y: fyStartYear + 1 }));
+
+            for (const { m, y } of monthsInfo) {
+                const code = `${m.toString().padStart(2, '0')}${y}`;
+                if (code === returnPeriod) continue;
+
+                const exists = await db('tax_periods').where({ period_code: code }).first();
+                if (!exists) {
+                    const mStr = m.toString().padStart(2, '0');
+                    const sDate = `${y}-${mStr}-01`;
+                    const dObj = new Date(y, m, 0);
+                    const eDate = `${y}-${mStr}-${dObj.getDate().toString().padStart(2, '0')}`;
+                    const dName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+                    await db('tax_periods').insert({
+                        fy_id: fyId,
+                        month: m,
+                        year: y,
+                        period_code: code,
+                        display_name: dName,
+                        start_date: sDate,
+                        end_date: eDate,
+                        period_type: 'MONTHLY',
+                        quarter: quarter
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('[ReconciliationModel] Error ensuring quarterly siblings:', err.message);
+        }
+
+        return periodId;
     }
 }
 

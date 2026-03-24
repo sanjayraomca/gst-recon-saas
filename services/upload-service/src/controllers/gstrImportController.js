@@ -1017,7 +1017,41 @@ class GSTRImportController {
             [fyId, month, year, returnPeriod, displayName, startDate, endDate, quarter]
         );
 
-        return periodInsert.rows[0].id;
+        const newId = periodInsert.rows[0].id;
+
+        // 3. Ensure siblings for the quarter exist for UI consistency
+        try {
+            const fyStartYear = parseInt(fyCode.split('-')[0]);
+            let monthsInfo = [];
+            if (quarter === 1) monthsInfo = [4, 5, 6].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 2) monthsInfo = [7, 8, 9].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 3) monthsInfo = [10, 11, 12].map(m => ({ m, y: fyStartYear }));
+            else if (quarter === 4) monthsInfo = [1, 2, 3].map(m => ({ m, y: fyStartYear + 1 }));
+
+            for (const { m, y } of monthsInfo) {
+                const code = `${m.toString().padStart(2, '0')}${y}`;
+                if (code === returnPeriod) continue;
+
+                const exists = await db.raw('SELECT id FROM tax_periods WHERE period_code = ? LIMIT 1', [code]);
+                if (exists.rows.length === 0) {
+                    const mStr = m.toString().padStart(2, '0');
+                    const sDate = `${y}-${mStr}-01`;
+                    const dObj = new Date(y, m, 0);
+                    const eDate = `${y}-${mStr}-${dObj.getDate()}`;
+                    const dName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+                    await db.raw(
+                        `INSERT INTO tax_periods (fy_id, month, year, period_code, display_name, start_date, end_date, period_type, quarter)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'MONTHLY', ?)`,
+                        [fyId, m, y, code, dName, sDate, eDate, quarter]
+                    );
+                }
+            }
+        } catch (err) {
+            console.error('[ensureTaxPeriodExists] Error ensuring quarterly siblings:', err.message);
+        }
+
+        return newId;
     }
     /**
      * Get active periods for a workspace
