@@ -1105,7 +1105,7 @@ class ReconciliationModel {
             'supplier_name': 'supplier_name',
             'gst_type': knex.raw('COALESCE(pi.source_section, gi.source_section)'),
             'invoice_no': 'purchase_invoice_number',
-            'date': 'purchase_invoice_date',
+            'date': knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
             'gstr2b_taxable': 'gstr2b_taxable',
             'purchase_taxable': 'purchase_taxable',
             'gstr2b_igst': 'gi.igst',
