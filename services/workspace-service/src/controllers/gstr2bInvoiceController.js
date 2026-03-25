@@ -21,9 +21,10 @@ const getAllInvoices = async (req, res) => {
             invoice_date_to: req.query.invoice_date_to
         };
 
+        const page_size = Math.min(parseInt(req.query.page_size) || 50, 10000);
         const pagination = {
             page: parseInt(req.query.page) || 1,
-            page_size: Math.min(parseInt(req.query.page_size) || 50, 100)
+            page_size
         };
 
         const result = await Gstr2bInvoiceModel.getAll(workspaceId, filters, pagination);
