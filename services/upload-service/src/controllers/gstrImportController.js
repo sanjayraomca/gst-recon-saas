@@ -308,7 +308,7 @@ class GSTRImportController {
 
                         console.log(`Processing sheet: ${sheetName} (${sName}) - Rows: ${jsonRows.length}`);
 
-                        if (sName.includes('B2B')) {
+                        if (sName.includes('B2B') || sName.includes('CDNR')) {
                             const sheetRecords = processB2BSheet(jsonRows, null, return_period, sheetName, gstr_type);
                             console.log(`[DEBUG] Extracted ${sheetRecords.length} records from processor for ${sheetName}`);
 

@@ -32,7 +32,7 @@ const buildColumnMap = (headerRow) => {
         else if (header.includes('GSTIN OF SUPPLIER')) colMap['gstin_supplier'] = index;
         else if (header.includes('TRADE/LEGAL NAME') || header.includes('TRADE NAME') || header === 'NAME') colMap['trade_name'] = index;
 
-        else if (header.includes('INVOICE NUMBER') || header.includes('INVOICE/REF')) {
+        else if (header.includes('INVOICE NUMBER') || header.includes('INVOICE/REF') || header.match(/INVOICE NO\b|INV NO\b/)) {
             if (colMap['invoice_number'] !== undefined) {
                 colMap['original_invoice_number'] = colMap['invoice_number'];
                 colMap['invoice_number'] = index;
@@ -40,7 +40,7 @@ const buildColumnMap = (headerRow) => {
                 colMap['invoice_number'] = index;
             }
         }
-        else if (header.includes('NOTE NUMBER')) {
+        else if (header.includes('NOTE NUMBER') || header.match(/NOTE NO\b|NT NO\b/)) {
             if (colMap['note_number'] !== undefined) {
                 colMap['original_note_number'] = colMap['note_number'];
                 colMap['note_number'] = index;
@@ -49,7 +49,7 @@ const buildColumnMap = (headerRow) => {
             }
         }
         else if (header.match(/INVOICE TYPE|NOTE TYPE|GST TYPE|GSTR TYPE|DOCUMENT TYPE/)) colMap['invoice_type'] = index;
-        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE')) {
+        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE') || header.match(/INV DATE\b|NT DATE\b|IDT\b|NTDT\b/)) {
             if (colMap['invoice_date'] !== undefined) {
                 colMap['original_invoice_date'] = colMap['invoice_date'];
                 colMap['invoice_date'] = index;
@@ -60,17 +60,20 @@ const buildColumnMap = (headerRow) => {
 
         else if (header.match(/TAX PERIOD|RETURN PERIOD|MONTH/)) colMap['return_period'] = index;
 
-        else if (header.includes('INVOICE VALUE') || header.includes('NOTE VALUE') || header.includes('INVOICE AMT')) colMap['invoice_value'] = index;
+        else if ((header.includes('INVOICE VALUE') || header.includes('NOTE VALUE') || header.includes('INVOICE AMT')) && colMap['invoice_value'] === undefined) colMap['invoice_value'] = index;
         else if (header.includes('PLACE OF SUPPLY')) colMap['place_of_supply'] = index;
         else if (header.match(/REVERSE CHARGE|RCM|REV.? CHARGE/)) colMap['reverse_charge'] = index;
-        else if (header.includes('TAXABLE VALUE') || header.includes('TAXABLE AMT')) colMap['taxable_value'] = index;
-        else if (header.includes('INTEGRATED TAX') || (header.includes('TAX AMT') && header.includes('IGST'))) colMap['igst_amount'] = index;
-        else if (header.includes('CENTRAL TAX') || (header.includes('TAX AMT') && header.includes('CGST'))) colMap['cgst_amount'] = index;
-        else if (header.includes('STATE/UT TAX') || (header.includes('TAX AMT') && header.includes('SGST'))) colMap['sgst_amount'] = index;
-        else if (header.includes('CESS AMOUNT') || header.includes('CESS')) colMap['cess_amount'] = index;
+        else if ((header.includes('TAXABLE VALUE') || header.includes('TAXABLE AMT') || header === 'TAXABLE') && colMap['taxable_value'] === undefined) colMap['taxable_value'] = index;
+        
+        // Tax Columns - Be more inclusive for shorter headers but prioritize the first match (Amount)
+        // Note: GSTR-2B often has duplicate "Integrated Tax" headers for Amount and ITC Eligibility.
+        else if ((header.includes('INTEGRATED TAX') || header.match(/\bIGST\b/)) && colMap['igst_amount'] === undefined) colMap['igst_amount'] = index;
+        else if ((header.includes('CENTRAL TAX') || header.match(/\bCGST\b/)) && colMap['cgst_amount'] === undefined) colMap['cgst_amount'] = index;
+        else if ((header.includes('STATE/UT TAX') || header.match(/\bSGST\b/)) && colMap['sgst_amount'] === undefined) colMap['sgst_amount'] = index;
+        else if ((header.includes('CESS AMOUNT') || header === 'CESS') && colMap['cess_amount'] === undefined) colMap['cess_amount'] = index;
         
         // Handle generic 'Tax AMT' when detailed split isn't available
-        else if (header === 'TAX AMT' || header === 'TAX AMOUNT') colMap['total_tax_amount'] = index;
+        else if ((header === 'TAX AMT' || header === 'TAX AMOUNT' || header === 'TOTAL TAX') && colMap['total_tax_amount'] === undefined) colMap['total_tax_amount'] = index;
         else if (header === 'TAX %' || header === 'TAX RATE') colMap['tax_rate_percentage'] = index;
 
         // GSTR-2B Specifics
@@ -239,12 +242,40 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
     const colMap = buildColumnMap(headerRow);
     const dataStartIndex = headerRowIndex + (isMerged ? 2 : 1);
 
+    // Sticky headers for multi-row records (e.g., GSTR-2B item details)
+    let stickyGstin = '';
+    let stickyTradeName = '';
+    let stickyInvoiceNo = '';
+    let stickyNoteNo = '';
+    let stickyDate = null;
+    let stickyPlaceOfSupply = '';
+    let stickyReverseCharge = 'N';
+
     for (let i = dataStartIndex; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length < 5) continue;
 
-        const gstin = row[colMap['gstin_supplier'] || 0]?.toString().trim() || '';
-        // Skip empty or total/invalid rows
+        let gstin = row[colMap['gstin_supplier']]?.toString().trim() || '';
+        let invoiceNoRaw = colMap['invoice_number'] !== undefined ? row[colMap['invoice_number']] : '';
+        let noteNoRaw = colMap['note_number'] !== undefined ? row[colMap['note_number']] : '';
+
+        // Update sticky values if we have a new key (GSTIN + Invoice/Note)
+        if (gstin && isValidGSTIN(gstin)) {
+            stickyGstin = gstin;
+            stickyTradeName = colMap['trade_name'] !== undefined ? row[colMap['trade_name']] : null;
+            stickyInvoiceNo = invoiceNoRaw;
+            stickyNoteNo = noteNoRaw;
+            stickyDate = parseExcelDate(row[colMap['invoice_date']]);
+            stickyPlaceOfSupply = colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : null;
+            stickyReverseCharge = colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Y' : 'N') : 'N';
+        } else if (stickyGstin && (row[colMap['taxable_value']] !== undefined || row[colMap['igst_amount']] !== undefined)) {
+            // Use sticky values for rows that look like data but miss headers
+            gstin = stickyGstin;
+            invoiceNoRaw = stickyInvoiceNo;
+            noteNoRaw = stickyNoteNo;
+        }
+
+        // Skip if still no valid GSTIN (e.g. total rows, empty rows)
         if (!gstin || gstin.toUpperCase().includes('TOTAL') || !isValidGSTIN(gstin)) continue;
 
         const rowReturnPeriod = colMap['return_period'] !== undefined ? parseTaxPeriod(row[colMap['return_period']]) : null;
@@ -264,16 +295,16 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
             gstin_id: gstinId, // Foreign Key
             return_period: rowReturnPeriod || fileReturnPeriod, // Prefer row-level period format
             gstin_supplier: gstin,
-            trade_name: colMap['trade_name'] !== undefined ? row[colMap['trade_name']] : null,
-            place_of_supply: colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : null,
-            reverse_charge: colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Y' : 'N') : 'N',
+            trade_name: gstin === stickyGstin ? stickyTradeName : (colMap['trade_name'] !== undefined ? row[colMap['trade_name']] : null),
+            place_of_supply: gstin === stickyGstin ? stickyPlaceOfSupply : (colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : null),
+            reverse_charge: gstin === stickyGstin ? stickyReverseCharge : (colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Y' : 'N') : 'N'),
             taxable_value: cleanAmount(colMap['taxable_value'] !== undefined ? row[colMap['taxable_value']] : 0),
             igst_amount: igst,
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0),
             filing_period: colMap['filing_period'] !== undefined ? row[colMap['filing_period']] : null,
-            filing_date: parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null),
+            filing_date: gstin === stickyGstin ? stickyDate : parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null),
             reconciliation_status: colMap['reconciliation_status'] !== undefined ? extractReconStatus(row[colMap['reconciliation_status']]) : 'pending',
             itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Yes' : 'No') : 'Yes',
             unavailability_reason: colMap['unavailability_reason'] !== undefined ? row[colMap['unavailability_reason']] : null,
@@ -294,7 +325,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
 
         if (isCDNR) {
             // Processing CDNR Record
-            const noteNumRaw = colMap['note_number'] !== undefined ? row[colMap['note_number']] : '';
+            const noteNumRaw = noteNoRaw;
             const noteNum = noteNumRaw ? normalizeInvoiceNumber(noteNumRaw.toString()) : '';
             if (!noteNum) continue;
 
@@ -319,7 +350,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
             });
         } else {
             // Processing B2B Record
-            const invNumRaw = colMap['invoice_number'] !== undefined ? row[colMap['invoice_number']] : '';
+            const invNumRaw = invoiceNoRaw;
             const invNum = invNumRaw ? normalizeInvoiceNumber(invNumRaw.toString()) : '';
             if (!invNum) continue;
 
@@ -329,7 +360,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
                 invoice_number_raw: invNumRaw?.toString().trim() || null,
                 invoice_number: invNum,
                 invoice_type: colMap['invoice_type'] !== undefined ? row[colMap['invoice_type']] : 'Regular',
-                invoice_date: parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null),
+                invoice_date: gstin === stickyGstin ? stickyDate : parseExcelDate(colMap['invoice_date'] !== undefined ? row[colMap['invoice_date']] : null),
                 invoice_value: cleanAmount(colMap['invoice_value'] !== undefined ? row[colMap['invoice_value']] : 0),
             };
 

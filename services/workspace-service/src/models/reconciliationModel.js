@@ -707,7 +707,9 @@ class ReconciliationModel {
             const states = place_of_supply.split(',').map(s => s.trim());
             query.where(function () {
                 this.whereIn('pi.place_of_supply', states)
-                    .orWhereIn('gi.place_of_supply', states);
+                    .orWhereIn('gi.place_of_supply', states)
+                    .orWhereIn('pi.place_of_supply', knex('state_code_master').select('state').whereIn('code', states))
+                    .orWhereIn('gi.place_of_supply', knex('state_code_master').select('state').whereIn('code', states));
             });
         }
 
@@ -854,7 +856,17 @@ class ReconciliationModel {
             });
         }
 
-        if (column_filters && typeof column_filters === 'object') {
+        let parsedColumnFilters = column_filters;
+        if (column_filters && typeof column_filters === 'string') {
+            try {
+                parsedColumnFilters = JSON.parse(column_filters);
+            } catch (e) {
+                console.warn('[getRunResults] Failed to parse column_filters JSON:', e.message);
+                parsedColumnFilters = null;
+            }
+        }
+
+        if (parsedColumnFilters && typeof parsedColumnFilters === 'object') {
             // Maps frontend filter keys to DB columns
             const colMapping = {
                 // Identity
@@ -889,7 +901,7 @@ class ReconciliationModel {
                 tax_diff:             { cols: ['rr.variance_amount'], numeric: true },
             };
 
-            Object.entries(column_filters).forEach(([key, value]) => {
+            Object.entries(parsedColumnFilters).forEach(([key, value]) => {
                 const isEmpty = !value || (Array.isArray(value) && value.length === 0) || value === '';
                 if (isEmpty) return;
 
