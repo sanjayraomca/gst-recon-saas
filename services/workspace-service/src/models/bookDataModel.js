@@ -22,6 +22,7 @@ class BookDataModel {
     static _resolveType(bookTypeId) {
         switch (bookTypeId) {
             case 'sales_invoice':
+            case 'SALES_REGISTER':
                 return { table: 'sales', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'] };
             case 'sales_return':
                 return { table: 'sales', bookTypes: ['SR'] };
@@ -30,6 +31,7 @@ class BookDataModel {
             case 'dn_sales':
                 return { table: 'sales', invoiceTypes: ['DEBIT_NOTE'] };
             case 'purchase_invoice':
+            case 'PURCHASE_REGISTER':
                 return { table: 'purchase', voucherTypes: ['PURCHASE'] };
             case 'expense_invoice':
                 return { table: 'purchase', voucherTypes: ['EXPENSE'] };
