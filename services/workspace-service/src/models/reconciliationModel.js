@@ -1055,6 +1055,8 @@ class ReconciliationModel {
             // Supplier mapping
             knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
             knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
+            knex.raw('COALESCE(pi.supplier_invoice_no, gi.document_number_clean) as supplier_invoice_no'),
+            knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date) as supplier_invoice_date'),
             knex.raw('COALESCE(tp.period_code, gi.return_period) as return_period'), // Explicit period code
 
             // Purchase/Books mapping

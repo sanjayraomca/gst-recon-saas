@@ -1,5 +1,4 @@
 const { Client } = require('pg');
-require('dotenv').config();
 
 const dbConfig = {
     host: '127.0.0.1',
@@ -9,44 +8,93 @@ const dbConfig = {
     password: 'GstAdmin123',
 };
 
-async function verify() {
-    const client = new Client(dbConfig);
-    await client.connect();
+// Replicate frontend normalizeDate
+const normalizeDate = (dObj) => {
+    if (!dObj || dObj === '-') return '';
 
-    const workspaceId = 'b9364d27-cf77-40fc-88fc-954500495d39';
-    console.log('--- DB Check for Workspace:', workspaceId);
-
-    // 1. Check Invoice Counts by Document Type
-    const counts = await client.query(
-        "SELECT document_type, count(*) FROM normalized_gstr2b_invoices WHERE workspace_id = $1 GROUP BY document_type",
-        [workspaceId]
-    );
-    console.log('Document Counts:', counts.rows);
-
-    // 2. Fetch CDNR samples
-    const cdnr = await client.query(
-        "SELECT supplier_gstin, document_number_clean, document_date, return_period, document_type FROM normalized_gstr2b_invoices WHERE workspace_id = $1 AND (document_type LIKE '%CDN%' OR document_type LIKE '%CRN%')",
-        [workspaceId]
-    );
-    console.log('CDNR Records Found:', cdnr.rows.length);
-
-    if (cdnr.rows.length > 0) {
-        console.log('Sample CDNR Keys (Simulated):');
-        cdnr.rows.slice(0, 5).forEach(r => {
-            const g = (r.supplier_gstin || '').toString().toUpperCase().trim();
-            const i = (r.document_number_clean || '').toString().toUpperCase().trim().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
-            
-            const dObj = new Date(r.document_date);
-            const dd = String(dObj.getDate()).padStart(2, '0');
-            const mm = String(dObj.getMonth() + 1).padStart(2, '0');
-            const yyyy = dObj.getFullYear();
-            const d = `${dd}${mm}${yyyy}`;
-            
-            console.log(`Key: ${g}_${i}_${d} (Raw Num: ${r.document_number_clean}, Raw Date: ${r.document_date})`);
-        });
+    let date;
+    if (dObj instanceof Date) {
+        date = dObj;
+    } else {
+        const s = String(dObj).trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+            const [y, m, d] = s.split('-');
+            return `${d}${m}${y}`;
+        } else if (s.includes('T')) {
+            date = new Date(s); 
+        } else if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(s)) {
+            return s.replace(/[-/]/g, '');
+        } else {
+            date = new Date(s);
+        }
     }
 
-    await client.end();
+    if (isNaN(date.getTime())) return '';
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${dd}${mm}${yyyy}`;
+};
+
+async function verify() {
+    const client = new Client(dbConfig);
+    try {
+        await client.connect();
+        
+        const workspaceId = 'b9364d27-cf77-40fc-88fc-954500495d39';
+        
+        console.log('--- Simulating Backend API Response ---');
+        const res = await client.query(`
+            SELECT 
+                invoice_number as "invoiceNo",
+                to_char(invoice_date, 'DD-MM-YYYY') as "date",
+                trim(customer_gstin) as "gstin"
+            FROM sales_invoices 
+            WHERE workspace_id = $1 
+            LIMIT 10
+        `, [workspaceId]);
+        
+        const existingRecordsList = res.rows;
+        console.log('Backend Data (Sample):', existingRecordsList[0]);
+
+        const existingMap = new Set(existingRecordsList.map(r => {
+            const iStr = r.invoiceNo || '';
+            const dStr = r.date || '';
+            
+            const i = iStr.toString().toUpperCase().trim().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+            const d = dStr.replace(/[^0-9]/g, '');
+            
+            const g = (r.gstin || '').toString().toUpperCase().trim();
+            const key = g ? `${g}_${i}_${d}` : `${i}_${d}`;
+            return key;
+        }));
+
+        console.log('Existing Keys Map (Sample):', Array.from(existingMap).slice(0, 5));
+
+        // SIMULATE AN UPLOADED ROW
+        const uploadedRow = {
+            "Invoice Number": "INV7",
+            "Date": "05/12/2025",
+            "GSTIN": ""
+        };
+
+        const rowGstin = uploadedRow["GSTIN"] || "";
+        const rowInv = uploadedRow["Invoice Number"] || "";
+        const rowDate = uploadedRow["Date"] || "";
+
+        const g = rowGstin.toString().toUpperCase().trim();
+        const i = rowInv.toString().toUpperCase().trim().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+        const d = normalizeDate(rowDate);
+
+        const key = g ? `${g}_${i}_${d}` : `${i}_${d}`;
+        console.log('Simulated Row Key:', key);
+        console.log('Is Duplicate?', existingMap.has(key));
+
+    } catch (err) {
+        console.error('Error:', err);
+    } finally {
+        await client.end();
+    }
 }
 
-verify().catch(console.error);
+verify();

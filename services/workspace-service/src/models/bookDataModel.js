@@ -24,6 +24,8 @@ class BookDataModel {
             case 'sales_invoice':
             case 'SALES_REGISTER':
                 return { table: 'sales', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'] };
+            case 'SALES_UPLOAD':
+                return { table: 'sales' }; // Includes all: SA, SR, CN, DN
             case 'sales_return':
                 return { table: 'sales', bookTypes: ['SR'] };
             case 'cn_sales':
@@ -33,6 +35,8 @@ class BookDataModel {
             case 'purchase_invoice':
             case 'PURCHASE_REGISTER':
                 return { table: 'purchase', voucherTypes: ['PURCHASE'] };
+            case 'PURCHASE_UPLOAD':
+                return { table: 'purchase' }; // Includes all: PA, EXP, CN, DN
             case 'expense_invoice':
                 return { table: 'purchase', voucherTypes: ['EXPENSE'] };
             case 'purchase_return':
@@ -151,6 +155,7 @@ class BookDataModel {
                 .select(
                     'si.id',
                     'si.invoice_number as invoiceNo',
+                    'si.invoice_number as invoice_number',
                     knex.raw("to_char(si.invoice_date, 'DD-MM-YYYY') as date"),
                     'si.customer_name as party',
                     knex.raw("trim(si.customer_gstin) as gstin"),
@@ -164,6 +169,7 @@ class BookDataModel {
                     knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
                     'si.filing_status as status',
                     'si.invoice_type as docType',
+                    'si.book_type as bookType',
                     'si.round_off as roundOff',
                     knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
                     knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\"")
@@ -225,7 +231,11 @@ class BookDataModel {
                 .select(
                     'ev.id',
                     'ev.supplier_invoice_no as invoiceNo',
+                    'ev.supplier_invoice_no as invoice_number',
+                    'ev.book_vchr_no as bookVchrNo',
+                    'ev.book_vchr_no as book_vchr_no',
                     knex.raw("to_char(ev.supplier_invoice_date, 'DD-MM-YYYY') as date"),
+                    knex.raw("to_char(ev.book_vchr_date, 'DD-MM-YYYY') as \"bookVchrDate\""),
                     'ev.supplier_name as party',
                     'ev.supplier_gstin as gstin',
                     'ev.taxable_total as taxableAmt',
@@ -237,6 +247,7 @@ class BookDataModel {
                     'ev.place_of_supply as placeOfSupply',
                     'ev.is_interstate as isInterstate',
                     'ev.status',
+                    'ev.book_type as bookType',
                     'ev.book_type as docType',
                     'ev.round_off as roundOff',
                     knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
