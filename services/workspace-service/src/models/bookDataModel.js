@@ -97,7 +97,7 @@ class BookDataModel {
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
-        const { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir = 'desc' } = filters;
+        const { search, status, period, gstin, date_from, date_to, year, amt_min, amt_max, place_of_supply, sort_by, sort_dir = 'desc' } = filters;
 
         let records = [];
         let total = 0;
@@ -110,7 +110,34 @@ class BookDataModel {
             if (resolved.invoiceTypes) q = q.whereIn('si.invoice_type', resolved.invoiceTypes);
             if (resolved.bookTypes) q = q.whereIn('si.book_type', resolved.bookTypes);
 
-            q = BookDataModel._addPeriodFilter(q, period, 'si.invoice_date');
+            // Period, Year, and Date Range logic (Combined OR)
+            q = q.where(function () {
+                // If we have period, use it (ANDed with others usually, but here we treat as one of the options)
+                if (period && period !== 'ALL') {
+                    this.orWhere(function() {
+                        BookDataModel._addPeriodFilter(this, period, 'si.invoice_date');
+                    });
+                }
+
+                // Year OR Date Range
+                if ((year && year !== 'ALL') || (date_from && date_to)) {
+                    this.orWhere(function () {
+                        if (year && year !== 'ALL') {
+                            // Indian FY: April to March
+                            const yrStart = `${year}-04-01`;
+                            const yrEnd = `${parseInt(year) + 1}-03-31`;
+                            this.whereRaw(`si.invoice_date >= ?::date AND si.invoice_date <= ?::date`, [yrStart, yrEnd]);
+                        }
+                        if (date_from && date_to) {
+                            this.orWhereRaw(`si.invoice_date >= ?::date AND si.invoice_date <= ?::date`, [date_from, date_to]);
+                        }
+                    });
+                } else if (!period || period === 'ALL') {
+                    // No filters provided, allow all
+                    this.whereRaw('1=1');
+                }
+            });
+
             if (search) {
                 q = q.where(function () {
                     this.where('si.invoice_number', 'ilike', `%${search}%`)
@@ -186,7 +213,30 @@ class BookDataModel {
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
             if (resolved.bookTypes) q = q.whereIn('ev.book_type', resolved.bookTypes);
 
-            q = BookDataModel._addPeriodFilter(q, period, 'ev.supplier_invoice_date');
+            // Period, Year, and Date Range logic (Combined OR)
+            q = q.where(function () {
+                if (period && period !== 'ALL') {
+                    this.orWhere(function () {
+                        BookDataModel._addPeriodFilter(this, period, 'ev.supplier_invoice_date');
+                    });
+                }
+
+                if ((year && year !== 'ALL') || (date_from && date_to)) {
+                    this.orWhere(function () {
+                        if (year && year !== 'ALL') {
+                            const yrStart = `${year}-04-01`;
+                            const yrEnd = `${parseInt(year) + 1}-03-31`;
+                            this.whereRaw(`ev.supplier_invoice_date >= ?::date AND ev.supplier_invoice_date <= ?::date`, [yrStart, yrEnd]);
+                        }
+                        if (date_from && date_to) {
+                            this.orWhereRaw(`ev.supplier_invoice_date >= ?::date AND ev.supplier_invoice_date <= ?::date`, [date_from, date_to]);
+                        }
+                    });
+                } else if (!period || period === 'ALL') {
+                    this.whereRaw('1=1');
+                }
+            });
+
             if (search) {
                 q = q.where(function () {
                     this.where('ev.supplier_invoice_no', 'ilike', `%${search}%`)
@@ -272,7 +322,7 @@ class BookDataModel {
      * getSummary - returns aggregate totals for all 9 book types in a single call.
      * Used by the grouped cards UI to show live counts + tax breakdown per type.
      */
-    static async getSummary(workspaceId, period) {
+    static async getSummary(workspaceId, { period, year, date_from, date_to } = {}) {
         // --- Sales types ---
         const salesTypes = [
             { id: 'sales_invoice', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'], bookTypes: null },
@@ -285,7 +335,29 @@ class BookDataModel {
             let q = knex('sales_invoices as si').where('si.workspace_id', workspaceId);
             if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
             if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
-            q = BookDataModel._addPeriodFilter(q, period, 'si.invoice_date');
+            
+            q = q.where(function () {
+                if (period && period !== 'ALL') {
+                    this.orWhere(function () {
+                        BookDataModel._addPeriodFilter(this, period, 'si.invoice_date');
+                    });
+                }
+                if ((year && year !== 'ALL') || (date_from && date_to)) {
+                    this.orWhere(function () {
+                        if (year && year !== 'ALL') {
+                            const yrStart = `${year}-04-01`;
+                            const yrEnd = `${parseInt(year) + 1}-03-31`;
+                            this.whereRaw(`si.invoice_date >= ?::date AND si.invoice_date <= ?::date`, [yrStart, yrEnd]);
+                        }
+                        if (date_from && date_to) {
+                            this.orWhereRaw(`si.invoice_date >= ?::date AND si.invoice_date <= ?::date`, [date_from, date_to]);
+                        }
+                    });
+                } else if (!period || period === 'ALL') {
+                    this.whereRaw('1=1');
+                }
+            });
+
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
                 knex.raw('COALESCE(SUM(si.total_taxable_value),0) as taxable'),
@@ -319,7 +391,29 @@ class BookDataModel {
             let q = knex('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
             if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
             if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
-            q = BookDataModel._addPeriodFilter(q, period, 'ev.supplier_invoice_date');
+            
+            q = q.where(function () {
+                if (period && period !== 'ALL') {
+                    this.orWhere(function () {
+                        BookDataModel._addPeriodFilter(this, period, 'ev.supplier_invoice_date');
+                    });
+                }
+                if ((year && year !== 'ALL') || (date_from && date_to)) {
+                    this.orWhere(function () {
+                        if (year && year !== 'ALL') {
+                            const yrStart = `${year}-04-01`;
+                            const yrEnd = `${parseInt(year) + 1}-03-31`;
+                            this.whereRaw(`ev.supplier_invoice_date >= ?::date AND ev.supplier_invoice_date <= ?::date`, [yrStart, yrEnd]);
+                        }
+                        if (date_from && date_to) {
+                            this.orWhereRaw(`ev.supplier_invoice_date >= ?::date AND ev.supplier_invoice_date <= ?::date`, [date_from, date_to]);
+                        }
+                    });
+                } else if (!period || period === 'ALL') {
+                    this.whereRaw('1=1');
+                }
+            });
+
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
                 knex.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),

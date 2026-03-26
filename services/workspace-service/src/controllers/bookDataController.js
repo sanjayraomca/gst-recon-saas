@@ -64,7 +64,7 @@ const getBookDataSummary = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        const { period } = req.query;
+        const { period, year, date_from, date_to } = req.query;
 
         const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
         if (tenantId) {
@@ -72,7 +72,7 @@ const getBookDataSummary = async (req, res) => {
             if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
         }
 
-        const summary = await BookDataModel.getSummary(workspaceId, period);
+        const summary = await BookDataModel.getSummary(workspaceId, { period, year, date_from, date_to });
         return successResponse(res, summary, 'Summary retrieved successfully');
     } catch (error) {
         console.error('BookDataController.getBookDataSummary error:', error);
