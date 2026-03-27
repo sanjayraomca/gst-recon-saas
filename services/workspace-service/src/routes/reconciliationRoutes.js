@@ -6,7 +6,8 @@ const {
     getRuns,
     getRun,
     getRunResults,
-    getRunProgress
+    getRunProgress,
+    getRunTaxSummary
 } = require('../controllers/reconciliationController');
 
 const {
@@ -67,5 +68,8 @@ router.put('/status/:result_id', updateReconStatus);
 
 // GET /reconciliation/runs/:run_id/results
 router.get('/runs/:run_id/results', getRunResults);
+
+// GET /reconciliation/runs/:run_id/tax-summary
+router.get('/runs/:run_id/tax-summary', getRunTaxSummary);
 
 module.exports = router;

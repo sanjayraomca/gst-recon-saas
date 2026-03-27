@@ -1385,6 +1385,166 @@ class ReconciliationModel {
 
         return periodId;
     }
+    /**
+     * Get tax summary grouped by period → GST category for the tree-view modal
+     */
+    static async getRunTaxSummary(workspaceId, runId, filters = {}) {
+        const { fy, quarter, month } = filters;
+
+        // ── Period-grouped aggregation ───────────────────────────────────────────
+        const agg = await knex('reconciliation_results as rr')
+            .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
+            .where('rr.recon_run_id', runId)
+            .where('rr.workspace_id', workspaceId)
+            .modify(q => {
+                if (fy && fy !== 'ALL') {
+                    const [startY, endY] = fy.split('-').map(Number);
+                    const months = [];
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${startY}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${endY}`);
+                    q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
+                }
+                if (quarter && quarter !== 'ALL') {
+                    const qtMap = { '1': [4,5,6], '2': [7,8,9], '3': [10,11,12], '4': [1,2,3] };
+                    const qtMonths = qtMap[String(quarter)] || [];
+                    if (fy && fy !== 'ALL') {
+                        const [startY, endY] = fy.split('-').map(Number);
+                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? startY : endY}`);
+                        q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
+                    }
+                }
+                if (month && month !== 'ALL') {
+                    q.where(function() {
+                        this.where('tp.period_code', String(month))
+                            .orWhere('gi.return_period', String(month));
+                    });
+                }
+            })
+            .select(
+                knex.raw("COALESCE(tp.period_code, gi.return_period, '000000') as period"),
+                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER')) as category"),
+                // Books side
+                knex.raw("COUNT(pi.id) as books_count"),
+                knex.raw("SUM(COALESCE(pi.total_igst_amount,0)) as books_igst"),
+                knex.raw("SUM(COALESCE(pi.total_cgst_amount,0)) as books_cgst"),
+                knex.raw("SUM(COALESCE(pi.total_sgst_amount,0)) as books_sgst"),
+                knex.raw("SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(pi.total_cess_amount,0)) as books_tax"),
+                // GSTR-2B side
+                knex.raw("COUNT(gi.id) as gstr2b_count"),
+                knex.raw("SUM(COALESCE(gi.igst,0)) as gstr2b_igst"),
+                knex.raw("SUM(COALESCE(gi.cgst,0)) as gstr2b_cgst"),
+                knex.raw("SUM(COALESCE(gi.sgst,0)) as gstr2b_sgst"),
+                knex.raw("SUM(COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)) as gstr2b_tax")
+            )
+            .groupByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))")
+            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))");
+
+        // ── Invoice-level rows ───────────────────────────────────────────────────
+        const invoices = await knex('reconciliation_results as rr')
+            .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
+            .where('rr.recon_run_id', runId)
+            .where('rr.workspace_id', workspaceId)
+            .modify(q => {
+                if (fy && fy !== 'ALL') {
+                    const [startY, endY] = fy.split('-').map(Number);
+                    const months = [];
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${startY}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${endY}`);
+                    q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
+                }
+                if (month && month !== 'ALL') {
+                    q.where(function() {
+                        this.where('tp.period_code', String(month))
+                            .orWhere('gi.return_period', String(month));
+                    });
+                }
+            })
+            .select(
+                knex.raw("COALESCE(tp.period_code, gi.return_period, '000000') as period"),
+                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER')) as category"),
+                'rr.id as result_id',
+                'rr.match_status',
+                knex.raw("COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name"),
+                knex.raw("COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin"),
+                knex.raw("COALESCE(pi.supplier_invoice_no, gi.document_number_clean) as invoice_no"),
+                knex.raw("COALESCE(pi.supplier_invoice_date, gi.document_date) as invoice_date"),
+                // Books
+                knex.raw("COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(pi.total_cess_amount,0) as books_tax"),
+                'pi.total_igst_amount as books_igst',
+                'pi.total_cgst_amount as books_cgst',
+                'pi.total_sgst_amount as books_sgst',
+                // GSTR-2B
+                knex.raw("COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0) as gstr2b_tax"),
+                'gi.igst as gstr2b_igst',
+                'gi.cgst as gstr2b_cgst',
+                'gi.sgst as gstr2b_sgst',
+                'pi.book_vchr_no as vchr_no',
+                'pi.gstr_category'
+            )
+            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))");
+
+        // ── Build hierarchy ──────────────────────────────────────────────────────
+        const periodMap = {};
+
+        agg.forEach(row => {
+            const p = row.period;
+            if (!periodMap[p]) {
+                periodMap[p] = {
+                    period: p,
+                    categories: {},
+                    books:  { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 },
+                    gstr2b: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 },
+                };
+            }
+            const cat = row.category;
+            periodMap[p].categories[cat] = {
+                category: cat,
+                invoices: [],
+                books:  { count: +row.books_count,  tax: +row.books_tax,  igst: +row.books_igst,  cgst: +row.books_cgst,  sgst: +row.books_sgst  },
+                gstr2b: { count: +row.gstr2b_count, tax: +row.gstr2b_tax, igst: +row.gstr2b_igst, cgst: +row.gstr2b_cgst, sgst: +row.gstr2b_sgst },
+            };
+            // Accumulate period totals
+            periodMap[p].books.count  += +row.books_count;
+            periodMap[p].books.tax    += +row.books_tax;
+            periodMap[p].books.igst   += +row.books_igst;
+            periodMap[p].books.cgst   += +row.books_cgst;
+            periodMap[p].books.sgst   += +row.books_sgst;
+            periodMap[p].gstr2b.count += +row.gstr2b_count;
+            periodMap[p].gstr2b.tax   += +row.gstr2b_tax;
+            periodMap[p].gstr2b.igst  += +row.gstr2b_igst;
+            periodMap[p].gstr2b.cgst  += +row.gstr2b_cgst;
+            periodMap[p].gstr2b.sgst  += +row.gstr2b_sgst;
+        });
+
+        invoices.forEach(inv => {
+            const p = inv.period;
+            const c = inv.category;
+            if (periodMap[p]?.categories[c]) {
+                periodMap[p].categories[c].invoices.push(inv);
+            }
+        });
+
+        // Compute grand totals
+        const grand = { books: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 }, gstr2b: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 } };
+        Object.values(periodMap).forEach(p => {
+            ['books','gstr2b'].forEach(side => {
+                ['count','tax','igst','cgst','sgst'].forEach(k => { grand[side][k] += p[side][k]; });
+            });
+        });
+
+        const periods = Object.values(periodMap)
+            .sort((a, b) => a.period.localeCompare(b.period))
+            .map(p => ({
+                ...p,
+                categories: Object.values(p.categories).sort((a,b) => a.category.localeCompare(b.category))
+            }));
+
+        return { periods, grand };
+    }
 }
 
 module.exports = ReconciliationModel;

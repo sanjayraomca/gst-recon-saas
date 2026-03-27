@@ -108,6 +108,19 @@ const getRunResults = async (req, res) => {
     }
 };
 
+const getRunTaxSummary = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        const runId = req.params.run_id;
+        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const data = await ReconciliationModel.getRunTaxSummary(workspaceId, runId, req.query);
+        return successResponse(res, data, 'Tax summary retrieved successfully');
+    } catch (error) {
+        console.error('Error fetching tax summary:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 /**
  * Stream Server-Sent Events (SSE) for reconciliation progress tracking
  */
@@ -148,5 +161,6 @@ module.exports = {
     getRuns,
     getRun,
     getRunResults,
-    getRunProgress
+    getRunProgress,
+    getRunTaxSummary
 };
