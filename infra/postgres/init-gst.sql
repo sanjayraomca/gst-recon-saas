@@ -1026,6 +1026,10 @@ CREATE TABLE sales_invoices (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
+    -- GST Category & Extra Raw Data
+    gstr_category VARCHAR(50),
+    t_extra_info JSONB DEFAULT '{}',
+
     -- Uniqueness Constraint
     CONSTRAINT uq_sales_invoice_unique 
         UNIQUE (tenant_id, workspace_id, book_type, invoice_number, tax_period_id)
@@ -1069,6 +1073,9 @@ CREATE TABLE sales_invoice_items (
 
     -- Reverse Charge Per Line
     is_rcm BOOLEAN DEFAULT FALSE,
+
+    -- Extra Raw Data
+    t_extra_info JSONB DEFAULT '{}',
 
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -1153,6 +1160,10 @@ CREATE TABLE purchase_vouchers (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
+    -- GST Category & Extra Raw Data
+    gstr_category VARCHAR(50),
+    t_extra_info JSONB DEFAULT '{}',
+
     CONSTRAINT uq_purchase_voucher_invoice 
     UNIQUE (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
 );
@@ -1200,6 +1211,9 @@ CREATE TABLE purchase_items (
     -- ITC Blocking (Added 2026-02-21)
     itc_eligible BOOLEAN DEFAULT TRUE,
     itc_block_reason TEXT,
+
+    -- Extra Raw Data
+    t_extra_info JSONB DEFAULT '{}',
 
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

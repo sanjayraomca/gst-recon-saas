@@ -185,7 +185,15 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
     const descIdx = col['description'] ?? null;
     const taxPerIdx = col['tax_per'] ?? col['tax_rate'] ?? col['gst_rate'] ?? null;
     const itemTotalIdx = col['row_wise_total_amount'] ?? col['total_amount_with_tax'] ?? null;
-    
+
+    // gstr_category + t_extra_info raw columns
+    const gstrCategoryIdx = col['gstr_category'] ?? null;
+    const orgGstinIdx = col['org_gstin'] ?? null;
+    const vchrIdIdx = col['vchr_id'] ?? null;
+    const vchrPrefixIdx = col['vchr_prefix'] ?? null;
+    const vchrNoRawIdx = col['vchr_no'] ?? null; // raw short number (not full)
+    const filingPeriodSheetIdx = col['filing_period'] ?? null;
+
     // Additional Amendment Fields
     const origInvNoIdx = col['original_invoice_no'] ?? col['original_supplier_invoice_no'] ?? null;
     const origInvDateIdx = col['original_invoice_date'] ?? col['original_supplier_invoice_date'] ?? null;
@@ -252,6 +260,9 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
             itemTotal = taxable + igst + cgst + sgst + cess;
         }
 
+        // Capture raw columns not mapped to a dedicated DB column → t_extra_info
+        const gstrCategory = gstrCategoryIdx !== null ? (row[gstrCategoryIdx] ?? '').toString().trim() || null : null;
+
         if (!invoiceMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
             const pos = partyState || (custGstinClean ? custGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
@@ -263,6 +274,14 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
             // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
             const dateParts = invDate.split('-');
             const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
+            // Build t_extra_info: all raw sheet columns not already mapped to a DB field
+            const tExtraInfo = {};
+            if (orgGstinIdx !== null && row[orgGstinIdx] != null) tExtraInfo.org_gstin = row[orgGstinIdx].toString().trim();
+            if (vchrIdIdx !== null && row[vchrIdIdx] != null) tExtraInfo.vchr_id = row[vchrIdIdx].toString().trim();
+            if (vchrPrefixIdx !== null && row[vchrPrefixIdx] != null) tExtraInfo.vchr_prefix = row[vchrPrefixIdx].toString().trim();
+            if (vchrNoRawIdx !== null && row[vchrNoRawIdx] != null) tExtraInfo.vchr_no = row[vchrNoRawIdx].toString().trim();
+            if (filingPeriodSheetIdx !== null && row[filingPeriodSheetIdx] != null) tExtraInfo.filing_period_sheet = row[filingPeriodSheetIdx].toString().trim();
 
             invoiceMap.set(groupKey, {
                 header: {
@@ -280,6 +299,8 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     reverse_charge: rc,
                     is_amendment: isAmendment,
                     source_section: resolveSourceSection(bookType, isAmendment, custGstinClean),
+                    gstr_category: gstrCategory,
+                    t_extra_info: tExtraInfo,
                     round_off: 0,
                     total_taxable_value: 0,
                     total_igst: 0,
@@ -311,6 +332,15 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
         if (rowVal > 0) inv.header.total_invoice_value = rowVal;
         if (roundOff !== 0) inv.header.round_off = roundOff;
 
+        // Build item-level t_extra_info: row-specific raw values
+        const itemExtraInfo = {};
+        if (gstrCategoryIdx !== null && row[gstrCategoryIdx] != null) itemExtraInfo.gstr_category = row[gstrCategoryIdx].toString().trim();
+        if (orgGstinIdx !== null && row[orgGstinIdx] != null) itemExtraInfo.org_gstin = row[orgGstinIdx].toString().trim();
+        if (vchrIdIdx !== null && row[vchrIdIdx] != null) itemExtraInfo.vchr_id = row[vchrIdIdx].toString().trim();
+        if (vchrPrefixIdx !== null && row[vchrPrefixIdx] != null) itemExtraInfo.vchr_prefix = row[vchrPrefixIdx].toString().trim();
+        if (vchrNoRawIdx !== null && row[vchrNoRawIdx] != null) itemExtraInfo.vchr_no = row[vchrNoRawIdx].toString().trim();
+        if (filingPeriodSheetIdx !== null && row[filingPeriodSheetIdx] != null) itemExtraInfo.filing_period_sheet = row[filingPeriodSheetIdx].toString().trim();
+
         inv.items.push({
             hsn_sac_code: null,
             description: description,
@@ -329,7 +359,8 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
             original_cgst_amount: origCgstIdx !== null ? cleanAmount(row[origCgstIdx]) : 0,
             original_sgst_amount: origSgstIdx !== null ? cleanAmount(row[origSgstIdx]) : 0,
             original_cess_amount: origCessIdx !== null ? cleanAmount(row[origCessIdx]) : 0,
-            original_gst_rate_percent: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0
+            original_gst_rate_percent: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0,
+            t_extra_info: itemExtraInfo
         });
     }
 
@@ -381,7 +412,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const invDateIdx = col['vchr_date'] ?? col['invoice_date'] ?? col['date'] ?? null;
     const refNumIdx = col['ref_vchr_full_number'] ?? col['ref_vchr_no'] ?? null;
     const refDateIdx = col['ref_vchr_date'] ?? null;
-    
+
     const vTypeIdx = col['vchr_type'] ?? col['invoice_type'] ?? col['document_type'] ?? null;
     const partyIdx = col['party_name'] ?? col['supplier_name'] ?? col['customer_name'] ?? null;
     // party_gstn_no is what this specific CSV uses; fall back to generic names
@@ -402,6 +433,14 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const descIdx = col['description'] ?? col['item_desc'] ?? null;
     const taxPerIdx = col['tax_per'] ?? col['gst_rate'] ?? col['tax_rate'] ?? null;
 
+    // gstr_category + t_extra_info raw columns
+    const gstrCategoryIdx = col['gstr_category'] ?? null;
+    const orgGstinIdx = col['org_gstin'] ?? null;
+    const vchrIdIdx = col['vchr_id'] ?? null;
+    const vchrPrefixIdx = col['vchr_prefix'] ?? null;
+    const vchrNoRawIdx = col['vchr_no'] ?? null; // raw short number (not full)
+    const filingPeriodSheetIdx = col['filing_period'] ?? null;
+
     // Amendment / Original Fields
     const isAmendmentIdx = col['is_amendment'] ?? null;
     const origInvNoIdx = col['original_supplier_invoice_no'] ?? null;
@@ -413,7 +452,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
     const returnPeriodIdx = col['return_period'] ?? null;
     const origReturnPeriodIdx = col['original_return_period'] ?? null;
     const origReturnDateIdx = col['original_return_date'] ?? null;
-    
+
     // Original Item Fields
     const origTaxableIdx = col['original_taxable_amount'] ?? null;
     const origIgstIdx = col['original_igst_amount'] ?? null;
@@ -439,7 +478,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         const bookVchrNoRaw = (row[invNumIdx] ?? '').toString().trim();
         const bookVchrNo = normalizeInvoiceNumber(bookVchrNoRaw);
         const bookVchrDate = parseDate(row[invDateIdx]);
-        
+
         if (!bookVchrNo || !bookVchrDate) continue;
 
         // Resolve SUPPLIER Invoice details (Mapping provided by user)
@@ -450,12 +489,12 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             const refNumRaw = (row[refNumIdx] ?? '').toString().trim();
             supplierInvoiceNo = normalizeInvoiceNumber(refNumRaw);
         }
-        
+
         let supplierInvoiceDate = null;
         if (refDateIdx !== null) {
             supplierInvoiceDate = parseDate(row[refDateIdx]);
         }
-        
+
         // GSTIN: allow empty (unregistered/exempt vendors).
         // Only reject a NON-EMPTY GSTIN that is clearly malformed.
         const gstinRaw = gstinIdx !== null ? (row[gstinIdx] ?? '').toString().trim() : '';
@@ -487,6 +526,9 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
 
         const groupKey = `${bookVchrNo}__${bookVchrDate}`;
 
+        // Capture gstr_category and raw columns not mapped to a dedicated DB column → t_extra_info
+        const gstrCategory = gstrCategoryIdx !== null ? (row[gstrCategoryIdx] ?? '').toString().trim() || null : null;
+
         if (!voucherMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
             const pos = partyState || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
@@ -498,6 +540,14 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
             const dateParts = bookVchrDate.split('-');
             const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
+            // Build t_extra_info: all raw sheet columns not already mapped to a DB field
+            const tExtraInfo = {};
+            if (orgGstinIdx !== null && row[orgGstinIdx] != null) tExtraInfo.org_gstin = row[orgGstinIdx].toString().trim();
+            if (vchrIdIdx !== null && row[vchrIdIdx] != null) tExtraInfo.vchr_id = row[vchrIdIdx].toString().trim();
+            if (vchrPrefixIdx !== null && row[vchrPrefixIdx] != null) tExtraInfo.vchr_prefix = row[vchrPrefixIdx].toString().trim();
+            if (vchrNoRawIdx !== null && row[vchrNoRawIdx] != null) tExtraInfo.vchr_no = row[vchrNoRawIdx].toString().trim();
+            if (filingPeriodSheetIdx !== null && row[filingPeriodSheetIdx] != null) tExtraInfo.filing_period_sheet = row[filingPeriodSheetIdx].toString().trim();
 
             voucherMap.set(groupKey, {
                 header: {
@@ -532,6 +582,8 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
                     is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
                     source_section: resolveSourceSection(bookType, isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false, supplierGstinClean),
+                    gstr_category: gstrCategory,
+                    t_extra_info: tExtraInfo,
                     original_supplier_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_supplier_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
                     original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
@@ -554,6 +606,15 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         if (rowVal > 0) v.header.net_amount = rowVal;
         if (roundOff !== 0) v.header.round_off = roundOff;
 
+        // Build item-level t_extra_info: row-specific raw values
+        const itemExtraInfo = {};
+        if (gstrCategoryIdx !== null && row[gstrCategoryIdx] != null) itemExtraInfo.gstr_category = row[gstrCategoryIdx].toString().trim();
+        if (orgGstinIdx !== null && row[orgGstinIdx] != null) itemExtraInfo.org_gstin = row[orgGstinIdx].toString().trim();
+        if (vchrIdIdx !== null && row[vchrIdIdx] != null) itemExtraInfo.vchr_id = row[vchrIdIdx].toString().trim();
+        if (vchrPrefixIdx !== null && row[vchrPrefixIdx] != null) itemExtraInfo.vchr_prefix = row[vchrPrefixIdx].toString().trim();
+        if (vchrNoRawIdx !== null && row[vchrNoRawIdx] != null) itemExtraInfo.vchr_no = row[vchrNoRawIdx].toString().trim();
+        if (filingPeriodSheetIdx !== null && row[filingPeriodSheetIdx] != null) itemExtraInfo.filing_period_sheet = row[filingPeriodSheetIdx].toString().trim();
+
         v.items.push({
             hsn_code: null,
             description: description,
@@ -572,7 +633,8 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             original_cgst_amount: origCgstIdx !== null ? cleanAmount(row[origCgstIdx]) : 0,
             original_sgst_amount: origSgstIdx !== null ? cleanAmount(row[origSgstIdx]) : 0,
             original_cess_amount: origCessIdx !== null ? cleanAmount(row[origCessIdx]) : 0,
-            original_tax_per: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0
+            original_tax_per: origTaxPerIdx !== null ? parseFloat(row[origTaxPerIdx]) || 0 : 0,
+            t_extra_info: itemExtraInfo
         });
 
         // VALIDATION LOGIC FOR AMENDMENTS
@@ -592,7 +654,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     console.warn(`[VALIDATION] Amendment validation failed for voucher ${header.book_vchr_no}: Original dates must be <= voucher date.`);
                 }
             } else {
-                 console.warn(`[VALIDATION] Amendment validation failed for voucher ${header.book_vchr_no}: is_amendment is YES but no original dates found.`);
+                console.warn(`[VALIDATION] Amendment validation failed for voucher ${header.book_vchr_no}: is_amendment is YES but no original dates found.`);
             }
         }
     }

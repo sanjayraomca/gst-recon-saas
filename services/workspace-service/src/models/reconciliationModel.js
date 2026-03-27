@@ -860,10 +860,15 @@ class ReconciliationModel {
         if (column_filters && typeof column_filters === 'string') {
             try {
                 parsedColumnFilters = JSON.parse(column_filters);
+                console.log('[getRunResults] column_filters received and parsed:', JSON.stringify(parsedColumnFilters));
             } catch (e) {
                 console.warn('[getRunResults] Failed to parse column_filters JSON:', e.message);
                 parsedColumnFilters = null;
             }
+        } else if (column_filters && typeof column_filters === 'object') {
+            console.log('[getRunResults] column_filters received as object (no parse needed):', JSON.stringify(column_filters));
+        } else {
+            console.log('[getRunResults] column_filters NOT received (undefined/null)');
         }
 
         if (parsedColumnFilters && typeof parsedColumnFilters === 'object') {
@@ -876,6 +881,7 @@ class ReconciliationModel {
                 invoice_no:           { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
                 invoice_date:         { cols: ['pi.supplier_invoice_date', 'gi.document_date'], dateCol: true },
                 voucher_no:           { cols: ['pi.book_vchr_no'] },
+                gst_cat:              { cols: ['pi.gstr_category'] },
                 voucher_date:         { cols: ['pi.book_vchr_date'], dateCol: true },
                 // Match status / action
                 status:               { cols: ['rr.match_status'], exact: true },
@@ -936,9 +942,10 @@ class ReconciliationModel {
                             const num = parseFloat(v);
                             if (isNaN(num)) return;
                             def.cols.forEach((col, ci) => {
-                                const cond = knex.raw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
-                                if (vi === 0 && ci === 0) self.whereRaw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
-                                else self.orWhereRaw(`ROUND(COALESCE((${col})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                                // Extract SQL string if col is a knex.raw() object
+                                const colSql = (col && typeof col === 'object' && col.toSQL) ? col.toSQL().sql : col;
+                                if (vi === 0 && ci === 0) self.whereRaw(`ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                                else self.orWhereRaw(`ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
                             });
                         });
                     });
@@ -946,8 +953,17 @@ class ReconciliationModel {
                     // Exact match (whereIn) for status/gstin
                     query.where(function () {
                         def.cols.forEach((col, idx) => {
-                            if (idx === 0) this.whereIn(col, valueList);
-                            else this.orWhereIn(col, valueList);
+                            // knex.raw columns can't be used with whereIn directly — use whereRaw
+                            const isRaw = col && typeof col === 'object' && col.toSQL;
+                            if (isRaw) {
+                                const placeholders = valueList.map(() => '?').join(', ');
+                                const rawSql = col.toSQL ? col.toSQL().sql : String(col);
+                                if (idx === 0) this.whereRaw(`(${rawSql}) IN (${placeholders})`, valueList);
+                                else this.orWhereRaw(`(${rawSql}) IN (${placeholders})`, valueList);
+                            } else {
+                                if (idx === 0) this.whereIn(col, valueList);
+                                else this.orWhereIn(col, valueList);
+                            }
                         });
                     });
                 } else {
@@ -1077,6 +1093,7 @@ class ReconciliationModel {
             'pi.itc_eligible as purchase_itc_eligible',
             'pi.place_of_supply as purchase_pos',
             'pi.source_section as purchase_source_section',
+            'pi.gstr_category',
 
             // GSTR-2B mapping
             'gi.document_number_clean as gstr2b_invoice_number',
@@ -1115,28 +1132,55 @@ class ReconciliationModel {
 
         // Map frontend sort keys to DB columns if necessary
         const sortMapping = {
-            'gstin': 'supplier_gstin',
-            'supplier_name': 'supplier_name',
-            'gst_type': knex.raw('COALESCE(pi.source_section, gi.source_section)'),
-            'invoice_no': 'purchase_invoice_number',
-            'date': knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
-            'gstr2b_taxable': 'gstr2b_taxable',
-            'purchase_taxable': 'purchase_taxable',
-            'gstr2b_igst': 'gi.igst',
-            'gstr2b_cgst': 'gi.cgst',
-            'gstr2b_sgst': 'gi.sgst',
-            'purchase_igst': 'pi.total_igst_amount',
-            'purchase_cgst': 'pi.total_cgst_amount',
-            'purchase_sgst': 'pi.total_sgst_amount',
-            'gstr2b_tax': 'gstr2b_tax',
-            'purchase_tax': 'purchase_tax',
-            'difference': 'rr.variance_amount',
-            'match_analysis': 'rr.match_status',
-            'action_status': 'reconciliation_status', // Use the aliased workflow status
-            'created_at': 'rr.created_at'
+            // Party info
+            'gstin':                 'supplier_gstin',
+            'name':                  'supplier_name',
+            'supplier_name':         'supplier_name',
+            'gst_type':              knex.raw('COALESCE(pi.source_section, gi.source_section)'),
+            'invoice_no':            'purchase_invoice_number',
+            'invoice_date':          knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
+            'date':                  knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
+            // GSTR-2B
+            'gstr2b_invoice_total':  'gstr2b_invoice_total',
+            'gstr2b_taxable':        'gstr2b_taxable',
+            'gstr2b_tax_rate':       'gstr2b_tax_rate',
+            'gstr2b_tax':            'gstr2b_tax',
+            'gstr2b_igst':           'gi.igst',
+            'gstr2b_cgst':           'gi.cgst',
+            'gstr2b_sgst':           'gi.sgst',
+            'gstr2b_cess':           'gi.cess',
+            // Books
+            'purchase_invoice_total':'purchase_invoice_total',
+            'purchase_taxable':      'purchase_taxable',
+            'purchase_tax_rate':     'purchase_tax_rate',
+            'purchase_tax_total':    'purchase_tax',
+            'purchase_tax':          'purchase_tax',
+            'purchase_igst':         'pi.total_igst_amount',
+            'purchase_cgst':         'pi.total_cgst_amount',
+            'purchase_sgst':         'pi.total_sgst_amount',
+            'purchase_cess':         'pi.total_cess_amount',
+            'voucher_no':            'pi.book_vchr_no',
+            'gst_cat':               'pi.gstr_category',
+            'voucher_date':          'pi.book_vchr_date',
+            // Status
+            'difference':            'rr.variance_amount',
+            'match_analysis':        'rr.match_status',
+            'action_status':         'reconciliation_status',
+            'created_at':            'rr.created_at'
         };
 
-        const orderByCol = sortMapping[sort_by] || sort_by || 'rr.created_at';
+        // Safe whitelist fallback — if sort_by is not in mapping and not a known safe alias, default to rr.created_at
+        const safeAliases = new Set(['supplier_name', 'supplier_gstin', 'supplier_invoice_no', 'supplier_invoice_date',
+            'gstr2b_invoice_total', 'gstr2b_taxable', 'gstr2b_tax', 'gstr2b_tax_rate',
+            'purchase_invoice_total', 'purchase_taxable', 'purchase_tax', 'purchase_tax_rate',
+            'return_period', 'gst_type', 'reconciliation_status', 'rr.created_at', 'rr.match_status', 'rr.variance_amount'
+        ]);
+
+        let orderByCol = sortMapping[sort_by];
+        if (!orderByCol) {
+            orderByCol = safeAliases.has(sort_by) ? sort_by : 'rr.created_at';
+        }
+
         query.orderBy(orderByCol, sort_order || 'desc');
 
         // --- Apply Pagination/Export Mode ---

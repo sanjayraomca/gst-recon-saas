@@ -44,8 +44,9 @@ class BookModel {
                             total_invoice_value, filing_period, return_period, payment_status,
                             original_invoice_no, original_invoice_date, original_book_vchr_no, 
                             original_book_vchr_date, original_net_amount, return_date, 
-                            original_return_period, original_return_date, source_section
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            original_return_period, original_return_date, source_section,
+                            gstr_category, t_extra_info
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id) 
                         DO UPDATE SET 
                             total_invoice_value = EXCLUDED.total_invoice_value,
@@ -65,6 +66,8 @@ class BookModel {
                             return_date = EXCLUDED.return_date,
                             original_return_period = EXCLUDED.original_return_period,
                             original_return_date = EXCLUDED.original_return_date,
+                            gstr_category = EXCLUDED.gstr_category,
+                            t_extra_info = EXCLUDED.t_extra_info,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
@@ -76,7 +79,9 @@ class BookModel {
                         header.original_invoice_no || null, header.original_invoice_date || null, header.original_book_vchr_no || null,
                         header.original_book_vchr_date || null, header.original_net_amount || 0, header.return_date || null,
                         header.original_return_period || null, header.original_return_date || null,
-                        header.source_section || null
+                        header.source_section || null,
+                        header.gstr_category || null,
+                        JSON.stringify(header.t_extra_info || {})
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;
@@ -113,7 +118,8 @@ class BookModel {
                             original_cgst_amount: item.original_cgst_amount || 0,
                             original_sgst_amount: item.original_sgst_amount || 0,
                             original_cess_amount: item.original_cess_amount || 0,
-                            original_gst_rate_percent: item.original_gst_rate_percent || 0
+                            original_gst_rate_percent: item.original_gst_rate_percent || 0,
+                            t_extra_info: item.t_extra_info ? JSON.stringify(item.t_extra_info) : '{}'
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
@@ -189,8 +195,9 @@ class BookModel {
                             itc_eligible, itc_claimed, filing_period, return_period, payment_status,
                             is_amendment, original_supplier_invoice_no, original_supplier_invoice_date,
                             original_book_vchr_no, original_book_vchr_date, original_net_amount,
-                            return_date, original_return_period, original_return_date, source_section
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            return_date, original_return_period, original_return_date, source_section,
+                            gstr_category, t_extra_info
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
@@ -223,6 +230,8 @@ class BookModel {
                             return_date = EXCLUDED.return_date,
                             original_return_period = EXCLUDED.original_return_period,
                             original_return_date = EXCLUDED.original_return_date,
+                            gstr_category = EXCLUDED.gstr_category,
+                            t_extra_info = EXCLUDED.t_extra_info,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                      `, [
@@ -238,7 +247,9 @@ class BookModel {
                         header.is_amendment || false, header.original_supplier_invoice_no || null, header.original_supplier_invoice_date || null,
                         header.original_book_vchr_no || null, header.original_book_vchr_date || null, header.original_net_amount || 0,
                         header.return_date || null, header.original_return_period || null, header.original_return_date || null,
-                        header.source_section || null
+                        header.source_section || null,
+                        header.gstr_category || null,
+                        JSON.stringify(header.t_extra_info || {})
                     ]);
 
                     const voucherId = headerRes.rows[0].id;
@@ -274,7 +285,8 @@ class BookModel {
                             original_cgst_amount: item.original_cgst_amount || 0,
                             original_sgst_amount: item.original_sgst_amount || 0,
                             original_cess_amount: item.original_cess_amount || 0,
-                            original_tax_per: item.original_tax_per || 0
+                            original_tax_per: item.original_tax_per || 0,
+                            t_extra_info: item.t_extra_info ? JSON.stringify(item.t_extra_info) : '{}'
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
