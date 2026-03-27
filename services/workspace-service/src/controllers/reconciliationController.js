@@ -2,6 +2,8 @@ const ReconciliationModel = require('../models/reconciliationModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const progressEmitter = require('../utils/progressEmitter');
+const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
+
 
 /**
  * Trigger reconciliation for a specific GSTIN and period
@@ -93,7 +95,11 @@ const getRunResults = async (req, res) => {
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
+        const hasFilters = Object.keys(req.query || {}).length > 0;
+        const transactionName = hasFilters ? 'FilterReconResults' : 'FetchReconResults';
+        const cleanup = attachSqlFileLogger(transactionName);
         const result = await ReconciliationModel.getRunResults(workspaceId, runId, req.query);
+        cleanup();
         if (!result) return errorResponse(res, 'Run not found', 404);
 
         console.log(`[getRunResults] returning ${result.data?.length} rows for runId=${runId}`);
@@ -113,7 +119,9 @@ const getRunTaxSummary = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         const runId = req.params.run_id;
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const cleanup = attachSqlFileLogger('TaxSummary');
         const data = await ReconciliationModel.getRunTaxSummary(workspaceId, runId, req.query);
+        cleanup();
         return successResponse(res, data, 'Tax summary retrieved successfully');
     } catch (error) {
         console.error('Error fetching tax summary:', error);

@@ -2,18 +2,21 @@ const ReconciliationActionModel = require('../models/reconciliationActionModel')
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const knex = require('../../../shared/src/db/connection');
+const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
 
 const takeAction = async (req, res) => {
     try {
         const workspaceId = req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
         // userId should be the internal UUID (db_id) resolved by authMiddleware
-        const userId = req.user.db_id || req.user.sub || req.user.id; 
+        const userId = req.user.db_id || req.user.sub || req.user.id;
         const actionData = req.body;
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
+        const cleanup = attachSqlFileLogger('TakeAction');
         const action = await ReconciliationActionModel.createAction(resultId, actionData, userId);
+        cleanup();
 
         await logActivity({
             userId,
@@ -38,7 +41,9 @@ const getPendingActions = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
+        const cleanup = attachSqlFileLogger('GetPendingActions');
         const actions = await ReconciliationActionModel.getPendingActions(workspaceId, req.query);
+        cleanup();
         return successResponse(res, actions, 'Pending actions retrieved successfully');
     } catch (error) {
         return errorResponse(res, error.message, 500);
@@ -50,6 +55,7 @@ const getPendingActions = async (req, res) => {
  * This records the user's decision (claimed, wrong_entry_portal, etc.) in the DB.
  */
 const updateReconStatus = async (req, res) => {
+    const cleanup = attachSqlFileLogger('UpdateReconStatus');
     const trx = await knex.transaction();
     try {
         const workspaceId = req.headers['x-workspace-id'];
@@ -89,7 +95,7 @@ const updateReconStatus = async (req, res) => {
         let tenantId = req.user?.tenant_id;
         if (!tenantId) {
             const workspace = await trx('workspaces').where({ id: workspaceId }).select('tenant_id').first();
-            tenantId = workspace?.tenant_id || workspaceId; 
+            tenantId = workspace?.tenant_id || workspaceId;
         }
 
         const { purchase_invoice_id, gstr2b_invoice_id } = reconResult;
@@ -159,8 +165,10 @@ const updateReconStatus = async (req, res) => {
             req
         }).catch(err => console.error('[ActivityLog] Error:', err));
 
+        cleanup();
         return successResponse(res, statusRecord, 'Reconciliation status updated successfully');
     } catch (error) {
+        cleanup();
         if (trx) await trx.rollback();
         console.error('[updateReconStatus] Critical Error:', error);
         return errorResponse(res, error.message, 500);

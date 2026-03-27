@@ -1126,8 +1126,11 @@ class ReconciliationModel {
             'pi.total_sgst_amount as purchase_sgst',
 
             // Workflow status from the separate table, defaulting to 'pending'
-            // Workflow status from the separate table, defaulting to 'pending'
-            knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status')
+            knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status'),
+
+            // Differences for UI parity
+            knex.raw('COALESCE(gi.taxable_value, 0) - COALESCE(pi.taxable_total, 0) as diff_taxable'),
+            knex.raw('(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) - (COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0)) as diff_tax')
         );
 
         // Map frontend sort keys to DB columns if necessary
@@ -1447,7 +1450,13 @@ class ReconciliationModel {
                 knex.raw("SUM(COALESCE(gi.igst,0)) as gstr2b_igst"),
                 knex.raw("SUM(COALESCE(gi.cgst,0)) as gstr2b_cgst"),
                 knex.raw("SUM(COALESCE(gi.sgst,0)) as gstr2b_sgst"),
-                knex.raw("SUM(COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)) as gstr2b_tax")
+                knex.raw("SUM(COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)) as gstr2b_tax"),
+                // Difference
+                knex.raw("COUNT(pi.id) - COUNT(gi.id) as diff_count"),
+                knex.raw("(SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(pi.total_cess_amount,0))) - (SUM(COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))) as diff_tax"),
+                knex.raw("SUM(COALESCE(pi.total_igst_amount,0)) - SUM(COALESCE(gi.igst,0)) as diff_igst"),
+                knex.raw("SUM(COALESCE(pi.total_cgst_amount,0)) - SUM(COALESCE(gi.cgst,0)) as diff_cgst"),
+                knex.raw("SUM(COALESCE(pi.total_sgst_amount,0)) - SUM(COALESCE(gi.sgst,0)) as diff_sgst")
             )
             .groupByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))")
             .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))");
