@@ -1399,27 +1399,38 @@ class ReconciliationModel {
             .where('rr.recon_run_id', runId)
             .where('rr.workspace_id', workspaceId)
             .modify(q => {
+                let filterYear = null;
                 if (fy && fy !== 'ALL') {
-                    const [startY, endY] = fy.split('-').map(Number);
+                    filterYear = parseInt(fy.split('-')[0]);
                     const months = [];
-                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${startY}`);
-                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${endY}`);
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${filterYear}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${filterYear + 1}`);
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
                 if (quarter && quarter !== 'ALL') {
                     const qtMap = { '1': [4,5,6], '2': [7,8,9], '3': [10,11,12], '4': [1,2,3] };
                     const qtMonths = qtMap[String(quarter)] || [];
-                    if (fy && fy !== 'ALL') {
-                        const [startY, endY] = fy.split('-').map(Number);
-                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? startY : endY}`);
+                    if (filterYear) {
+                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
                     }
                 }
                 if (month && month !== 'ALL') {
-                    q.where(function() {
-                        this.where('tp.period_code', String(month))
-                            .orWhere('gi.return_period', String(month));
-                    });
+                    const m = parseInt(month);
+                    if (filterYear) {
+                        const yearForMonth = (m >= 1 && m <= 3) ? filterYear + 1 : filterYear;
+                        const exactPeriod = `${String(m).padStart(2, '0')}${yearForMonth}`;
+                        q.where(function() {
+                            this.where('tp.period_code', exactPeriod)
+                                .orWhere('gi.return_period', exactPeriod);
+                        });
+                    } else {
+                        const paddedMonth = String(m).padStart(2, '0');
+                        q.where(function() {
+                            this.where('tp.period_code', 'LIKE', `${paddedMonth}%`)
+                                .orWhere('gi.return_period', 'LIKE', `${paddedMonth}%`);
+                        });
+                    }
                 }
             })
             .select(
@@ -1449,18 +1460,38 @@ class ReconciliationModel {
             .where('rr.recon_run_id', runId)
             .where('rr.workspace_id', workspaceId)
             .modify(q => {
+                let filterYear = null;
                 if (fy && fy !== 'ALL') {
-                    const [startY, endY] = fy.split('-').map(Number);
+                    filterYear = parseInt(fy.split('-')[0]);
                     const months = [];
-                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${startY}`);
-                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${endY}`);
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${filterYear}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${filterYear + 1}`);
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
+                if (quarter && quarter !== 'ALL') {
+                    const qtMap = { '1': [4,5,6], '2': [7,8,9], '3': [10,11,12], '4': [1,2,3] };
+                    const qtMonths = qtMap[String(quarter)] || [];
+                    if (filterYear) {
+                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? filterYear : filterYear + 1}`);
+                        q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
+                    }
+                }
                 if (month && month !== 'ALL') {
-                    q.where(function() {
-                        this.where('tp.period_code', String(month))
-                            .orWhere('gi.return_period', String(month));
-                    });
+                    const m = parseInt(month);
+                    if (filterYear) {
+                        const yearForMonth = (m >= 1 && m <= 3) ? filterYear + 1 : filterYear;
+                        const exactPeriod = `${String(m).padStart(2, '0')}${yearForMonth}`;
+                        q.where(function() {
+                            this.where('tp.period_code', exactPeriod)
+                                .orWhere('gi.return_period', exactPeriod);
+                        });
+                    } else {
+                        const paddedMonth = String(m).padStart(2, '0');
+                        q.where(function() {
+                            this.where('tp.period_code', 'LIKE', `${paddedMonth}%`)
+                                .orWhere('gi.return_period', 'LIKE', `${paddedMonth}%`);
+                        });
+                    }
                 }
             })
             .select(
