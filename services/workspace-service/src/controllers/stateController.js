@@ -6,13 +6,18 @@ const knex = require('../../../shared/src/db/connection');
  */
 const getStateByCode = async (req, res) => {
     try {
-        const { code } = req.params;
+        let { code } = req.params;
+        
+        // Robustness: Take only first 2 chars if longer (e.g., handle 24:1 or 24AAB...)
+        if (code && code.length > 2) {
+            code = code.substring(0, 2);
+        }
 
         // Validate code format
         if (!code || code.length !== 2) {
             return res.status(400).json({
                 success: false,
-                error: 'Invalid state code. Must be 2 digits.'
+                error: 'Invalid state code. Must be at least 2 digits.'
             });
         }
 

@@ -1,6 +1,7 @@
 const db = require('../../../shared/src/db/connection');
 const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
 const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
+const CustomerMasterService = require('../../../shared/src/services/customerMasterService');
 const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
 
 
@@ -34,8 +35,16 @@ class BookModel {
                         header.tax_period_id = rowTaxPeriodId;
                     }
 
-                    // Insert/Update Header
-                    // Using xmax to determine if row was inserted (0) or updated (>0)
+                    // SMART CAPTURE: Add customer to master directory
+                    if (header.customer_gstin || header.customer_name) {
+                        await CustomerMasterService.upsertCustomer(
+                            header.workspace_id, 
+                            header.customer_gstin, 
+                            header.customer_name, 
+                            trx
+                        );
+                    }
+
                     const headerRes = await trx.raw(`
                         INSERT INTO sales_invoices (
                             tenant_id, workspace_id, tax_period_id, invoice_type, 
@@ -125,15 +134,7 @@ class BookModel {
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
 
-                    // SMART CAPTURE: Add customer to master directory
-                    if (header.customer_gstin || header.customer_name) {
-                        await SupplierMasterService.upsertSupplier(
-                            header.workspace_id, 
-                            header.customer_gstin, 
-                            header.customer_name, 
-                            trx
-                        );
-                    }
+
                     
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
                     
@@ -192,6 +193,16 @@ class BookModel {
                             // Invalid GSTIN length; do not hit DB to avoid value too long errors
                             header.supplier_gstin = null;
                         }
+                    }
+
+                    // SMART CAPTURE: Add supplier to master directory
+                    if (header.supplier_gstin || header.supplier_name) {
+                        await SupplierMasterService.upsertSupplier(
+                            header.workspace_id, 
+                            header.supplier_gstin, 
+                            header.supplier_name, 
+                            trx
+                        );
                     }
 
                     const headerRes = await trx.raw(`
@@ -302,15 +313,7 @@ class BookModel {
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
 
-                    // SMART CAPTURE: Add supplier to master directory
-                    if (header.supplier_gstin || header.supplier_name) {
-                        await SupplierMasterService.upsertSupplier(
-                            header.workspace_id, 
-                            header.supplier_gstin, 
-                            header.supplier_name, 
-                            trx
-                        );
-                    }
+
                     
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
                 } catch (rowErr) {

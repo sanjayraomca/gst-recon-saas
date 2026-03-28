@@ -1,12 +1,12 @@
 const db = require('../db/connection');
 
 /**
- * Service to handle Supplier Master operations (Upserts)
- * Shared across Workspace, GSTN, and Import services.
+ * Service to handle Customer Master operations (Upserts)
+ * Shared across Workspace and Import services.
  */
-class SupplierMasterService {
+class CustomerMasterService {
     /**
-     * Smart Upsert: Adds a supplier if not exists, or updates if changed.
+     * Smart Upsert: Adds a customer if not exists, or updates if changed.
      * Matches by (Workspace + GSTIN) OR (Workspace + Name).
      * 
      * @param {string} workspaceId - Workspace UUID
@@ -14,7 +14,7 @@ class SupplierMasterService {
      * @param {string} name - Clear name (from Books or GSTR)
      * @param {object} trx - Optional Knex Transaction
      */
-    static async upsertSupplier(workspaceId, gstin, name, trx = null) {
+    static async upsertCustomer(workspaceId, gstin, name, trx = null) {
         if (!workspaceId || (!gstin && !name)) return;
 
         const cleanGstin = gstin ? gstin.trim().toUpperCase() : null;
@@ -28,10 +28,10 @@ class SupplierMasterService {
         try {
             // 1. Try matching by GSTIN first (if provided)
             if (finalGstin) {
-                const updated = await dbToUse('supplier_master')
+                const updated = await dbToUse('customer_master')
                     .where({ workspace_id: workspaceId, gstin: finalGstin })
                     .update({ 
-                        supplier_name: cleanName, // Refresh name
+                        customer_name: cleanName, // Refresh name
                         updated_at: dbToUse.fn.now() 
                     })
                     .returning('id');
@@ -40,8 +40,8 @@ class SupplierMasterService {
             }
 
             // 2. Try matching by Name (for Unregistered or mapping fallback)
-            const updatedByName = await dbToUse('supplier_master')
-                .where({ workspace_id: workspaceId, supplier_name: cleanName })
+            const updatedByName = await dbToUse('customer_master')
+                .where({ workspace_id: workspaceId, customer_name: cleanName })
                 .update({ 
                     gstin: finalGstin || dbToUse.raw('gstin'), // Fill GSTIN only if it was missing
                     updated_at: dbToUse.fn.now() 
@@ -51,10 +51,10 @@ class SupplierMasterService {
             if (updatedByName.length > 0) return updatedByName[0].id;
 
             // 3. If no match by GSTIN or Name, Insert new record
-            const inserted = await dbToUse('supplier_master').insert({
+            const inserted = await dbToUse('customer_master').insert({
                 workspace_id: workspaceId,
                 gstin: finalGstin,
-                supplier_name: cleanName,
+                customer_name: cleanName,
                 is_active: true,
                 created_at: dbToUse.fn.now(),
                 updated_at: dbToUse.fn.now()
@@ -65,13 +65,13 @@ class SupplierMasterService {
         } catch (error) {
             // If another process inserted it between our check and insert
             if (error.code === '23505') {
-                const existing = await dbToUse('supplier_master')
+                const existing = await dbToUse('customer_master')
                     .where({ workspace_id: workspaceId, gstin: finalGstin })
                     .select('id').first();
                 return existing?.id;
             } 
             
-            console.error('[SupplierMasterService] Smart Upsert failed:', error.message);
+            console.error('[CustomerMasterService] Smart Upsert failed:', error.message);
             return null;
         }
     }
@@ -79,28 +79,28 @@ class SupplierMasterService {
     /**
      * Batch Upsert for high-performance importing
      */
-    static async batchUpsert(workspaceId, suppliers, trx = null) {
-        if (!workspaceId || !suppliers?.length) return;
+    static async batchUpsert(workspaceId, customers, trx = null) {
+        if (!workspaceId || !customers?.length) return;
 
         // Dedup locally by gstin first, then by name
         const deduped = [];
         const gstinSeen = new Set();
         const nameSeen = new Set();
 
-        for (const s of suppliers) {
-            if (s.gstin && !gstinSeen.has(s.gstin)) {
-                deduped.push(s);
-                gstinSeen.add(s.gstin);
-            } else if (!s.gstin && !nameSeen.has(s.name)) {
-                deduped.push(s);
-                nameSeen.add(s.name);
+        for (const c of customers) {
+            if (c.gstin && !gstinSeen.has(c.gstin)) {
+                deduped.push(c);
+                gstinSeen.add(c.gstin);
+            } else if (!c.gstin && !nameSeen.has(c.name)) {
+                deduped.push(c);
+                nameSeen.add(c.name);
             }
         }
         
-        for (const s of deduped) {
-            await this.upsertSupplier(workspaceId, s.gstin, s.name, trx);
+        for (const c of deduped) {
+            await this.upsertCustomer(workspaceId, c.gstin, c.name, trx);
         }
     }
 }
 
-module.exports = SupplierMasterService;
+module.exports = CustomerMasterService;

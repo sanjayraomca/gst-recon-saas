@@ -235,6 +235,33 @@ CREATE TABLE supplier_master (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE customer_master (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    customer_code VARCHAR(100),
+    customer_name VARCHAR(500) NOT NULL,
+    gstin CHAR(15),
+    pan CHAR(10),
+    contact_person VARCHAR(200),
+    email VARCHAR(255),
+    phone VARCHAR(20),
+    address JSONB,
+    customer_type VARCHAR(30) DEFAULT 'REGULAR'
+        CHECK (customer_type IN ('REGULAR', 'SEZ', 'EXPORT', 'UNREGISTERED')),
+    risk_category VARCHAR(20) DEFAULT 'MEDIUM'
+        CHECK (risk_category IN ('LOW', 'MEDIUM', 'HIGH', 'BLOCKED')),
+    filing_consistency_score NUMERIC(5,2) DEFAULT 100.00,
+    avg_invoice_value NUMERIC(15,2),
+    total_transactions INTEGER DEFAULT 0,
+    total_transaction_value NUMERIC(15,2) DEFAULT 0,
+    last_transaction_date DATE,
+    notes TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+
 CREATE TABLE financial_years (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     fy_code VARCHAR(9) NOT NULL UNIQUE,
@@ -991,7 +1018,7 @@ CREATE TABLE sales_invoices (
     entry_serial_no INTEGER DEFAULT 0,
 
     -- Party Snapshot
-    customer_id UUID REFERENCES supplier_master(id),
+    customer_id UUID REFERENCES customer_master(id),
     customer_name VARCHAR(500),
     customer_gstin CHAR(15),
 

@@ -11,15 +11,16 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
+app.use('/states', require('./routes/stateRoutes')); // State lookup routes - PUBLIC (for login/org creation)
 app.use('/workspaces', require('./routes/workspaceRoutes'));
 app.use('/purchase-invoices', require('./routes/purchaseInvoiceRoutes'));
 app.use('/gstr2b-invoices', require('./routes/gstr2bInvoiceRoutes'));
 app.use('/reconciliation', require('./routes/reconciliationRoutes'));
 app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-reversals
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
-app.use('/states', require('./routes/stateRoutes')); // State lookup routes
 app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
 app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
+app.use('/customers', require('./routes/customerRoutes')); // Customer listing aggregated from all sources
 
 
 

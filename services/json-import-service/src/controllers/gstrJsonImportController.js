@@ -1,6 +1,7 @@
 const GSTRImportModel = require('../models/gstrImportModel');
 const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
 const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
+const CustomerMasterService = require('../../../shared/src/services/customerMasterService');
 const { processGstrJson } = require('../utils/gstrJsonProcessors');
 const { publishEvent } = require('../nats/natsClient');
 const crypto = require('crypto');
@@ -70,14 +71,23 @@ class GstrJsonImportController {
             // 4. Compute Hash for duplicate detection
             const fileHash = crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
 
-            // 4.5 Capture Suppliers in Master Directory (Smart Capture)
-            const uniqueSuppliers = Array.from(new Map(flatRecords
-                .filter(r => r.supplier_name)
-                .map(r => [r.supplier_gstin || r.supplier_name, { gstin: r.supplier_gstin, name: r.supplier_name }])
+            // 4.5 Capture Suppliers/Customers in Master Directory (Smart Capture)
+            const isSales = gstrType.toUpperCase() === 'GSTR1';
+            const uniqueParties = Array.from(new Map(flatRecords
+                .filter(r => r.supplier_name || r.trade_name)
+                .map(r => {
+                    const gstin = r.supplier_gstin || r.gstin_supplier;
+                    const name = r.supplier_name || r.trade_name;
+                    return [gstin || name, { gstin, name }];
+                })
             ).values());
             
-            if (uniqueSuppliers.length > 0) {
-                await SupplierMasterService.batchUpsert(workspaceId, uniqueSuppliers);
+            if (uniqueParties.length > 0) {
+                if (isSales) {
+                    await CustomerMasterService.batchUpsert(workspaceId, uniqueParties);
+                } else {
+                    await SupplierMasterService.batchUpsert(workspaceId, uniqueParties);
+                }
             }
 
             // 5. Check for exact duplicate file (same hash)
