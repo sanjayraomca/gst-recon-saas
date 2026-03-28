@@ -28,6 +28,7 @@ class Gstr2bInvoiceModel {
         if (gstin_id) query = query.where({ gstin_id });
         if (match_status) query = query.where({ match_status });
         if (supplier_gstin) query = query.where({ supplier_gstin });
+        if (period && period !== 'ALL') query = query.where({ return_period: period });
         if (invoice_date_from) query = query.where('document_date', '>=', invoice_date_from);
         if (invoice_date_to) query = query.where('document_date', '<=', invoice_date_to);
 
