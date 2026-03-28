@@ -2,7 +2,7 @@ const SupplierModel = require('../models/supplierModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 
 /**
- * Supplier Controller
+ * Get all suppliers with pagination and search
  */
 const getAllSuppliers = async (req, res) => {
     try {
@@ -14,19 +14,24 @@ const getAllSuppliers = async (req, res) => {
 
         const filters = {
             search: req.query.search || '',
-            period: (req.query.period && req.query.period !== 'undefined') ? req.query.period : null,
-            invoice_date_from: (req.query.invoice_date_from && req.query.invoice_date_from !== 'undefined') ? req.query.invoice_date_from : null,
-            invoice_date_to: (req.query.invoice_date_to && req.query.invoice_date_to !== 'undefined') ? req.query.invoice_date_to : null
+            page: parseInt(req.query.page) || 1,
+            limit: parseInt(req.query.pageSize) || 10
         };
-        
-        // Remove nulls so model doesn't try to use them
-        Object.keys(filters).forEach(key => filters[key] === null && delete filters[key]);
 
-        const suppliers = await SupplierModel.getAll(workspaceId, filters);
+        const [suppliers, total] = await Promise.all([
+            SupplierModel.getAll(workspaceId, filters),
+            SupplierModel.countAll(workspaceId, filters)
+        ]);
         
         return res.json({
             success: true,
-            data: suppliers
+            data: suppliers,
+            pagination: {
+                total,
+                page: filters.page,
+                pageSize: filters.limit,
+                totalPages: Math.ceil(total / filters.limit)
+            }
         });
     } catch (error) {
         console.error('Error fetching suppliers:', error);
@@ -34,6 +39,28 @@ const getAllSuppliers = async (req, res) => {
     }
 };
 
+/**
+ * Update supplier contact details
+ */
+const updateSupplierContact = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { email, phone } = req.body;
+
+        if (!id) {
+            return errorResponse(res, 'Supplier ID is required', 400);
+        }
+
+        const updated = await SupplierModel.updateContact(id, { email, phone });
+        
+        return successResponse(res, updated, 'Supplier contact updated successfully');
+    } catch (error) {
+        console.error('Error updating supplier contact:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 module.exports = {
-    getAllSuppliers
+    getAllSuppliers,
+    updateSupplierContact
 };

@@ -12,4 +12,7 @@ const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 // GET /suppliers - List all suppliers for a workspace
 router.get('/', verifyToken, authorizeWorkspace, supplierController.getAllSuppliers);
 
+// PATCH /suppliers/:id - Update supplier contact details
+router.patch('/:id', verifyToken, authorizeWorkspace, supplierController.updateSupplierContact);
+
 module.exports = router;

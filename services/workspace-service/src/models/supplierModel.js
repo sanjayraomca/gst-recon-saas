@@ -2,66 +2,94 @@ const knex = require('../../../shared/src/db/connection');
 
 /**
  * Supplier Model
- * Aggregates unique suppliers from GSTR-2B and Purchase data
+ * Manages the persistent supplier_master table.
  */
 class SupplierModel {
     /**
-     * Get all unique suppliers for a workspace with search and state mapping
+     * Get paginated unique suppliers for a workspace
      */
     static async getAll(workspaceId, filters = {}) {
-        const { search, invoice_date_from, invoice_date_to } = filters;
-
-        const fromDate = invoice_date_from || '1900-01-01';
-        const toDate = invoice_date_to || '2099-12-31';
+        const { search, page = 1, limit = 10 } = filters;
+        const offset = (page - 1) * limit;
         const searchPattern = search ? `%${search}%` : '%%';
 
         try {
             const rawQuery = `
-                WITH all_suppliers AS (
-                    -- GSTR Data (Purchases)
-                    SELECT supplier_gstin, supplier_name
-                    FROM normalized_gstr2b_invoices
-                    WHERE workspace_id = ?::uuid
-                    AND document_date >= ? AND document_date <= ?
-                    
-                    UNION
-                    
-                    -- Book Data (Purchases)
-                    SELECT supplier_gstin, supplier_name
-                    FROM purchase_vouchers
-                    WHERE workspace_id = ?::uuid
-                    AND supplier_invoice_date >= ? AND supplier_invoice_date <= ?
-
-                    UNION
-
-                    -- Book Data (Sales)
-                    SELECT customer_gstin, customer_name
-                    FROM sales_invoices
-                    WHERE workspace_id = ?::uuid
-                    AND invoice_date >= ? AND invoice_date <= ?
-                )
                 SELECT 
-                    s.supplier_gstin as gstin,
-                    MIN(COALESCE(s.supplier_name, '—')) as name,
-                    COALESCE(scm.state, 'Other') as state_name
-                FROM all_suppliers s
-                LEFT JOIN state_code_master scm ON scm.code = SUBSTRING(s.supplier_gstin, 1, 2)
-                WHERE (s.supplier_gstin ILIKE ? OR COALESCE(s.supplier_name, '') ILIKE ?)
-                GROUP BY s.supplier_gstin, scm.state
-                ORDER BY name ASC NULLS LAST
+                    sm.id,
+                    sm.gstin,
+                    sm.supplier_name as name,
+                    sm.email,
+                    sm.phone,
+                    COALESCE(scm.state, 'Other') as state_name,
+                    sm.is_active,
+                    sm.created_at,
+                    sm.updated_at
+                FROM supplier_master sm
+                LEFT JOIN state_code_master scm ON scm.code = SUBSTRING(sm.gstin, 1, 2)
+                WHERE sm.workspace_id = ?::uuid
+                AND (sm.gstin ILIKE ? OR COALESCE(sm.supplier_name, '') ILIKE ?)
+                ORDER BY sm.supplier_name ASC NULLS LAST
+                LIMIT ? OFFSET ?
             `;
 
             const params = [
-                workspaceId, fromDate, toDate, 
-                workspaceId, fromDate, toDate,
-                workspaceId, fromDate, toDate,
-                searchPattern, searchPattern
+                workspaceId,
+                searchPattern, 
+                searchPattern,
+                limit,
+                offset
             ];
 
             const result = await knex.raw(rawQuery, params);
             return result.rows || [];
         } catch (error) {
             console.error('[SupplierModel] Error in getAll:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get total count for pagination
+     */
+    static async countAll(workspaceId, filters = {}) {
+        const { search } = filters;
+        const searchPattern = search ? `%${search}%` : '%%';
+
+        try {
+            const result = await knex('supplier_master')
+                .where('workspace_id', workspaceId)
+                .where(function() {
+                    this.where('gstin', 'ILIKE', searchPattern)
+                        .orWhere('supplier_name', 'ILIKE', searchPattern);
+                })
+                .count('id as total');
+
+            return parseInt(result[0].total) || 0;
+        } catch (error) {
+            console.error('[SupplierModel] Error in countAll:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update supplier contact details
+     */
+    static async updateContact(id, data) {
+        try {
+            const { email, phone } = data;
+            const updated = await knex('supplier_master')
+                .where('id', id)
+                .update({
+                    email: email || null,
+                    phone: phone || null,
+                    updated_at: knex.fn.now()
+                })
+                .returning('*');
+            
+            return updated[0];
+        } catch (error) {
+            console.error('[SupplierModel] Error in updateContact:', error);
             throw error;
         }
     }

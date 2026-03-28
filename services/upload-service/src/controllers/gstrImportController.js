@@ -1,5 +1,6 @@
 const GSTRImportModel = require('../models/gstrImportModel');
 const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
+const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
 const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
 const minioClient = require('../utils/minioClient');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
@@ -442,6 +443,16 @@ class GSTRImportController {
                                 const supplierGstins = b2bInvoices.map(r => r.gstin_supplier).filter(Boolean);
                                 if (supplierGstins.length > 0) {
                                     await GstinMasterService.ensureMultiple(supplierGstins);
+                                    
+                                    // SMART CAPTURE: Add suppliers to master directory
+                                    const uniqueSuppliers = Array.from(new Map(b2bInvoices
+                                        .filter(r => r.trade_name || r.gstin_supplier)
+                                        .map(r => [r.gstin_supplier || r.trade_name, { gstin: r.gstin_supplier, name: r.trade_name }])
+                                    ).values());
+                                    
+                                    if (uniqueSuppliers.length > 0) {
+                                        await SupplierMasterService.batchUpsert(workspaceId, uniqueSuppliers);
+                                    }
                                 }
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2B', sheetName);
                                 const { inserted, addedInvoices } = isGstr2a
@@ -513,6 +524,17 @@ class GSTRImportController {
 
                                 totalSkipped += cdnrNotes.length - inserted;
                                 totalRecords += cdnrNotes.length;
+                                
+                                // SMART CAPTURE: Add suppliers from CDNR to master directory
+                                const uniqueCdnrSuppliers = Array.from(new Map(cdnrNotes
+                                    .filter(r => r.trade_name || r.gstin_supplier)
+                                    .map(r => [r.gstin_supplier || r.trade_name, { gstin: r.gstin_supplier, name: r.trade_name }])
+                                ).values());
+                                
+                                if (uniqueCdnrSuppliers.length > 0) {
+                                    await SupplierMasterService.batchUpsert(workspaceId, uniqueCdnrSuppliers);
+                                }
+
                                 await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnrNotes.length, rowsInserted: inserted, rowsSkipped: cdnrNotes.length - inserted, rowsNormalized: normIns });
                             }
                             if (cdnraNotes.length > 0) {

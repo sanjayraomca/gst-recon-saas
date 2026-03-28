@@ -37,6 +37,7 @@ const tablesToTruncate = [
     'reconciliation_results',
     'reconciliation_status',
     'reconciliation_runs',
+    'supplier_master',
     'tax_periods',
     'financial_years'
 ];

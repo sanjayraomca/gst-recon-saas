@@ -1,5 +1,6 @@
 const db = require('../../../shared/src/db/connection');
 const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
+const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
 const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
 
 
@@ -116,6 +117,16 @@ class BookModel {
                             original_gst_rate_percent: item.original_gst_rate_percent || 0
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
+                    }
+
+                    // SMART CAPTURE: Add customer to master directory
+                    if (header.customer_gstin) {
+                        await SupplierMasterService.upsertSupplier(
+                            header.workspace_id, 
+                            header.customer_gstin, 
+                            header.customer_name, 
+                            trx
+                        );
                     }
 
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
@@ -277,6 +288,16 @@ class BookModel {
                             original_tax_per: item.original_tax_per || 0
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
+                    }
+
+                    // SMART CAPTURE: Add supplier to master directory
+                    if (header.supplier_gstin) {
+                        await SupplierMasterService.upsertSupplier(
+                            header.workspace_id, 
+                            header.supplier_gstin, 
+                            header.supplier_name, 
+                            trx
+                        );
                     }
 
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
