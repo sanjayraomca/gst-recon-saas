@@ -8,9 +8,11 @@ const {
     updateInvoice,
     amendInvoice
 } = require('../controllers/purchaseInvoiceController');
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
-// All routes require authentication
+// All routes require authentication and workspace authorization
 router.use(verifyToken);
+router.use(authorizeWorkspace);
 
 // GET /purchase-invoices - List all invoices with filters
 router.get('/', getAllInvoices);

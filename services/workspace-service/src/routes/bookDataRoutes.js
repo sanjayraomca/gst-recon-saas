@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../../../shared/src/middleware/authMiddleware');
 const { getBookData, getBookDataSummary, getBookDataById } = require('../controllers/bookDataController');
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
 router.use(verifyToken);
+router.use(authorizeWorkspace);
 
 // GET /book-data/summary?period=2024-11  — returns aggregate totals for all 9 types
 router.get('/summary', getBookDataSummary);

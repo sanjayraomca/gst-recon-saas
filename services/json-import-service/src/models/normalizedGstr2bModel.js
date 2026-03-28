@@ -125,8 +125,8 @@ class NormalizedGstr2bModel {
         return records.map(r => {
             const noteType = (r.note_type || '').toString().toUpperCase();
             // 'CDNR-D' or 'Debit Note' -> DEBIT_NOTE; else CREDIT_NOTE
-            const docCategory = (noteType.includes('D') && !noteType.includes('CREDIT')) || noteType.includes('DEBIT') || noteType.includes('CONTRA') 
-                ? 'DEBIT_NOTE' 
+            const docCategory = (noteType.includes('D') && !noteType.includes('CREDIT')) || noteType.includes('DEBIT') || noteType.includes('CONTRA')
+                ? 'DEBIT_NOTE'
                 : 'CREDIT_NOTE';
             return {
                 source_row_id: makeSourceRowId(importFilingId, 'CDNR', r.gstin_supplier, r.note_number, r.note_date),
@@ -319,12 +319,12 @@ class NormalizedGstr2bModel {
                 const result = await db.raw(query, values);
                 totalInserted += result.rowCount || 0;
             } catch (err) {
-                console.error('[NormalizedGstr2bModel] batchInsert error:', err.message);
+                ///    console.error('[NormalizedGstr2bModel] batchInsert error:', err.message);
                 throw err;
             }
         }
 
-        console.log(`[NormalizedGstr2bModel] Inserted ${totalInserted} normalized rows`);
+        //  console.log(`[NormalizedGstr2bModel] Inserted ${totalInserted} normalized rows`);
         return { inserted: totalInserted };
     }
 

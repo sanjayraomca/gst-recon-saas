@@ -10,6 +10,8 @@ const {
     getRunTaxSummary
 } = require('../controllers/reconciliationController');
 
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
+
 const {
     createConfig,
     updateConfig,
@@ -17,8 +19,9 @@ const {
     getConfig
 } = require('../controllers/reconciliationConfigController');
 
-// All routes require authentication
+// All routes require authentication and workspace authorization
 router.use(verifyToken);
+router.use(authorizeWorkspace);
 
 // --- Phase 4.1: Configurations ---
 // GET /reconciliation/configs

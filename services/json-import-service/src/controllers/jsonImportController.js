@@ -19,7 +19,7 @@ class JsonImportController {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
             }
 
-            console.log(`[JsonImport] Processing ${data.length} sales records for tenant ${tenant_id}`);
+            // console.log(`[JsonImport] Processing ${data.length} sales records for tenant ${tenant_id}`);
 
             // Process data into internal format
             const processedInvoices = processSalesJson(data, tenant_id, gstinId, null, returnPeriod, orgGstin);
@@ -46,7 +46,7 @@ class JsonImportController {
             });
 
         } catch (error) {
-            console.error('[JsonImport] Sales Error:', error);
+            // console.error('[JsonImport] Sales Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
@@ -64,7 +64,7 @@ class JsonImportController {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
             }
 
-            console.log(`[JsonImport] Processing ${data.length} purchase records for tenant ${tenant_id}`);
+            // console.log(`[JsonImport] Processing ${data.length} purchase records for tenant ${tenant_id}`);
 
             // Process data into internal format
             const processedVouchers = processPurchaseJson(data, tenant_id, gstinId, null, returnPeriod, orgGstin);
@@ -91,7 +91,7 @@ class JsonImportController {
             });
 
         } catch (error) {
-            console.error('[JsonImport] Purchase Error:', error);
+            // console.error('[JsonImport] Purchase Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }

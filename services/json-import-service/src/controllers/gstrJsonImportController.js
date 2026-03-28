@@ -18,19 +18,19 @@ class GstrJsonImportController {
         try {
             const { data, gstinId, returnPeriod, gstrType } = req.body;
             const { tenant_id: userTenantId, email, sub: authSub, id: authId } = req.user;
-            
+
             // 1. Fetch GSTIN and Workspace info
             let gstinRecipient = null;
             let workspaceId = gstinId;
 
-            console.log(`[GstrJsonImport] Resolving context for workspaceId/gstinId: ${workspaceId}`);
+            //  console.log(`[GstrJsonImport] Resolving context for workspaceId/gstinId: ${workspaceId}`);
 
             const gstinQuery = await db.raw(
                 'SELECT gm.gstin, w.tenant_id, w.id as workspace_id FROM gstin_master gm JOIN workspaces w ON w.gstin_id = gm.id WHERE w.id = ? OR gm.id = ?',
                 [workspaceId, workspaceId]
             );
 
-            console.log(`[GstrJsonImport] gstinQuery rows count: ${gstinQuery.rows?.length || 0}`);
+            //  console.log(`[GstrJsonImport] gstinQuery rows count: ${gstinQuery.rows?.length || 0}`);
 
             let resolvedTenantId = userTenantId;
 
@@ -39,16 +39,16 @@ class GstrJsonImportController {
                 const match = gstinQuery.rows.find(r => r.workspace_id === workspaceId) || gstinQuery.rows[0];
                 gstinRecipient = match.gstin;
                 workspaceId = match.workspace_id; // Ensure we use the workspace UUID
-                
-                console.log(`[GstrJsonImport] Found match: GSTIN=${gstinRecipient}, Workspace=${workspaceId}, Tenant=${match.tenant_id}`);
+
+                //   console.log(`[GstrJsonImport] Found match: GSTIN=${gstinRecipient}, Workspace=${workspaceId}, Tenant=${match.tenant_id}`);
 
                 // If tenant_id missing in token, use the one from workspace
                 if (!resolvedTenantId) {
                     resolvedTenantId = match.tenant_id;
                 }
             } else {
-                 console.error(`[GstrJsonImport] No match found for ID: ${workspaceId}. Body:`, req.body);
-                 return res.status(400).json({ success: false, error: 'Invalid GSTIN or Workspace ID. Please ensure the workspace exists.' });
+                //   console.error(`[GstrJsonImport] No match found for ID: ${workspaceId}. Body:`, req.body);
+                return res.status(400).json({ success: false, error: 'Invalid GSTIN or Workspace ID. Please ensure the workspace exists.' });
             }
 
             // 2. Resolve internal userId if unknown
@@ -80,7 +80,7 @@ class GstrJsonImportController {
             );
 
             if (duplicateCheck.exactDuplicate) {
-                console.log(`[GstrJsonImport] Exact duplicate detected for hash: ${fileHash}`);
+                // console.log(`[GstrJsonImport] Exact duplicate detected for hash: ${fileHash}`);
                 return res.json({
                     success: true,
                     data: {
@@ -106,7 +106,7 @@ class GstrJsonImportController {
                 .first();
 
             if (periodCheck) {
-                console.log(`[GstrJsonImport] Existing import found for period ${returnPeriod} (${periodCheck.import_type})`);
+                // console.log(`[GstrJsonImport] Existing import found for period ${returnPeriod} (${periodCheck.import_type})`);
                 return res.json({
                     success: true,
                     data: {
@@ -118,7 +118,7 @@ class GstrJsonImportController {
                             import_type: periodCheck.import_type
                         },
                         new_records: 0,
-                        skipped_records: 0 
+                        skipped_records: 0
                     },
                     message: `Data for ${returnPeriod} has already been imported via ${periodCheck.import_type === 'JSON_IMPORT' ? 'JSON' : 'Excel'}.`
                 });
@@ -141,18 +141,18 @@ class GstrJsonImportController {
             try {
                 minioResult = await minioClient.uploadData(data, minioMetadata);
             } catch (minioErr) {
-                console.error('[GstrJsonImport] MinIO upload failed, continuing with DB only:', minioErr.message);
+                //  console.error('[GstrJsonImport] MinIO upload failed, continuing with DB only:', minioErr.message);
             }
 
             // Ensure Tax Period exists (with quarterly auto-filling)
             await GstrJsonImportController.ensureTaxPeriodExists(returnPeriod, db);
-            
+
             // Final safety check for undefined bindings
             const finalTenantId = resolvedTenantId || null;
             const finalUserId = userId || null;
             const finalEmail = email || null;
 
-            console.log(`[GstrJsonImport] Final resolved context: tenant=${finalTenantId}, user=${finalUserId}, gstin=${gstinRecipient}`);
+            //  console.log(`[GstrJsonImport] Final resolved context: tenant=${finalTenantId}, user=${finalUserId}, gstin=${gstinRecipient}`);
 
             const importRecord = await GSTRImportModel.createImportRecord({
                 tenantUuid: finalTenantId,
@@ -263,7 +263,7 @@ class GstrJsonImportController {
                     const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 }
-                
+
                 const inserted = result?.inserted || 0;
                 const skipped = records.length - inserted;
                 totalInserted += inserted;
@@ -307,8 +307,8 @@ class GstrJsonImportController {
 
             res.json({
                 success: true,
-                message: totalInserted > 0 
-                    ? `Import successful: ${totalInserted} records have been added.` 
+                message: totalInserted > 0
+                    ? `Import successful: ${totalInserted} records have been added.`
                     : `No new records found. ${totalSkipped} already existed.`,
                 data: {
                     import_filing_id: importRecord.import_filing_id,
@@ -322,7 +322,7 @@ class GstrJsonImportController {
             });
 
         } catch (error) {
-            console.error('[GstrJsonImport] Error:', error);
+            //  console.error('[GstrJsonImport] Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
@@ -346,7 +346,7 @@ class GstrJsonImportController {
             return periodMatch.rows[0].id;
         }
 
-        console.log(`[ensureTaxPeriodExists] Creating missing tax period: ${returnPeriod}`);
+        //   console.log(`[ensureTaxPeriodExists] Creating missing tax period: ${returnPeriod}`);
         const month = parseInt(returnPeriod.substring(0, 2));
         const year = parseInt(returnPeriod.substring(2));
         const fyCode = GstrJsonImportController.calculateFinancialYear(returnPeriod);
@@ -412,7 +412,7 @@ class GstrJsonImportController {
                 }
             }
         } catch (err) {
-            console.error('[ensureTaxPeriodExists] Error ensuring quarterly siblings:', err.message);
+            //  console.error('[ensureTaxPeriodExists] Error ensuring quarterly siblings:', err.message);
         }
 
         return newId;

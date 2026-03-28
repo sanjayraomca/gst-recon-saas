@@ -35,7 +35,7 @@ const createGSTIN = async (req, res) => {
             try {
                 encryptedPassword = encrypt(gstn_password);
             } catch (encryptError) {
-                console.error('Password encryption failed:', encryptError);
+                //   console.error('Password encryption failed:', encryptError);
                 return res.status(500).json({ error: 'Failed to secure password' });
             }
         }
@@ -186,7 +186,7 @@ const testGSTNConnection = async (req, res) => {
             });
         }
     } catch (error) {
-        console.error('Test GSTN connection error:', error);
+        //  console.error('Test GSTN connection error:', error);
         return errorResponse(res, error, 'Failed to test GSTN connection');
     }
 };

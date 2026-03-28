@@ -27,7 +27,7 @@ app.use(errorHandler);
 // Start Server
 const startServer = async () => {
     app.listen(PORT, () => {
-        console.log(`JSON Import Service running on port ${PORT}`);
+        //  console.log(`JSON Import Service running on port ${PORT}`);
     });
 
     try {

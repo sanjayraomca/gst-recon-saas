@@ -75,7 +75,7 @@ class GSTRImportModel {
             const result = await db.raw(query, values);
             return result.rows[0];
         } catch (error) {
-            console.error('Error creating import record:', error);
+            //  console.error('Error creating import record:', error);
             throw error;
         }
     }
@@ -113,7 +113,7 @@ class GSTRImportModel {
             const result = await db.raw(query, values);
             return result.rows[0];
         } catch (error) {
-            console.error('Error updating import status:', error);
+            //  console.error('Error updating import status:', error);
             throw error;
         }
     }
@@ -159,7 +159,7 @@ class GSTRImportModel {
             const result = await db.raw(query, values);
             return result.rows[0];
         } catch (error) {
-            console.error('Error updating import status with counters:', error);
+            //  console.error('Error updating import status with counters:', error);
             throw error;
         }
     }
@@ -180,7 +180,7 @@ class GSTRImportModel {
             return result.rows[0]?.id;
         } catch (err) {
             // Logs are best-effort — never break the import
-            console.warn('[importLog] createImportLog error:', err.message);
+            //  console.warn('[importLog] createImportLog error:', err.message);
             return null;
         }
     }
@@ -204,7 +204,7 @@ class GSTRImportModel {
         try {
             await db.raw(query, [rowsFound, rowsInserted, rowsSkipped, rowsNormalized, status, errorMessage, logId]);
         } catch (err) {
-            console.warn('[importLog] finishImportLog error:', err.message);
+            // console.warn('[importLog] finishImportLog error:', err.message);
         }
     }
 
@@ -273,7 +273,7 @@ class GSTRImportModel {
             const result = await db.raw(query, values);
             return result.rows;
         } catch (error) {
-            console.error('Error fetching import history:', error);
+            //console.error('Error fetching import history:', error);
             throw error;
         }
     }
@@ -293,7 +293,7 @@ class GSTRImportModel {
             const result = await db.raw(query, [importFilingId]);
             return result.rows[0];
         } catch (error) {
-            console.error('Error fetching import by ID:', error);
+            //    console.error('Error fetching import by ID:', error);
             throw error;
         }
     }
@@ -341,7 +341,7 @@ class GSTRImportModel {
 
             return { exactDuplicate, previousImport };
         } catch (error) {
-            console.error('Error checking duplicate by hash:', error);
+            // console.error('Error checking duplicate by hash:', error);
             throw error;
         }
     }
@@ -470,7 +470,7 @@ class GSTRImportModel {
                 totalInserted += insertedRows.length;
                 addedInvoices.push(...insertedRows.map(r => r[returningCol]));
             } catch (error) {
-                console.error(`[MODEL] Error in batchInsertToTable for ${tableName}:`, error);
+                //  console.error(`[MODEL] Error in batchInsertToTable for ${tableName}:`, error);
                 throw error;
             }
         }
@@ -489,7 +489,7 @@ class GSTRImportModel {
             const result = await db.raw(query, [importFilingId]);
             return result.rows[0];
         } catch (error) {
-            console.error('Error deleting import:', error);
+            // console.error('Error deleting import:', error);
             throw error;
         }
     }

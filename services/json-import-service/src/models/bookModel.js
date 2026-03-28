@@ -20,7 +20,7 @@ class BookModel {
             let totalInserted = 0;
             const addedInvoices = [];
             const duplicateInvoices = [];
-            
+
             for (const inv of invoices) {
                 const { header, items } = inv;
                 const spName = `sales_${totalProcessed++}`;
@@ -117,19 +117,19 @@ class BookModel {
                         }));
                         await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
-                    
+
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
-                    console.warn(`[BookModel] Skipped sales invoice ${header.invoice_number} due to error: ${rowErr.message}`);
+                    //  console.warn(`[BookModel] Skipped sales invoice ${header.invoice_number} due to error: ${rowErr.message}`);
                 }
             }
             await trx.commit();
             return { inserted: totalInserted, addedInvoices, duplicateInvoices };
         } catch (error) {
             await trx.rollback();
-            console.error('[BookModel] Error in bulkInsertSales:', error);
+            //  console.error('[BookModel] Error in bulkInsertSales:', error);
             throw error;
         }
     }
@@ -278,18 +278,18 @@ class BookModel {
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
-                    
+
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
                 } catch (rowErr) {
                     await trx.raw(`ROLLBACK TO SAVEPOINT ${spName}`);
-                    console.warn(`[BookModel] Skipped voucher ${header.supplier_invoice_no} due to error: ${rowErr.message}`);
+                    //  console.warn(`[BookModel] Skipped voucher ${header.supplier_invoice_no} due to error: ${rowErr.message}`);
                 }
             }
             await trx.commit();
             return { inserted: totalInserted, addedInvoices, duplicateInvoices };
         } catch (error) {
             await trx.rollback();
-            console.error('[BookModel] Error in bulkInsertPurchase:', error);
+            //  console.error('[BookModel] Error in bulkInsertPurchase:', error);
             throw error;
         }
     }
