@@ -19,6 +19,7 @@ app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-r
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
 app.use('/states', require('./routes/stateRoutes')); // State lookup routes
 app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
+app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
 
 
 

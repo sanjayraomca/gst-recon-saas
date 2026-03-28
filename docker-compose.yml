@@ -301,7 +301,7 @@ services:
       - ./services/shared:/app/services/shared
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`)"
+      - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`) || PathPrefix(`/suppliers`)"
       - "traefik.http.services.workspace-service.loadbalancer.server.port=3002"
     networks:
       - gst-network
@@ -334,7 +334,7 @@ services:
       - PORT=3003
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.gstn-service.rule=PathPrefix(`/gstins`) || PathPrefix(`/suppliers`)"
+      - "traefik.http.routers.gstn-service.rule=PathPrefix(`/gstins`)"
       - "traefik.http.services.gstn-service.loadbalancer.server.port=3003"
     networks:
       - gst-network
