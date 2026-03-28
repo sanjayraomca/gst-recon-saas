@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const db = require('../../../shared/src/db/connection');
 const progressEmitter = require('../utils/progressEmitter');
 const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
+const { publishEvent } = require('../nats/natsClient');
 
 
 async function computeFileHash(filePath) {
@@ -272,6 +273,16 @@ class BookImportController {
                 minioPath: minioResult.objectPath,
                 added_invoices: result.addedInvoices,
                 duplicate_invoices: result.duplicateInvoices
+            });
+
+            // Publish Event for Reconciliation Trigger
+            publishEvent('book-data-imported', {
+                tenant_id: tenantUuid,
+                workspace_id: workspaceUuid || workspace_id,
+                gstin_id: gstin_id,
+                period: return_period,
+                type: type.toUpperCase(),
+                count: result.inserted
             });
 
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);

@@ -10,6 +10,7 @@ const path = require('path');
 const crypto = require('crypto');
 const xlsx = require('xlsx');
 const progressEmitter = require('../utils/progressEmitter');
+const { publishEvent } = require('../nats/natsClient');
 
 /**
  * Controller for Generic GSTR Import
@@ -663,6 +664,19 @@ class GSTRImportController {
                     added_invoices: allAddedInvoices,
                     duplicate_invoices: allDuplicateInvoices
                 });
+
+                // Publish Event for Reconciliation Trigger
+                if (finalStatus === 'Completed' || finalStatus === 'PartiallyCompleted') {
+                    publishEvent('gstr-data-imported', {
+                        tenant_id: tenantUuid,
+                        workspace_id: workspaceId || null,
+                        gstin_id: gstin_id,
+                        period: return_period,
+                        gstr_type: gstr_type.toUpperCase(),
+                        import_id: importRecord.import_filing_id,
+                        record_count: totalInserted
+                    });
+                }
 
                 importRecord.status = finalStatus;
                 importRecord.total_record = totalInserted;

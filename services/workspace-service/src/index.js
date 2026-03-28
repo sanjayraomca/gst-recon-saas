@@ -38,9 +38,15 @@ app.use((err, req, res, next) => {
     });
 });
 
+const ReconciliationTriggerService = require('./services/reconciliationTriggerService');
+
 const startServer = async () => {
     try {
         await connectNats();
+        
+        // Initialize automated reconciliation listeners
+        ReconciliationTriggerService.init();
+
         app.listen(PORT, () => {
             console.log(`Workspace Service running on port ${PORT}`);
         });

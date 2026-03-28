@@ -1,3 +1,4 @@
+const db = require('../../../shared/src/db/connection');
 const BookModel = require('../models/bookModel');
 const { processSalesJson, processPurchaseJson } = require('../utils/jsonProcessors');
 const { publishEvent } = require('../nats/natsClient');
@@ -31,10 +32,16 @@ class JsonImportController {
             // Perform bulk insert
             const result = await BookModel.bulkInsertSales(processedInvoices);
 
+            // Resolve GSTIN ID from Workspace
+            const workspaceRec = await db('workspaces').where('id', gstinId).select('gstin_id').first();
+            const resolvedGstinId = workspaceRec ? workspaceRec.gstin_id : null;
+
             // Publish NATS event
             publishEvent('book-data-imported', {
                 tenant_id,
                 workspace_id: gstinId,
+                gstin_id: resolvedGstinId,
+                period: returnPeriod,
                 type: 'SALES',
                 count: result.inserted
             });
@@ -76,10 +83,16 @@ class JsonImportController {
             // Perform bulk insert
             const result = await BookModel.bulkInsertPurchase(processedVouchers);
 
+            // Resolve GSTIN ID from Workspace
+            const workspaceRecPurchase = await db('workspaces').where('id', gstinId).select('gstin_id').first();
+            const resolvedGstinIdPurchase = workspaceRecPurchase ? workspaceRecPurchase.gstin_id : null;
+
             // Publish NATS event
             publishEvent('book-data-imported', {
                 tenant_id,
                 workspace_id: gstinId,
+                gstin_id: resolvedGstinIdPurchase,
+                period: returnPeriod,
                 type: 'PURCHASE',
                 count: result.inserted
             });

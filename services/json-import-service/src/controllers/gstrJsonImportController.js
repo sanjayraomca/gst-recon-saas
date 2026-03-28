@@ -20,6 +20,9 @@ class GstrJsonImportController {
         try {
             const { data, gstinId, returnPeriod, gstrType } = req.body;
             const { tenant_id: userTenantId, email, sub: authSub, id: authId } = req.user;
+            
+            // Log for debugging
+            console.log(`[GstrJsonImport] Processing import for GSTIN/Workspace: ${gstinId}, Period: ${returnPeriod}`);
 
             // 1. Fetch GSTIN and Workspace info
             let gstinRecipient = null;
@@ -318,11 +321,13 @@ class GstrJsonImportController {
                 duplicate_invoices: allDuplicateInvoices
             });
 
-            // 7. Publish NATS Event
+            // Publish NATS event
             publishEvent('gstr-data-imported', {
                 tenant_id: finalTenantId,
                 workspace_id: workspaceId,
-                import_type: gstrType.toUpperCase(),
+                gstin_id: gstinId,
+                period: returnPeriod,
+                gstr_type: gstrType,
                 count: totalInserted
             });
 
