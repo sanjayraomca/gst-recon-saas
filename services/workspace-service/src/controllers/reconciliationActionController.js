@@ -182,8 +182,8 @@ const notifySupplier = async (req, res) => {
         console.log(`[notifySupplier] Request received for workspace: ${workspaceId}`);
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        const { to, subject, body } = req.body;
-        console.log(`[notifySupplier] Payload: to=${to}, subject=${subject}`);
+        const { to, subject, body, supplier_gstin } = req.body;
+        console.log(`[notifySupplier] Payload: to=${to}, subject=${subject}, gstin=${supplier_gstin}`);
         if (!to || !subject || !body) {
             return errorResponse(res, 'to, subject, and body are required', 400);
         }
@@ -191,6 +191,20 @@ const notifySupplier = async (req, res) => {
         // Publish event to NATS
         publishMessage('SUPPLIER_MAIL_REQUESTED', { to, subject, body });
         console.log(`[notifySupplier] NATS event SUPPLIER_MAIL_REQUESTED published`);
+
+        // Async update supplier_master if GSTIN is provided
+        if (supplier_gstin) {
+            knex('supplier_master')
+                .where({ workspace_id: workspaceId, gstin: supplier_gstin }) // Note: Column is 'gstin' not 'supplier_gstin'
+                .update({ 
+                    email: to, // Note: Column is 'email' not 'supplier_email'
+                    updated_at: knex.fn.now() 
+                })
+                .then(count => {
+                    if (count > 0) console.log(`[notifySupplier] Updated email for supplier ${supplier_gstin} in master table`);
+                })
+                .catch(err => console.error(`[notifySupplier] Error updating supplier master email:`, err));
+        }
 
         return successResponse(res, null, 'Mail-send request successfully published', 200);
     } catch (error) {
