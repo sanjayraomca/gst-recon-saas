@@ -114,7 +114,7 @@ class BookDataModel {
             q = q.where(function () {
                 // If we have period, use it (ANDed with others usually, but here we treat as one of the options)
                 if (period && period !== 'ALL') {
-                    this.orWhere(function() {
+                    this.orWhere(function () {
                         BookDataModel._addPeriodFilter(this, period, 'si.invoice_date');
                     });
                 }
@@ -335,7 +335,7 @@ class BookDataModel {
             let q = knex('sales_invoices as si').where('si.workspace_id', workspaceId);
             if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
             if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
-            
+
             q = q.where(function () {
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {
@@ -391,7 +391,7 @@ class BookDataModel {
             let q = knex('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
             if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
             if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
-            
+
             q = q.where(function () {
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {

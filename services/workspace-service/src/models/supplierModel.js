@@ -21,12 +21,13 @@ class SupplierModel {
                     sm.supplier_name as name,
                     sm.email,
                     sm.phone,
-                    COALESCE(scm.state, 'Other') as state_name,
+                    COALESCE(scm.state, w.state, 'Other') as state_name,
                     sm.is_active,
                     sm.created_at,
                     sm.updated_at
                 FROM supplier_master sm
                 LEFT JOIN state_code_master scm ON scm.code = SUBSTRING(sm.gstin, 1, 2)
+                LEFT JOIN workspaces w ON w.id = sm.workspace_id
                 WHERE sm.workspace_id = ?::uuid
                 AND (sm.gstin ILIKE ? OR COALESCE(sm.supplier_name, '') ILIKE ?)
                 ORDER BY sm.supplier_name ASC NULLS LAST

@@ -21,12 +21,13 @@ class CustomerModel {
                     cm.customer_name as name,
                     cm.email,
                     cm.phone,
-                    COALESCE(scm.state, 'Other') as state_name,
+                    COALESCE(scm.state, w.state, 'Other') as state_name,
                     cm.is_active,
                     cm.created_at,
                     cm.updated_at
                 FROM customer_master cm
                 LEFT JOIN state_code_master scm ON scm.code = SUBSTRING(cm.gstin, 1, 2)
+                LEFT JOIN workspaces w ON w.id = cm.workspace_id
                 WHERE cm.workspace_id = ?::uuid
                 AND (cm.gstin ILIKE ? OR COALESCE(cm.customer_name, '') ILIKE ?)
                 ORDER BY cm.customer_name ASC NULLS LAST
