@@ -102,8 +102,6 @@ const getRunResults = async (req, res) => {
         cleanup();
         if (!result) return errorResponse(res, 'Run not found', 404);
 
-        console.log(`[getRunResults] returning ${result.data?.length} rows for runId=${runId}`);
-
         return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
             pagination: result.pagination,
             summary: result.summary
@@ -120,9 +118,9 @@ const getRunTaxSummary = async (req, res) => {
         const runId = req.params.run_id;
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
         const cleanup = attachSqlFileLogger('TaxSummary');
-        const data = await ReconciliationModel.getRunTaxSummary(workspaceId, runId, req.query);
+        const summary = await ReconciliationModel.getRunTaxSummary(workspaceId, runId, req.query);
         cleanup();
-        return successResponse(res, data, 'Tax summary retrieved successfully');
+        return successResponse(res, summary, 'Tax summary retrieved successfully');
     } catch (error) {
         console.error('Error fetching tax summary:', error);
         return errorResponse(res, error.message, 500);

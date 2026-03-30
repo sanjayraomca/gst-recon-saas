@@ -1410,9 +1410,12 @@ class ReconciliationModel {
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
-            .where('rr.recon_run_id', runId)
             .where('rr.workspace_id', workspaceId)
             .modify(q => {
+                if (runId && runId !== 'all') {
+                    q.where('rr.recon_run_id', runId);
+                }
+                
                 let filterYear = null;
                 if (fy && fy !== 'ALL') {
                     filterYear = parseInt(fy.split('-')[0]);
@@ -1477,8 +1480,12 @@ class ReconciliationModel {
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
             .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
-            .where('rr.recon_run_id', runId)
             .where('rr.workspace_id', workspaceId)
+            .modify(q => {
+                if (runId && runId !== 'all') {
+                    q.where('rr.recon_run_id', runId);
+                }
+            })
             .modify(q => {
                 let filterYear = null;
                 if (fy && fy !== 'ALL') {
