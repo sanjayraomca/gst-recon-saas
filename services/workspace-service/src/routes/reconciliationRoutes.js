@@ -57,11 +57,15 @@ router.get('/progress', getRunProgress);
 const {
     takeAction,
     getPendingActions,
-    updateReconStatus
+    updateReconStatus,
+    notifySupplier
 } = require('../controllers/reconciliationActionController');
 
 // POST /reconciliation/results/:result_id/actions
 router.post('/results/:result_id/actions', takeAction);
+
+// POST /reconciliation/notify-supplier
+router.post('/notify-supplier', notifySupplier);
 
 // GET /reconciliation/actions/pending
 router.get('/actions/pending', getPendingActions);

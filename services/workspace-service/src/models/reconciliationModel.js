@@ -643,7 +643,11 @@ class ReconciliationModel {
             .leftJoin('financial_years as fymas', 'tp.fy_id', 'fymas.id')
             // Join with reconciliation_status table to get the workflow status
             .leftJoin('reconciliation_status as rs_pi', 'rr.purchase_invoice_id', 'rs_pi.book_data_id')
-            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id');
+            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id')
+            .leftJoin('supplier_master as sm', function() {
+                this.on('sm.gstin', '=', knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin)'))
+                    .andOn('sm.workspace_id', '=', 'rr.workspace_id');
+            });
 
         // Apply Run ID filter ONLY if status is not 'pending'
         // If status is 'pending', we show all historical pending data for the workspace
@@ -1077,6 +1081,7 @@ class ReconciliationModel {
             // Supplier mapping
             knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
             knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
+            'sm.email as supplier_email',
             knex.raw('COALESCE(pi.supplier_invoice_no, gi.document_number_clean) as supplier_invoice_no'),
             knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date) as supplier_invoice_date'),
             knex.raw('COALESCE(tp.period_code, gi.return_period) as return_period'), // Explicit period code

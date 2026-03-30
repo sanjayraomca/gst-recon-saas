@@ -485,6 +485,10 @@ services:
       - DB_USER=${POSTGRES_MAIN_USER}
       - DB_PASSWORD=${POSTGRES_MAIN_PASSWORD}
       - PORT=3006
+    command: npm run dev
+    volumes:
+      - ./services/notification/src:/app/services/notification/src
+      - ./services/shared:/app/services/shared
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.notification-service.rule=PathPrefix(`/notifications`)"

@@ -80,6 +80,18 @@ const startServer = async () => {
             }
         });
 
+        subscribeToSubject('SUPPLIER_MAIL_REQUESTED', async (data) => {
+            console.log('Received SUPPLIER_MAIL_REQUESTED event:', data);
+            try {
+                // data: { to, subject, body }
+                const { sendSupplierMail } = require('./services/emailService');
+                await sendSupplierMail(data.to, data.subject, data.body);
+                console.log(`Supplier mail sent to ${data.to} via MailHog`);
+            } catch (error) {
+                console.error('Failed to send supplier mail:', error);
+            }
+        });
+
         app.listen(PORT, () => {
             console.log(`Notification Service running on port ${PORT}`);
         });

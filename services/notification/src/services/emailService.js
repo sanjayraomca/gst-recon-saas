@@ -201,10 +201,29 @@ const sendUserAddedToOrgEmail = async (email, userName, inviterName, tenantName,
     return transporter.sendMail(mailOptions);
 };
 
+const sendSupplierMail = async (to, subject, htmlBody) => {
+    console.log(`[emailService] Attempting to send supplier mail to: ${to}`);
+    const mailOptions = {
+        from: '"ADESK GST Support" <no-reply@gsttool.local>',
+        to: to,
+        subject: subject,
+        html: htmlBody // SupplierMailComposer sends standard HTML or formatted text
+    };
+    try {
+        const info = await transporter.sendMail(mailOptions);
+        console.log(`[emailService] Mail sent: ${info.messageId} | Response: ${info.response}`);
+        return info;
+    } catch (error) {
+        console.error(`[emailService] Error sending mail to ${to}:`, error);
+        throw error;
+    }
+};
+
 module.exports = {
     sendWelcomeEmail,
     sendOrganizationCreatedEmail,
     sendUserInviteEmail,
     sendUserAddedToOrgEmail,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendSupplierMail
 };

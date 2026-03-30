@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const knex = require('../../../shared/src/db/connection');
 const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
+const { publishMessage } = require('../../../shared/src/nats/client');
 
 const takeAction = async (req, res) => {
     try {
@@ -175,8 +176,32 @@ const updateReconStatus = async (req, res) => {
     }
 };
 
+const notifySupplier = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        console.log(`[notifySupplier] Request received for workspace: ${workspaceId}`);
+        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+
+        const { to, subject, body } = req.body;
+        console.log(`[notifySupplier] Payload: to=${to}, subject=${subject}`);
+        if (!to || !subject || !body) {
+            return errorResponse(res, 'to, subject, and body are required', 400);
+        }
+
+        // Publish event to NATS
+        publishMessage('SUPPLIER_MAIL_REQUESTED', { to, subject, body });
+        console.log(`[notifySupplier] NATS event SUPPLIER_MAIL_REQUESTED published`);
+
+        return successResponse(res, null, 'Mail-send request successfully published', 200);
+    } catch (error) {
+        console.error('Error notifying supplier:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
 module.exports = {
     takeAction,
     getPendingActions,
-    updateReconStatus
+    updateReconStatus,
+    notifySupplier
 };
