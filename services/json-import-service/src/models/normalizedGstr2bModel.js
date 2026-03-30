@@ -35,14 +35,14 @@ class NormalizedGstr2bModel {
     /**
      * Map B2B invoice records → normalized rows
      */
-    static mapB2B(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapB2B(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => ({
             source_row_id: makeSourceRowId(importFilingId, 'B2B', r.gstin_supplier, r.invoice_number, r.invoice_date),
             workspace_id: workspaceId,
             tenant_id: tenantId,
             import_filing_id: importFilingId,
             source_section: 'B2B',
-            source_table: 'gstr_2b_b2b_invoices',
+            source_table: sourceTable || 'gstr_2b_b2b_invoices',
             document_category: 'INVOICE',
             document_type: r.invoice_type || 'Regular',
             is_amendment: false,
@@ -78,14 +78,14 @@ class NormalizedGstr2bModel {
     /**
      * Map B2BA (amended B2B) records → normalized rows
      */
-    static mapB2BA(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapB2BA(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => ({
             source_row_id: makeSourceRowId(importFilingId, 'B2BA', r.gstin_supplier, r.revised_invoice_number, r.revised_invoice_date),
             workspace_id: workspaceId,
             tenant_id: tenantId,
             import_filing_id: importFilingId,
             source_section: 'B2BA',
-            source_table: 'gstr_2b_b2ba_invoices',
+            source_table: sourceTable || 'gstr_2b_b2ba_invoices',
             document_category: 'INVOICE',
             document_type: r.invoice_type || 'Regular',
             is_amendment: true,
@@ -121,7 +121,7 @@ class NormalizedGstr2bModel {
     /**
      * Map CDNR (Credit/Debit Notes) records → normalized rows
      */
-    static mapCDNR(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapCDNR(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => {
             const noteType = (r.note_type || '').toString().toUpperCase();
             // 'CDNR-D' or 'Debit Note' -> DEBIT_NOTE; else CREDIT_NOTE
@@ -134,7 +134,7 @@ class NormalizedGstr2bModel {
                 tenant_id: tenantId,
                 import_filing_id: importFilingId,
                 source_section: 'CDNR',
-                source_table: 'gstr_2b_cdnr',
+                source_table: sourceTable || 'gstr_2b_cdnr',
                 document_category: docCategory,
                 document_type: r.note_type || null,
                 is_amendment: false,
@@ -170,7 +170,7 @@ class NormalizedGstr2bModel {
     /**
      * Map CDNRA (amended Credit/Debit Notes) records → normalized rows
      */
-    static mapCDNRA(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapCDNRA(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => {
             const noteType = (r.note_type || '').toString().toUpperCase();
             const docCategory = noteType.startsWith('D') ? 'DEBIT_NOTE' : 'CREDIT_NOTE';
@@ -180,7 +180,7 @@ class NormalizedGstr2bModel {
                 tenant_id: tenantId,
                 import_filing_id: importFilingId,
                 source_section: 'CDNRA',
-                source_table: 'gstr_2b_cdnra',
+                source_table: sourceTable || 'gstr_2b_cdnra',
                 document_category: docCategory,
                 document_type: r.note_type || null,
                 is_amendment: true,
@@ -216,14 +216,14 @@ class NormalizedGstr2bModel {
     /**
      * Map IMPG (Imports via Bill of Entry) records → normalized rows
      */
-    static mapIMPG(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapIMPG(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => ({
             source_row_id: makeSourceRowId(importFilingId, 'IMPG', r.port_code, r.boe_number, r.boe_date),
             workspace_id: workspaceId,
             tenant_id: tenantId,
             import_filing_id: importFilingId,
             source_section: 'IMPG',
-            source_table: 'gstr_2b_impg',
+            source_table: sourceTable || 'gstr_2b_impg',
             document_category: 'IMPORT',
             is_amendment: false,
             is_active: true,
@@ -249,14 +249,14 @@ class NormalizedGstr2bModel {
     /**
      * Map ISD (Input Service Distributor) records → normalized rows
      */
-    static mapISD(records, { tenantId, workspaceId, importFilingId, returnPeriod }) {
+    static mapISD(records, { tenantId, workspaceId, importFilingId, returnPeriod, sourceTable }) {
         return records.map(r => ({
             source_row_id: makeSourceRowId(importFilingId, r.is_amended ? 'ISDA' : 'ISD', r.gstin_isd, r.document_number, r.document_date),
             workspace_id: workspaceId,
             tenant_id: tenantId,
             import_filing_id: importFilingId,
             source_section: r.is_amended ? 'ISDA' : 'ISD',
-            source_table: 'gstr_2b_isd',
+            source_table: sourceTable || 'gstr_2b_isd',
             document_category: 'ISD',
             document_type: r.document_type || null,
             is_amendment: r.is_amended || false,
