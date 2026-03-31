@@ -1397,6 +1397,81 @@ EXECUTE FUNCTION update_updated_at_column();
 -- END OF DOMAIN 14
 -- ========================================================
 
+-- GSTR-2A Normalization Table
+CREATE TABLE IF NOT EXISTS normalized_gstr2a_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
+    workspace_id UUID NOT NULL,
+    tenant_id UUID,
+    import_filing_id UUID NOT NULL,
+    source_section VARCHAR(30) NOT NULL,
+    source_table VARCHAR(50),
+    source_row_id UUID,
+    source_sheet_name VARCHAR(50),
+    source_row_number INTEGER,
+    document_category VARCHAR(30),
+    document_type VARCHAR(30),
+    is_amendment BOOLEAN DEFAULT FALSE,
+    amended_document_number TEXT,
+    amended_document_date DATE,
+    is_active BOOLEAN DEFAULT TRUE,
+    supplier_gstin VARCHAR(15),
+    supplier_name TEXT,
+    recipient_gstin VARCHAR(15),
+    place_of_supply VARCHAR(100),
+    reverse_charge BOOLEAN DEFAULT FALSE,
+    document_number_raw TEXT,
+    document_number_clean TEXT,
+    document_date DATE,
+    document_value NUMERIC(18,2),
+    invoice_type VARCHAR(30),
+    port_code VARCHAR(20),
+    boe_number TEXT,
+    boe_date DATE,
+    icegate_reference_date DATE,
+    isd_document_number TEXT,
+    isd_document_date DATE,
+    original_invoice_number TEXT,
+    original_invoice_date DATE,
+    taxable_value NUMERIC(18,2) DEFAULT 0,
+    igst NUMERIC(18,2) DEFAULT 0,
+    cgst NUMERIC(18,2) DEFAULT 0,
+    sgst NUMERIC(18,2) DEFAULT 0,
+    cess NUMERIC(18,2) DEFAULT 0,
+    total_tax NUMERIC(18,2),
+    itc_available BOOLEAN,
+    itc_eligibility VARCHAR(50),
+    itc_reason TEXT,
+    applicable_tax_rate_percent NUMERIC(10,2),
+    return_period VARCHAR(10),
+    filing_period VARCHAR(10),
+    filing_date DATE,
+    source_type VARCHAR(20) DEFAULT 'PORTAL',
+    match_key TEXT,
+    match_key_v2 TEXT,
+    reconciliation_status VARCHAR(30),
+    reconciliation_run_id UUID,
+    irn TEXT,
+    irn_date DATE,
+    payload_json JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP,
+    CONSTRAINT fk_norm_gstr2a_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    CONSTRAINT fk_norm_gstr2a_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    CONSTRAINT fk_norm_gstr2a_import FOREIGN KEY (import_filing_id) REFERENCES gstr_import_master(import_filing_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_tenant     ON normalized_gstr2a_invoices(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_workspace  ON normalized_gstr2a_invoices(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_import     ON normalized_gstr2a_invoices(import_filing_id);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_period     ON normalized_gstr2a_invoices(return_period);
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_supplier   ON normalized_gstr2a_invoices(supplier_gstin);
+
+DROP TRIGGER IF EXISTS update_normalized_gstr2a_invoices_updated_at ON normalized_gstr2a_invoices;
+CREATE TRIGGER update_normalized_gstr2a_invoices_updated_at
+BEFORE UPDATE ON normalized_gstr2a_invoices
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ========================================================
 -- DOMAIN 15: IMPORT LOGS (Task 2)
 -- Per-section detailed logging for each import run
@@ -1447,9 +1522,23 @@ ALTER TABLE normalized_gstr2b_invoices
     ADD CONSTRAINT uq_norm_source
     UNIQUE (import_filing_id, source_section, source_row_id);
 
+ALTER TABLE normalized_gstr2a_invoices
+    DROP CONSTRAINT IF EXISTS uq_norm_source_2a,
+    ADD CONSTRAINT uq_norm_source_2a
+    UNIQUE (import_filing_id, source_section, source_row_id);
+
 -- Business-key UNIQUE index for cross-route deduplication (Used by batchInsert ON CONFLICT)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_normalized_gstr2b_business_key
     ON normalized_gstr2b_invoices (
+        workspace_id, 
+        source_section, 
+        COALESCE(supplier_gstin, ''), 
+        COALESCE(document_number_clean, ''), 
+        COALESCE(return_period, '')
+    );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_normalized_gstr2a_business_key
+    ON normalized_gstr2a_invoices (
         workspace_id, 
         source_section, 
         COALESCE(supplier_gstin, ''), 
@@ -1461,9 +1550,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_normalized_gstr2b_business_key
 CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_ws_matchkey
     ON normalized_gstr2b_invoices(workspace_id, match_key);
 
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_ws_matchkey
+    ON normalized_gstr2a_invoices(workspace_id, match_key);
+
 -- ========================================================
 -- DOMAIN 16: LISTING VIEW (Task 5)
--- v_gstr2b_listing — optimized read model for UI listing
+-- v_gstr_listing — optimized read model for UI listing
 -- ========================================================
 
 CREATE OR REPLACE VIEW v_gstr_listing AS
@@ -1532,6 +1624,75 @@ SELECT
 FROM normalized_gstr2b_invoices n
 JOIN gstr_import_master m USING (import_filing_id)
 WHERE n.is_active = TRUE
+  AND n.deleted_at IS NULL
+
+UNION ALL
+
+SELECT
+    n.id,
+    n.workspace_id,
+    n.tenant_id,
+    n.import_filing_id,
+    n.source_section,
+    n.document_category,
+    n.document_type,
+    n.is_amendment,
+    n.is_active,
+
+    -- Supplier
+    n.supplier_gstin,
+    n.supplier_name,
+    n.recipient_gstin,
+    n.place_of_supply,
+    n.reverse_charge,
+
+    -- Document
+    n.document_number_raw,
+    n.document_number_clean,
+    n.document_date,
+    n.document_value,
+
+    -- Amendments
+    n.amended_document_number,
+    n.amended_document_date,
+    n.original_invoice_number,
+    n.original_invoice_date,
+
+    -- Tax
+    n.taxable_value,
+    n.igst,
+    n.cgst,
+    n.sgst,
+    n.cess,
+    COALESCE(n.total_tax, n.igst + n.cgst + n.sgst + n.cess) AS total_tax,
+
+    -- ITC
+    n.itc_available,
+    n.itc_eligibility,
+    CASE 
+        WHEN n.applicable_tax_rate_percent = 100 AND n.taxable_value > 0 THEN ROUND((COALESCE(n.total_tax, n.igst + n.cgst + n.sgst + n.cess) / n.taxable_value) * 100)
+        ELSE n.applicable_tax_rate_percent 
+    END AS applicable_tax_rate_percent,
+
+    -- Period
+    n.return_period,
+    n.filing_period,
+    n.filing_date,
+
+    -- E-Invoice
+    n.irn,
+    n.irn_date,
+
+    -- Import metadata
+    m.original_filename,
+    m.upload_timestamp,
+    m.import_type,
+
+    n.created_at
+      
+FROM normalized_gstr2a_invoices n
+JOIN gstr_import_master m USING (import_filing_id)
+WHERE n.is_active = TRUE
   AND n.deleted_at IS NULL;
 
 -- ========================================================
@@ -1542,6 +1703,10 @@ WHERE n.is_active = TRUE
 -- (workspace + period + section + date — covers the main listing sort/filter pattern)
 CREATE INDEX IF NOT EXISTS idx_norm_gstr2b_listing
     ON normalized_gstr2b_invoices(workspace_id, return_period, source_section, document_date DESC)
+    WHERE is_active = TRUE AND deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_listing
+    ON normalized_gstr2a_invoices(workspace_id, return_period, source_section, document_date DESC)
     WHERE is_active = TRUE AND deleted_at IS NULL;
 
 -- ========================================================
@@ -1574,6 +1739,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     workspace_id UUID NOT NULL REFERENCES workspaces(id),
     purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
     gstr2b_invoice_id UUID REFERENCES normalized_gstr2b_invoices(id),
+    gstr2a_invoice_id UUID REFERENCES normalized_gstr2a_invoices(id),
     
     match_status VARCHAR(50) NOT NULL,
     match_score DECIMAL(5,2),
@@ -1640,6 +1806,10 @@ WHERE purchase_invoice_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_gstr2b_inv 
 ON reconciliation_results (workspace_id, gstr2b_invoice_id) 
 WHERE gstr2b_invoice_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_gstr2a_inv 
+ON reconciliation_results (workspace_id, gstr2a_invoice_id) 
+WHERE gstr2a_invoice_id IS NOT NULL;
 -- Migration: Add GSTR-2A raw tables
 -- Mirroring GSTR-2B structure for consistency
 

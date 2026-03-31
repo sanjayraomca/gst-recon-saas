@@ -21,6 +21,7 @@ const minioClient = new MinioClient({
 const bucketName = process.env.MINIO_BUCKET_NAME || 'gst-documents';
 
 const tablesToTruncate = [
+
     'gstr_import_master',
     'gstr_import_logs',
     'gstr_2b_b2b_invoices',
@@ -30,6 +31,13 @@ const tablesToTruncate = [
     'gstr_2b_impg',
     'gstr_2b_isd',
     'normalized_gstr2b_invoices',
+    'gstr_2a_b2b_invoices',
+    'gstr_2a_b2ba_invoices',
+    'gstr_2a_cdnr',
+    'gstr_2a_cdnra',
+    'gstr_2a_impg',
+    'gstr_2a_isd',
+    'normalized_gstr2a_invoices',
     'purchase_items',
     'purchase_vouchers',
     'sales_invoice_items',

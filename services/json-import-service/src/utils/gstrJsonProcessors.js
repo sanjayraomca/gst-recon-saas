@@ -74,7 +74,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                             cess: cleanAmount(det.csamt),
                             supplier_filing_period: inv.upd_period || section.supprd || null,
                             supplier_filing_date: parsePortalDate(inv.upd_dt || section.supfildt),
-                            itc_availability: (inv.itc_avl === 'Y' || inv.itcavl === 'Y') ? 'Yes' : 'No', // Fallback to 'itcavl'
+                            itc_availability: (inv.itc_avl === 'Y' || inv.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No',
                             itc_availability_reason: inv.reasons || inv.rsn || null, // Fallback to 'rsn'
                             applicable_tax_rate: det.rt?.toString() || null,
                             source: inv.srnm || inv.srctyp || null,
@@ -135,7 +135,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                             cess: cleanAmount(det.csamt),
                             supplier_filing_period: inv.upd_period || section.supprd || null,
                             supplier_filing_date: parsePortalDate(inv.upd_dt || section.supfildt),
-                            itc_availability: (inv.itc_avl === 'Y' || inv.itcavl === 'Y') ? 'Yes' : 'No',
+                            itc_availability: (inv.itc_avl === 'Y' || inv.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No',
                             itc_availability_reason: inv.reasons || inv.rsn || null,
                             applicable_tax_rate: det.rt?.toString() || null,
                             is_amended: true
@@ -147,8 +147,9 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
     }
 
     // 3. Process CDNR
-    if (processedJson.cdnr) {
-        for (const section of processedJson.cdnr) {
+    const cdnData = (processedJson.cdnr && processedJson.cdnr.length > 0) ? processedJson.cdnr : processedJson.cdn;
+    if (cdnData && Array.isArray(cdnData)) {
+        for (const section of cdnData) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
             
@@ -193,7 +194,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                             cess: cleanAmount(det.csamt),
                             supplier_filing_period: nt.upd_period || section.supprd || null,
                             supplier_filing_date: parsePortalDate(nt.upd_dt || section.supfildt),
-                            itc_availability: (nt.itc_avl === 'Y' || nt.itcavl === 'Y') ? 'Yes' : 'No',
+                            itc_availability: (nt.itc_avl === 'Y' || nt.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No',
                             itc_availability_reason: nt.reasons || nt.rsn || null,
                             applicable_tax_rate: det.rt?.toString() || null
                         });
@@ -204,8 +205,9 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
     }
 
     // 4. Process CDNRA
-    if (processedJson.cdnra) {
-        for (const section of processedJson.cdnra) {
+    const cdnaData = (processedJson.cdnra && processedJson.cdnra.length > 0) ? processedJson.cdnra : processedJson.cdna;
+    if (cdnaData && Array.isArray(cdnaData)) {
+        for (const section of cdnaData) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
             
@@ -254,7 +256,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                             cess: cleanAmount(det.csamt),
                             supplier_filing_period: nt.upd_period || section.supprd || null,
                             supplier_filing_date: parsePortalDate(nt.upd_dt || section.supfildt),
-                            itc_availability: (nt.itc_avl === 'Y' || nt.itcavl === 'Y') ? 'Yes' : 'No',
+                            itc_availability: (nt.itc_avl === 'Y' || nt.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No',
                             itc_availability_reason: nt.reasons || nt.rsn || null,
                             applicable_tax_rate: det.rt?.toString() || null
                         });
@@ -276,7 +278,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                 taxable_value: cleanAmount(item.txval),
                 integrated_tax: cleanAmount(item.iamt || item.igst),
                 cess: cleanAmount(item.csamt || item.cess),
-                itc_availability: (item.itc_avl === 'Y' || item.itcavl === 'Y') ? 'Yes' : 'No',
+                itc_availability: (item.itc_avl === 'Y' || item.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No',
                 itc_availability_reason: item.reasons || item.rsn || null,
                 applicable_tax_rate: item.rt?.toString() || null
             });
@@ -284,8 +286,9 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
     }
 
     // 6. Process ISD
-    if (processedJson.isd) {
-        for (const section of processedJson.isd) {
+    const isdData = (processedJson.isd && processedJson.isd.length > 0) ? processedJson.isd : processedJson.isdc;
+    if (isdData && Array.isArray(isdData)) {
+        for (const section of isdData) {
             const gstinIsd = section.ctin;
             const isdName = section.trdnm;
             
@@ -302,7 +305,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                         central_tax: cleanAmount(doc.camt || doc.cgst),
                         state_ut_tax: cleanAmount(doc.samt || doc.sgst),
                         cess: cleanAmount(doc.csamt || doc.cess),
-                        itc_availability: (doc.itc_avl === 'Y' || doc.itcavl === 'Y') ? 'Yes' : 'No'
+                        itc_availability: (doc.itc_avl === 'Y' || doc.itcavl === 'Y' || gstrType.toUpperCase().includes('2A')) ? 'Yes' : 'No'
                     });
                 }
             }

@@ -196,7 +196,7 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
     const isGstr2a = gstrType.toUpperCase().includes('2A');
     const tablePrefix = isGstr2a ? 'gstr_2a' : 'gstr_2b';
     const isAmended = sheetName.endsWith('A');
-    const isCDNR = sheetName.includes('CDNR') || sheetName.includes('DN');
+    const isCDNR = sheetName.includes('CDNR') || sheetName.includes('DN') || sheetName.includes('CDN');
     // const results = processedDataFactory(); // We return flat array here, controller sorts it? No, let's return structured if possible?
     // Maintaining compatibility: Return array of objects with 'table_target' property?
     // Or just generic objects and let Controller map to tables.

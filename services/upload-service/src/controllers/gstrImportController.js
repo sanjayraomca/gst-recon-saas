@@ -2,6 +2,7 @@ const GSTRImportModel = require('../models/gstrImportModel');
 const GstinMasterService = require('../../../shared/src/services/gstinMasterService');
 const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
 const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
+const NormalizedGstr2aModel = require('../models/normalizedGstr2aModel');
 const minioClient = require('../utils/minioClient');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
@@ -290,6 +291,7 @@ class GSTRImportController {
 
                 if (['GSTR2B', 'GSTR-2B', 'GSTR2A', 'GSTR-2A'].includes(gstr_type.toUpperCase())) {
                     const isGstr2a = ['GSTR2A', 'GSTR-2A'].includes(gstr_type.toUpperCase());
+                    const NormalizedModel = isGstr2a ? NormalizedGstr2aModel : NormalizedGstr2bModel;
 
                     // Shared context passed to every normalizer mapper
                     const normCtx = {
@@ -310,7 +312,7 @@ class GSTRImportController {
 
                         console.log(`Processing sheet: ${sheetName} (${sName}) - Rows: ${jsonRows.length}`);
 
-                        if (sName.includes('B2B') || sName.includes('CDNR')) {
+                        if (sName.includes('B2B') || sName.includes('CDNR') || sName.includes('CDN') || sName.includes('DN')) {
                             const sheetRecords = processB2BSheet(jsonRows, null, return_period, sheetName, gstr_type);
                             console.log(`[DEBUG] Extracted ${sheetRecords.length} records from processor for ${sheetName}`);
 
@@ -460,12 +462,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertB2BInvoices2A(b2bInvoices)
                                     : await GSTRImportModel.batchInsertB2BInvoices(b2bInvoices);
 
-                                const normRows = NormalizedGstr2bModel.mapB2B(b2bInvoices, { 
+                                const normRows = NormalizedModel.mapB2B(b2bInvoices, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_b2b_invoices' : 'gstr_2b_b2b_invoices' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.b2b += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -487,12 +489,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertB2BAInvoices2A(b2baInvoices)
                                     : await GSTRImportModel.batchInsertB2BAInvoices(b2baInvoices);
 
-                                const normRows = NormalizedGstr2bModel.mapB2BA(b2baInvoices, { 
+                                const normRows = NormalizedModel.mapB2BA(b2baInvoices, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_b2ba_invoices' : 'gstr_2b_b2ba_invoices' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.b2ba += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -513,12 +515,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertCDNR2A(cdnrNotes)
                                     : await GSTRImportModel.batchInsertCDNR(cdnrNotes);
 
-                                const normRows = NormalizedGstr2bModel.mapCDNR(cdnrNotes, { 
+                                const normRows = NormalizedModel.mapCDNR(cdnrNotes, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_cdnr' : 'gstr_2b_cdnr' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.cdnr += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -550,12 +552,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertCDNRA2A(cdnraNotes)
                                     : await GSTRImportModel.batchInsertCDNRA(cdnraNotes);
 
-                                const normRows = NormalizedGstr2bModel.mapCDNRA(cdnraNotes, { 
+                                const normRows = NormalizedModel.mapCDNRA(cdnraNotes, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_cdnra' : 'gstr_2b_cdnra' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.cdnra += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -589,12 +591,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertIMPG2A(impgRecords)
                                     : await GSTRImportModel.batchInsertIMPG(impgRecords);
 
-                                const normRows = NormalizedGstr2bModel.mapIMPG(impgRecords, { 
+                                const normRows = NormalizedModel.mapIMPG(impgRecords, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_impg' : 'gstr_2b_impg' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.impg += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -631,12 +633,12 @@ class GSTRImportController {
                                     ? await GSTRImportModel.batchInsertISD2A(isdRecords)
                                     : await GSTRImportModel.batchInsertISD(isdRecords);
 
-                                const normRows = NormalizedGstr2bModel.mapISD(isdRecords, { 
+                                const normRows = NormalizedModel.mapISD(isdRecords, { 
                                     ...normCtx, 
                                     sourceTable: isGstr2a ? 'gstr_2a_isd' : 'gstr_2b_isd' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedGstr2bModel.batchInsert(normRows);
+                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.isd += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;

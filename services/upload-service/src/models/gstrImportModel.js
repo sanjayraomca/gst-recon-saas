@@ -445,6 +445,8 @@ class GSTRImportModel {
      */
     static async batchInsertToTable(tableName, records, conflictTarget, returningCol = 'id') {
         if (!records || records.length === 0) return { inserted: 0, addedInvoices: [] };
+        
+        console.log(`[GSTRImportModel] batchInsertToTable: ${tableName}, Records: ${records.length}`);
 
         const batchSize = 500;
         let totalInserted = 0;

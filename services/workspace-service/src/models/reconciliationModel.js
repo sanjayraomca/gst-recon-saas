@@ -130,11 +130,13 @@ class ReconciliationModel {
             const portalTypeLabel = is2a ? 'GSTR-2A' : 'GSTR-2B';
             const sourcePrefix = is2a ? 'gstr_2a_%' : 'gstr_2b_%';
 
+            const gstrTable = is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+
             await progressEmitter.emitProgress(runId, 30, `Fetching ${portalTypeLabel} invoices...`);
-            let gstrQuery = trx('normalized_gstr2b_invoices')
-                .select('normalized_gstr2b_invoices.*')
-                .where({ 'normalized_gstr2b_invoices.workspace_id': workspaceId })
-                .where('normalized_gstr2b_invoices.source_table', 'like', sourcePrefix);
+            let gstrQuery = trx(gstrTable)
+                .select(`${gstrTable}.*`)
+                .where({ [`${gstrTable}.workspace_id`]: workspaceId })
+                .where(`${gstrTable}.source_table`, 'like', sourcePrefix);
 
             // Filter by document date if we have the period details
             if (taxPeriod) {
@@ -147,23 +149,23 @@ class ReconciliationModel {
                     else if (taxPeriod.quarter === 4) quarterMonths = [1, 2, 3];
 
                     gstrQuery = gstrQuery
-                        .whereIn(trx.raw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date)'), quarterMonths)
-                        .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+                        .whereIn(trx.raw(`EXTRACT(MONTH FROM ${gstrTable}.document_date)`), quarterMonths)
+                        .whereRaw(`EXTRACT(YEAR FROM ${gstrTable}.document_date) = ?`, [taxPeriod.year]);
                 } else {
                     gstrQuery = gstrQuery
-                        .whereRaw('EXTRACT(MONTH FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.month])
-                        .whereRaw('EXTRACT(YEAR FROM normalized_gstr2b_invoices.document_date) = ?', [taxPeriod.year]);
+                        .whereRaw(`EXTRACT(MONTH FROM ${gstrTable}.document_date) = ?`, [taxPeriod.month])
+                        .whereRaw(`EXTRACT(YEAR FROM ${gstrTable}.document_date) = ?`, [taxPeriod.year]);
                 }
             }
 
-            const gstr2bInvoices = await gstrQuery;
-            console.log(`[MatchingTask] Fetched ${gstr2bInvoices.length} ${portalTypeLabel} invoices`);
+            const gstrInvoices = await gstrQuery;
+            console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} invoices`);
 
 
             // 4. Perform matching
             await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
             const matchResults = [];
-            const matchedGstr2bIds = new Set();
+            const matchedGstrIds = new Set();
             const unmatchedPurchases = [];
             let matchedCount = 0;
             let mismatchedCount = 0;
@@ -171,7 +173,7 @@ class ReconciliationModel {
 
             // Step 0: Include all invoices for matching (bypassing strict GSTIN filter for IMPG)
             const validPurchaseInvoices = purchaseInvoices;
-            const validGstr2bInvoices = gstr2bInvoices;
+            const validGstrInvoices = gstrInvoices;
 
             const mapCategory = (booksType) => {
                 const type = (booksType || '').toString().toUpperCase();
@@ -187,7 +189,8 @@ class ReconciliationModel {
                     recon_run_id: runId,
                     workspace_id: workspaceId,
                     purchase_invoice_id: null,
-                    gstr2b_invoice_id: null,
+                    gstr2b_invoice_id: is2a ? null : (overrides.gstr2b_invoice_id || null),
+                    gstr2a_invoice_id: is2a ? (overrides.gstr2a_invoice_id || null) : null,
                     match_status: 'unmatched',
                     match_score: 0.00,
                     match_confidence: 'LOW',
@@ -222,14 +225,14 @@ class ReconciliationModel {
                 const pCategory = mapCategory(purchaseInv.voucher_type);
 
                 let matchType = null;
-                const match = validGstr2bInvoices.find(gstr2bInv => {
-                    if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
+                const match = validGstrInvoices.find(gstrInv => {
+                    if (matchedGstrIds.has(gstrInv.id)) return false;
 
-                    const gCategory = gstr2bInv.document_category || 'INVOICE';
+                    const gCategory = gstrInv.document_category || 'INVOICE';
 
                     // 1. GSTIN Match (Bypass for IMPORT)
                     const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
-                    const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    const gGstin = this.normalizeGstin(gstrInv.supplier_gstin);
                     const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
 
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
@@ -238,19 +241,19 @@ class ReconciliationModel {
                     if (!this.areCategoriesCompatible(pCategory, gCategory)) return false;
 
                     // 3. Invoice Number Match (Including Amendment check)
-                    const gNormalizedInv = this.normalizeInvoiceNumber(gstr2bInv.document_number_clean);
-                    const gOriginalInv = this.normalizeInvoiceNumber(gstr2bInv.original_invoice_number);
+                    const gNormalizedInv = this.normalizeInvoiceNumber(gstrInv.document_number_clean);
+                    const gOriginalInv = this.normalizeInvoiceNumber(gstrInv.original_invoice_number);
                     const invMatch = (pNormalizedInv === gNormalizedInv) || (gOriginalInv && pNormalizedInv === gOriginalInv);
 
                     if (!invMatch) return false;
 
-                    const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
-                    const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = (parseFloat(gstr2bInv.igst) || 0) +
-                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
-                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
-                        (parseFloat(gstr2bInv.cess) || 0);
-                    const gDate = new Date(gstr2bInv.document_date);
+                    const gNet = isNaN(parseFloat(gstrInv.document_value)) ? 0 : parseFloat(gstrInv.document_value);
+                    const gTaxable = isNaN(parseFloat(gstrInv.taxable_value)) ? 0 : parseFloat(gstrInv.taxable_value);
+                    const gTax = (parseFloat(gstrInv.igst) || 0) +
+                        (parseFloat(gstrInv.central_tax || gstrInv.cgst) || 0) +
+                        (parseFloat(gstrInv.state_ut_tax || gstrInv.sgst) || 0) +
+                        (parseFloat(gstrInv.cess) || 0);
+                    const gDate = new Date(gstrInv.document_date);
 
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
                     const exactDate = dateDiff === 0;
@@ -260,7 +263,7 @@ class ReconciliationModel {
                     const exactTax = Math.abs(Math.abs(pTax) - Math.abs(gTax)) < 0.01;
 
                     // Store calculated tax on the object for later use in result saving
-                    gstr2bInv._calculated_tax = gTax;
+                    gstrInv._calculated_tax = gTax;
 
                     // Case 1: Exact Match
                     if (exactDate && exactTaxable && exactTax) {
@@ -285,7 +288,7 @@ class ReconciliationModel {
                             if (!exactTax) r.push(`tax ±${Math.abs(diffTax).toFixed(2)} rs`);
                             if (!exactDate) r.push(`date ±${Math.abs(diffDays)} days`);
                             if (!exactTaxable) r.push(`taxable ±${Math.abs(diffTaxable).toFixed(2)} rs`);
-                            gstr2bInv._tolerance_reason = `Matched within tolerance: ${r.join(', ')}`;
+                            gstrInv._tolerance_reason = `Matched within tolerance: ${r.join(', ')}`;
                         }
                         return true;
                     }
@@ -294,7 +297,7 @@ class ReconciliationModel {
                 });
 
                 if (match) {
-                    matchedGstr2bIds.add(match.id);
+                    matchedGstrIds.add(match.id);
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
 
                     let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
@@ -303,7 +306,7 @@ class ReconciliationModel {
 
                     matchResults.push(createMatchResult({
                         purchase_invoice_id: purchaseInv.id,
-                        gstr2b_invoice_id: match.id,
+                        [is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id']: match.id,
                         match_status: finalStatus,
                         match_score: finalStatus === 'matched' ? 100.00 : (finalStatus === 'not_eligible' ? 0 : 70.00),
                         match_confidence: finalStatus === 'matched' ? 'HIGH' : 'MEDIUM',
@@ -334,14 +337,14 @@ class ReconciliationModel {
                 const pCategory = mapCategory(purchaseInv.voucher_type);
 
                 let matchType = null;
-                const match = validGstr2bInvoices.find(gstr2bInv => {
-                    if (matchedGstr2bIds.has(gstr2bInv.id)) return false;
+                const match = validGstrInvoices.find(gstrInv => {
+                    if (matchedGstrIds.has(gstrInv.id)) return false;
 
-                    const gCategory = gstr2bInv.document_category || 'INVOICE';
+                    const gCategory = gstrInv.document_category || 'INVOICE';
 
                     // 1. GSTIN Match (Bypass for IMPORT)
                     const pGstin = this.normalizeGstin(purchaseInv.supplier_gstin);
-                    const gGstin = this.normalizeGstin(gstr2bInv.supplier_gstin);
+                    const gGstin = this.normalizeGstin(gstrInv.supplier_gstin);
                     const gstinMatch = (pGstin && gGstin && pGstin === gGstin);
 
                     if (!gstinMatch && gCategory !== 'IMPORT') return false;
@@ -350,20 +353,20 @@ class ReconciliationModel {
                     if (!this.areCategoriesCompatible(pCategory, gCategory)) return false;
 
                     // 3. Amount + Date Match (Fuzzy)
-                    const gNet = isNaN(parseFloat(gstr2bInv.document_value)) ? 0 : parseFloat(gstr2bInv.document_value);
-                    const gTaxable = isNaN(parseFloat(gstr2bInv.taxable_value)) ? 0 : parseFloat(gstr2bInv.taxable_value);
-                    const gTax = (parseFloat(gstr2bInv.igst) || 0) +
-                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
-                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
-                        (parseFloat(gstr2bInv.cess) || 0);
-                    const gDate = new Date(gstr2bInv.document_date);
+                    const gNet = isNaN(parseFloat(gstrInv.document_value)) ? 0 : parseFloat(gstrInv.document_value);
+                    const gTaxable = isNaN(parseFloat(gstrInv.taxable_value)) ? 0 : parseFloat(gstrInv.taxable_value);
+                    const gTax = (parseFloat(gstrInv.igst) || 0) +
+                        (parseFloat(gstrInv.central_tax || gstrInv.cgst) || 0) +
+                        (parseFloat(gstrInv.state_ut_tax || gstrInv.sgst) || 0) +
+                        (parseFloat(gstrInv.cess) || 0);
+                    const gDate = new Date(gstrInv.document_date);
 
                     const dateDiff = Math.abs((pDate - gDate) / (1000 * 60 * 60 * 24));
                     const diffTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable));
                     const diffTax = Math.abs(Math.abs(pTax) - Math.abs(gTax));
 
                     // Store calculated tax
-                    gstr2bInv._calculated_tax = gTax;
+                    gstrInv._calculated_tax = gTax;
 
                     // Thresholds for fuzzy matching
                     const dateNear = dateDiff <= 30; // Within 30 days
@@ -372,7 +375,7 @@ class ReconciliationModel {
 
                     if (dateNear && taxableMatch && taxMatch) {
                         matchType = (dateDiff === 0 && diffTaxable < 0.01) ? 'PARTIAL_MATCH' : 'PARTIAL_MATCH';
-                        gstr2bInv._partial_reason = `Fuzzy Match: Invoice number mismatch, but matched by amount and date (+/- 30 days)`;
+                        gstrInv._partial_reason = `Fuzzy Match: Invoice number mismatch, but matched by amount and date (+/- 30 days)`;
                         return true;
                     }
 
@@ -380,7 +383,7 @@ class ReconciliationModel {
                 });
 
                 if (match) {
-                    matchedGstr2bIds.add(match.id);
+                    matchedGstrIds.add(match.id);
                     const isEligible = match.itc_available !== false && match.itc_eligibility !== 'No' && match.itc_eligibility !== 'N';
 
                     let finalStatus = isEligible ? matchType.toLowerCase() : 'not_eligible';
@@ -389,7 +392,7 @@ class ReconciliationModel {
 
                     matchResults.push(createMatchResult({
                         purchase_invoice_id: purchaseInv.id,
-                        gstr2b_invoice_id: match.id,
+                        [is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id']: match.id,
                         match_status: finalStatus,
                         match_score: finalStatus === 'matched' ? 90.00 : (finalStatus === 'partial_match' ? 80.00 : 60.00),
                         match_confidence: 'LOW',
@@ -429,16 +432,16 @@ class ReconciliationModel {
             }
 
             // 4d. Unmatched GSTR-2B invoices
-            for (const gstr2bInv of validGstr2bInvoices) {
-                if (!matchedGstr2bIds.has(gstr2bInv.id)) {
-                    const gTaxAmount = (parseFloat(gstr2bInv.igst) || 0) +
-                        (parseFloat(gstr2bInv.central_tax || gstr2bInv.cgst) || 0) +
-                        (parseFloat(gstr2bInv.state_ut_tax || gstr2bInv.sgst) || 0) +
-                        (parseFloat(gstr2bInv.cess) || 0);
-                    const isEligible = gstr2bInv.itc_available !== false && gstr2bInv.itc_eligibility !== 'No' && gstr2bInv.itc_eligibility !== 'N';
+            for (const gstrInv of validGstrInvoices) {
+                if (!matchedGstrIds.has(gstrInv.id)) {
+                    const gTaxAmount = (parseFloat(gstrInv.igst) || 0) +
+                        (parseFloat(gstrInv.central_tax || gstrInv.cgst) || 0) +
+                        (parseFloat(gstrInv.state_ut_tax || gstrInv.sgst) || 0) +
+                        (parseFloat(gstrInv.cess) || 0);
+                    const isEligible = gstrInv.itc_available !== false && gstrInv.itc_eligibility !== 'No' && gstrInv.itc_eligibility !== 'N';
 
                     matchResults.push(createMatchResult({
-                        gstr2b_invoice_id: gstr2bInv.id,
+                        [is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id']: gstrInv.id,
                         match_status: isEligible ? 'missing_in_books' : 'not_eligible',
                         match_score: 0.00,
                         match_confidence: 'HIGH',
@@ -459,15 +462,18 @@ class ReconciliationModel {
 
                 // collection of invoice IDs to clear previous results
                 const purchaseIds = matchResults.map(r => r.purchase_invoice_id).filter(id => id);
-                const gstr2bIds = matchResults.map(r => r.gstr2b_invoice_id).filter(id => id);
+                const gstrIds = matchResults.map(r => r.gstr2b_invoice_id).filter(id => id);
 
                 // --- 1. Prevent Duplicates: Delete existing results for these invoices in this workspace ---
-                if (purchaseIds.length > 0 || gstr2bIds.length > 0) {
+                if (purchaseIds.length > 0 || gstrIds.length > 0) {
                     const deleteQuery = trx('reconciliation_results')
                         .where('workspace_id', workspaceId)
                         .where(function () {
                             if (purchaseIds.length > 0) this.whereIn('purchase_invoice_id', purchaseIds);
-                            if (gstr2bIds.length > 0) this.orWhereIn('gstr2b_invoice_id', gstr2bIds);
+                            if (gstrIds.length > 0) {
+                                this.orWhereIn('gstr2b_invoice_id', gstrIds)
+                                    .orWhereIn('gstr2a_invoice_id', gstrIds);
+                            }
                         });
 
                     const deletedCount = await deleteQuery.delete();
@@ -485,14 +491,14 @@ class ReconciliationModel {
                 const tenantId = workspaceData?.tenant_id || workspaceId;
 
                 const statusRows = insertedResults
-                    .filter(r => r.purchase_invoice_id || r.gstr2b_invoice_id)
+                    .filter(r => r.purchase_invoice_id || r.gstr2b_invoice_id || r.gstr2a_invoice_id)
                     .map(r => ({
                         workspace_id: workspaceId,
                         tenant_id: tenantId,
                         book_data_id: r.purchase_invoice_id || null,
                         book_data_type: r.purchase_invoice_id ? 'purchase_voucher' : null,
-                        gstr_data_id: r.gstr2b_invoice_id || null,
-                        gstr_type: r.gstr2b_invoice_id ? 'gstr2b' : null,
+                        gstr_data_id: r.gstr2b_invoice_id || r.gstr2a_invoice_id || null,
+                        gstr_type: (r.gstr2b_invoice_id || r.gstr2a_invoice_id) ? (r.gstr2a_invoice_id ? 'gstr2a' : 'gstr2b') : null,
                         recon_status: 'pending',
                         status: 'Active',
                         // added_date: knex.fn.now(), // Only for new records
@@ -513,7 +519,7 @@ class ReconciliationModel {
                             .where({ workspace_id: workspaceId, book_data_id: row.book_data_id })
                             .first()
                         : await trx('reconciliation_status')
-                            .where({ workspace_id: workspaceId, gstr_data_id: row.gstr_data_id })
+                            .where({ workspace_id: workspaceId, gstr2b_invoice_id: row.gstr2b_invoice_id })
                             .first();
 
                     if (existing) {
@@ -522,7 +528,7 @@ class ReconciliationModel {
                             .where({ id: existing.id })
                             .update({
                                 book_data_id: row.book_data_id,
-                                gstr_data_id: row.gstr_data_id,
+                                gstr2b_invoice_id: row.gstr2b_invoice_id,
                                 extra_info: row.extra_info,
                                 updated_date: row.updated_date
                                 // Note: we DON'T override recon_status if it's already claimed/mismatched
@@ -541,14 +547,14 @@ class ReconciliationModel {
                 .where({ id: runId })
                 .update({
                     status: 'COMPLETED',
-                    total_invoices: purchaseInvoices.length + gstr2bInvoices.length,
+                    total_invoices: purchaseInvoices.length + gstrInvoices.length,
                     matched_count: matchedCount,
                     mismatched_count: mismatchedCount,
                     missing_count: missingCount,
                     completed_at: knex.fn.now(),
                     result_summary: JSON.stringify({
                         purchase_vouchers: purchaseInvoices.length,
-                        normalized_gstr2b_invoices: gstr2bInvoices.length,
+                        [is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices']: gstrInvoices.length,
                         matched: matchedCount,
                         mismatched: mismatchedCount,
                         missing: missingCount
@@ -628,10 +634,14 @@ class ReconciliationModel {
         const run = await this.getRunById(workspaceId, runId);
         if (!run) return null;
 
+        const is2a = run.run_type === 'PURCHASE_2A';
+        const gstrTable = is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+        const gstrIdCol = is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
+
         let query = knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
-            // Join with tax_periods using purchase_vouchers fk or normalized_gstr2b_invoices period_code
+            .leftJoin(`${gstrTable} as gi`, `rr.${gstrIdCol}`, 'gi.id')
+            // Join with tax_periods using purchase_vouchers fk or normalized_gstr2b_invoices/normalized_gstr2a_invoices period_code
             .leftJoin('tax_periods as tp', function () {
                 this.on('tp.id', '=', 'pi.tax_period_id')
                     .orOn(function () {
@@ -643,7 +653,7 @@ class ReconciliationModel {
             .leftJoin('financial_years as fymas', 'tp.fy_id', 'fymas.id')
             // Join with reconciliation_status table to get the workflow status
             .leftJoin('reconciliation_status as rs_pi', 'rr.purchase_invoice_id', 'rs_pi.book_data_id')
-            .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id')
+            .leftJoin('reconciliation_status as rs_gi', `rr.${gstrIdCol}`, 'rs_gi.gstr_data_id')
             .leftJoin('supplier_master as sm', function() {
                 this.on('sm.gstin', '=', knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin)'))
                     .andOn('sm.workspace_id', '=', 'rr.workspace_id');
@@ -1076,7 +1086,7 @@ class ReconciliationModel {
 
             // Row identification
             'pi.id as purchase_invoice_id',
-            'gi.id as gstr2b_invoice_id',
+            'gi.id as gstr_data_id',
 
             // Supplier mapping
             knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
@@ -1408,7 +1418,7 @@ class ReconciliationModel {
         // ── Period-grouped aggregation ───────────────────────────────────────────
         const agg = await knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr_data_id', 'gi.id')
             .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
             .where('rr.workspace_id', workspaceId)
             .modify(q => {
@@ -1478,7 +1488,7 @@ class ReconciliationModel {
         // ── Invoice-level rows ───────────────────────────────────────────────────
         const invoices = await knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr_data_id', 'gi.id')
             .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
             .where('rr.workspace_id', workspaceId)
             .modify(q => {

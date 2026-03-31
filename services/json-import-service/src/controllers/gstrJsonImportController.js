@@ -1,5 +1,6 @@
 const GSTRImportModel = require('../models/gstrImportModel');
 const NormalizedGstr2bModel = require('../models/normalizedGstr2bModel');
+const NormalizedGstr2aModel = require('../models/normalizedGstr2aModel');
 const SupplierMasterService = require('../../../shared/src/services/supplierMasterService');
 const CustomerMasterService = require('../../../shared/src/services/customerMasterService');
 const { processGstrJson } = require('../utils/gstrJsonProcessors');
@@ -207,9 +208,13 @@ class GstrJsonImportController {
             const allDuplicateInvoices = [];
             const sectionCounters = { b2b: 0, b2ba: 0, cdnr: 0, cdnra: 0, impg: 0, isd: 0, normalized: 0 };
             const normCtx = {
+                tenantId: finalTenantId,
+                workspaceId: workspaceId,
+                importFilingId: importRecord.import_filing_id,
                 returnPeriod: returnPeriod
             };
             const isGstr2a = ['GSTR2A', 'GSTR-2A'].includes(gstrType.toUpperCase());
+            const NormalizedModel = isGstr2a ? NormalizedGstr2aModel : NormalizedGstr2bModel;
 
             // Group by target table
             const tableGroups = flatRecords.reduce((acc, r) => {
@@ -242,65 +247,66 @@ class GstrJsonImportController {
                 let result;
                 let keyField = 'invoice_number';
 
-                if (table.includes('b2b_invoices')) {
-                    keyField = 'invoice_number';
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, invoice_number, return_period)', keyField);
-                    sectionCounters.b2b += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapB2B(records, { 
-                        ...normCtx, 
-                        sourceTable: isGstr2a ? 'gstr_2a_b2b_invoices' : 'gstr_2b_b2b_invoices' 
-                    });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
-                    sectionCounters.normalized += normResult.inserted;
-                } else if (table.includes('b2ba_invoices')) {
+                if (table.includes('b2ba_invoices')) {
                     keyField = 'revised_invoice_number';
                     result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_invoice_number, revised_invoice_number, return_period)', keyField);
                     sectionCounters.b2ba += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapB2BA(records, { 
+                    const normRows = NormalizedModel.mapB2BA(records, { 
                         ...normCtx, 
                         sourceTable: isGstr2a ? 'gstr_2a_b2ba_invoices' : 'gstr_2b_b2ba_invoices' 
                     });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
+                    const normResult = await NormalizedModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
-                } else if (table.includes('cdnr')) {
-                    keyField = 'note_number';
-                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, note_number, return_period)', keyField);
-                    sectionCounters.cdnr += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapCDNR(records, { 
+                } else if (table.includes('b2b_invoices')) {
+                    keyField = 'invoice_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, invoice_number, return_period)', keyField);
+                    sectionCounters.b2b += result.inserted;
+                    const normRows = NormalizedModel.mapB2B(records, { 
                         ...normCtx, 
-                        sourceTable: isGstr2a ? 'gstr_2a_cdnr' : 'gstr_2b_cdnr' 
+                        sourceTable: isGstr2a ? 'gstr_2a_b2b_invoices' : 'gstr_2b_b2b_invoices' 
                     });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
+                    const normResult = await NormalizedModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('cdnra')) {
                     keyField = 'revised_note_number';
                     result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, original_note_number, revised_note_number, return_period)', keyField);
                     sectionCounters.cdnra += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapCDNRA(records, { 
+                    const normRows = NormalizedModel.mapCDNRA(records, { 
                         ...normCtx, 
                         sourceTable: isGstr2a ? 'gstr_2a_cdnra' : 'gstr_2b_cdnra' 
                     });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
+                    const normResult = await NormalizedModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
-                } else if (table.includes('impg')) {
+                } else if (table.includes('cdnr')) {
+                    keyField = 'note_number';
+                    result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, note_number, return_period)', keyField);
+                    sectionCounters.cdnr += result.inserted;
+                    const normRows = NormalizedModel.mapCDNR(records, { 
+                        ...normCtx, 
+                        sourceTable: isGstr2a ? 'gstr_2a_cdnr' : 'gstr_2b_cdnr' 
+                    });
+                    const normResult = await NormalizedModel.batchInsert(normRows);
+                    sectionCounters.normalized += normResult.inserted;
+                }
+ else if (table.includes('impg')) {
                     keyField = 'boe_number';
                     result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, boe_number, port_code, return_period)', keyField);
                     sectionCounters.impg += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapIMPG(records, { 
+                    const normRows = NormalizedModel.mapIMPG(records, { 
                         ...normCtx, 
                         sourceTable: isGstr2a ? 'gstr_2a_impg' : 'gstr_2b_impg' 
                     });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
+                    const normResult = await NormalizedModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 } else if (table.includes('isd')) {
                     keyField = 'document_number';
                     result = await GSTRImportModel.batchInsertToTable(table, strippedRecords, '(tenant_id, gstin_isd, document_number, return_period)', keyField);
                     sectionCounters.isd += result.inserted;
-                    const normRows = NormalizedGstr2bModel.mapISD(records, { 
+                    const normRows = NormalizedModel.mapISD(records, { 
                         ...normCtx, 
                         sourceTable: isGstr2a ? 'gstr_2a_isd' : 'gstr_2b_isd' 
                     });
-                    const normResult = await NormalizedGstr2bModel.batchInsert(normRows);
+                    const normResult = await NormalizedModel.batchInsert(normRows);
                     sectionCounters.normalized += normResult.inserted;
                 }
 
