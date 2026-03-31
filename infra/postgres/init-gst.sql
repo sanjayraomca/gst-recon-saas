@@ -1740,6 +1740,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
     gstr2b_invoice_id UUID REFERENCES normalized_gstr2b_invoices(id),
     gstr2a_invoice_id UUID REFERENCES normalized_gstr2a_invoices(id),
+    gstr2a_source_id UUID REFERENCES normalized_gstr2a_invoices(id),
     
     match_status VARCHAR(50) NOT NULL,
     match_score DECIMAL(5,2),
