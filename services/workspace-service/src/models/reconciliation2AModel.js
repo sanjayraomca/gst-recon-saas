@@ -400,11 +400,13 @@ class Reconciliation2AModel {
             .leftJoin('reconciliation_runs as run', 'rr.recon_run_id', 'run.id')
             .leftJoin('normalized_gstr2a_invoices as gi', 'rr.gstr2a_invoice_id', 'gi.id')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2a_invoices as sa', 'rr.gstr2a_source_id', 'sa.id')
             .leftJoin('reconciliation_status_gst2a_vs_book as rs', function () {
                 this.on('rr.workspace_id', '=', 'rs.workspace_id')
                     .andOn(function () {
                         this.on('rr.purchase_invoice_id', '=', 'rs.book_data_id')
-                            .orOn('rr.gstr2a_invoice_id', '=', 'rs.gstr_data_id');
+                            .orOn('rr.gstr2a_invoice_id', '=', 'rs.gstr_data_id')
+                            .orOn('rr.gstr2a_source_id', '=', 'rs.book_data_id');
                     });
             })
             .where('rr.workspace_id', workspaceId);
@@ -431,17 +433,19 @@ class Reconciliation2AModel {
             query.where(function () {
                 this.where('pi.supplier_name', 'ilike', `%${search}%`)
                     .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('sa.supplier_name', 'ilike', `%${search}%`)
                     .orWhere('pi.supplier_invoice_no', 'ilike', `%${search}%`)
-                    .orWhere('gi.document_number_raw', 'ilike', `%${search}%`);
+                    .orWhere('gi.document_number_raw', 'ilike', `%${search}%`)
+                    .orWhere('sa.document_number_raw', 'ilike', `%${search}%`);
             });
         }
 
         // Totals
         const totalsResult = await query.clone().clearSelect().select(
             knex.raw('COUNT(*) as total_count'),
-            knex.raw('SUM(COALESCE(pi.taxable_total, 0)) as book_taxable_total'),
+            knex.raw('SUM(COALESCE(pi.taxable_total, sa.taxable_value, 0)) as book_taxable_total'),
             knex.raw('SUM(COALESCE(gi.taxable_value, 0)) as gstr_taxable_total'),
-            knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)) as book_tax_total'),
+            knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0) + COALESCE(sa.total_tax, 0)) as book_tax_total'),
             knex.raw('SUM(COALESCE(gi.total_tax, 0)) as gstr_tax_total')
         ).first();
 
@@ -449,24 +453,30 @@ class Reconciliation2AModel {
 
         query.select(
             'rr.*',
-            'pi.supplier_invoice_no as purchase_invoice_number',
-            'pi.supplier_invoice_date as purchase_invoice_date',
-            'pi.supplier_name as purchase_supplier_name',
-            'pi.supplier_gstin as purchase_gstin',
+            knex.raw('COALESCE(pi.supplier_invoice_no, sa.document_number_raw) as purchase_invoice_number'),
+            knex.raw('COALESCE(pi.supplier_invoice_date, sa.document_date) as purchase_invoice_date'),
+            knex.raw('COALESCE(pi.supplier_name, sa.supplier_name) as purchase_supplier_name'),
+            knex.raw('COALESCE(pi.supplier_gstin, sa.supplier_gstin) as purchase_gstin'),
             'gi.document_number_clean as gstr_invoice_number',
             'gi.document_number_raw as gstr_invoice_number_raw',
             'gi.document_date as gstr_invoice_date',
-            knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
-            knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
+            knex.raw('COALESCE(pi.supplier_gstin, sa.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
+            knex.raw('COALESCE(pi.supplier_name, sa.supplier_name, gi.supplier_name) as supplier_name'),
             'gi.taxable_value as gstr_taxable',
             'gi.total_tax as gstr_tax',
             'gi.igst as gstr_igst',
             'gi.cgst as gstr_cgst',
             'gi.sgst as gstr_sgst',
             'gi.cess as gstr_cess',
-            'pi.taxable_total as book_taxable',
-            knex.raw('(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)) as book_tax'),
-            'pi.net_amount as book_invoice_total',
+            knex.raw('COALESCE(pi.taxable_total, sa.taxable_value) as purchase_taxable'),
+            knex.raw('(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0) + COALESCE(sa.total_tax, 0)) as purchase_tax'),
+            knex.raw('COALESCE(pi.total_igst_amount, sa.igst) as purchase_igst'),
+            knex.raw('COALESCE(pi.total_cgst_amount, sa.cgst) as purchase_cgst'),
+            knex.raw('COALESCE(pi.total_sgst_amount, sa.sgst) as purchase_sgst'),
+            knex.raw('COALESCE(pi.total_cess_amount, sa.cess) as purchase_cess'),
+            knex.raw('COALESCE(pi.net_amount, sa.total_tax + sa.taxable_value) as purchase_invoice_total'),
+            knex.raw('COALESCE(pi.supplier_invoice_no, sa.document_number_raw) as book_vchr_no'),
+            knex.raw('COALESCE(pi.gstr_category, pi.source_section, sa.source_section, gi.source_section) as gstr_category'),
             'gi.itc_available as gstr2a_itc_available',
             'gi.itc_eligibility as gstr2a_itc_eligibility',
             'gi.itc_reason as gstr2a_itc_reason',
@@ -495,9 +505,9 @@ class Reconciliation2AModel {
             pagination: { total, page: parseInt(page), page_size: limit, total_pages: Math.ceil(total / limit) },
             summary: {
                 totals: {
-                    book_taxable: parseFloat(totalsResult.book_taxable_total || 0),
+                    purchase_taxable: parseFloat(totalsResult.book_taxable_total || 0),
                     gstr_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
-                    book_tax: parseFloat(totalsResult.book_tax_total || 0),
+                    purchase_tax: parseFloat(totalsResult.book_tax_total || 0),
                     gstr_tax: parseFloat(totalsResult.gstr_tax_total || 0)
                 }
             }
@@ -505,34 +515,47 @@ class Reconciliation2AModel {
     }
 
     static async getRunTaxSummary(workspaceId, runId, filters = {}) {
-        const query = knex('reconciliation_results as rr')
+        let aggQuery = knex('reconciliation_results as rr')
             .leftJoin('reconciliation_runs as run', 'rr.recon_run_id', 'run.id')
             .leftJoin('normalized_gstr2a_invoices as gi', 'rr.gstr2a_invoice_id', 'gi.id')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2a_invoices as sa', 'rr.gstr2a_source_id', 'sa.id')
             .where('rr.workspace_id', workspaceId);
 
         if (runId !== 'all') {
-            query.where('rr.recon_run_id', runId);
+            aggQuery.where('rr.recon_run_id', runId);
         } else {
-            query.whereIn('run.run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B']);
+            aggQuery.whereIn('run.run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B']);
         }
 
-        const totalsResult = await query.clearSelect().select(
-            knex.raw('SUM(COALESCE(pi.taxable_total, 0)) as book_taxable'),
+        const totalsResult = await aggQuery.select(
+            knex.raw('SUM(COALESCE(pi.taxable_total, sa.taxable_value, 0)) as purchase_taxable'),
             knex.raw('SUM(COALESCE(gi.taxable_value, 0)) as gstr_taxable'),
-            knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)) as book_tax'),
-            knex.raw('SUM(COALESCE(gi.total_tax, 0)) as gstr_tax')
+            knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0) + COALESCE(sa.total_tax, 0)) as purchase_tax'),
+            knex.raw('SUM(COALESCE(gi.total_tax, 0)) as gstr_tax'),
+            knex.raw('SUM(COALESCE(pi.total_cgst_amount, sa.cgst, 0)) as purchase_cgst'),
+            knex.raw('SUM(COALESCE(pi.total_sgst_amount, sa.sgst, 0)) as purchase_sgst'),
+            knex.raw('SUM(COALESCE(pi.total_cess_amount, sa.cess, 0)) as purchase_cess'),
+            knex.raw('SUM(COALESCE(gi.cgst, 0)) as gstr_cgst'),
+            knex.raw('SUM(COALESCE(gi.sgst, 0)) as gstr_sgst'),
+            knex.raw('SUM(COALESCE(gi.cess, 0)) as gstr_cess')
         ).first();
 
         return {
             grand: {
                 books: {
-                    taxable: parseFloat(totalsResult.book_taxable || 0),
-                    tax: parseFloat(totalsResult.book_tax || 0)
+                    purchase_taxable: parseFloat(totalsResult.purchase_taxable || 0),
+                    purchase_tax: parseFloat(totalsResult.purchase_tax || 0),
+                    purchase_cgst: parseFloat(totalsResult.purchase_cgst || 0),
+                    purchase_sgst: parseFloat(totalsResult.purchase_sgst || 0),
+                    purchase_cess: parseFloat(totalsResult.purchase_cess || 0)
                 },
                 gstr2a: {
-                    taxable: parseFloat(totalsResult.gstr_taxable || 0),
-                    tax: parseFloat(totalsResult.gstr_tax || 0)
+                    gstr_taxable: parseFloat(totalsResult.gstr_taxable || 0),
+                    gstr_tax: parseFloat(totalsResult.gstr_tax || 0),
+                    gstr_cgst: parseFloat(totalsResult.gstr_cgst || 0),
+                    gstr_sgst: parseFloat(totalsResult.gstr_sgst || 0),
+                    gstr_cess: parseFloat(totalsResult.gstr_cess || 0)
                 }
             },
             periods: [] // Period-wise breakdown can be added if needed

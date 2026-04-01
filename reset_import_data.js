@@ -1,6 +1,7 @@
 const { Client } = require('pg');
 const { Client: MinioClient } = require('minio');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const dbConfig = {
     // Override docker hostname with localhost for host execution
