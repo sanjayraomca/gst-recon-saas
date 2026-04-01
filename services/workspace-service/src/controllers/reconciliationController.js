@@ -1,4 +1,5 @@
 const ReconciliationModel = require('../models/reconciliationModel');
+const BookDataModel = require('../models/bookDataModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const progressEmitter = require('../utils/progressEmitter');
@@ -88,6 +89,34 @@ const getRun = async (req, res) => {
     }
 };
 
+/**
+ * Get B2B purchase vouchers for the reconciliation dashboard (Book Data tab)
+ */
+const getReconBookData = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        if (!workspaceId) {
+            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        }
+
+        const filters = {
+            gstin_id: req.query.gstin_id,
+            fy_id: req.query.fy_id,
+            month: req.query.month,
+            quarter: req.query.quarter,
+            search: req.query.search,
+            page: parseInt(req.query.page) || 1,
+            page_size: parseInt(req.query.page_size) || 25
+        };
+
+        const result = await BookDataModel.getReconBookData(workspaceId, filters);
+        return successResponse(res, result);
+    } catch (error) {
+        console.error('[Get Recon Book Data Error]:', error);
+        return errorResponse(res, error.message || 'Failed to fetch book data');
+    }
+};
+
 const getRunResults = async (req, res) => {
     try {
         const workspaceId = req.headers['x-workspace-id'];
@@ -168,5 +197,6 @@ module.exports = {
     getRun,
     getRunResults,
     getRunProgress,
-    getRunTaxSummary
+    getRunTaxSummary,
+    getReconBookData
 };

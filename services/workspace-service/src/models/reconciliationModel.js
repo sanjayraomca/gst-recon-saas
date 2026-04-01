@@ -1249,15 +1249,15 @@ class ReconciliationModel {
         const totalsQuery = query.clone()
             .clearSelect()
             .select(
-                knex.raw(`SUM(gi.taxable_value) as gstr2_taxable_total`),
+                knex.raw(`SUM(gi.taxable_value) as gstr2b_taxable_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)) as purchase_taxable_total`),
-                knex.raw(`SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2_tax_total`),
+                knex.raw(`SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2b_tax_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.total_tax' : 
                           (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' : 
-                                  '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as purchase_tax_total`),
-                knex.raw('SUM(gi.cgst) as gstr2_cgst_total'),
-                knex.raw('SUM(gi.sgst) as gstr2_sgst_total'),
-                knex.raw('SUM(gi.cess) as gstr2_cess_total'),
+                                   '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as purchase_tax_total`),
+                knex.raw('SUM(gi.cgst) as gstr2b_cgst_total'),
+                knex.raw('SUM(gi.sgst) as gstr2b_sgst_total'),
+                knex.raw('SUM(gi.cess) as gstr2b_cess_total'),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0)) as purchase_cgst_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0)) as purchase_sgst_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)) as purchase_cess_total`),
@@ -1361,14 +1361,13 @@ class ReconciliationModel {
             is2aVs2b ? knex.raw('NULL as purchase_itc_eligible') : 'pi.itc_eligible as purchase_itc_eligible',
             is2aVs2b ? 'sa.place_of_supply as purchase_pos' : 'pi.place_of_supply as purchase_pos',
             is2aVs2b ? 'sa.source_section as purchase_source_section' : 'pi.source_section as purchase_source_section',
-            is2aVs2b ? knex.raw('NULL as gstr_category') : 'pi.gstr_category',
-
             // Portal mapping
             'gi.document_number_clean as gstr_invoice_number',
             'gi.document_date as gstr_invoice_date',
             'gi.document_value as gstr_invoice_total',
             'gi.taxable_value as gstr_taxable',
             knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr_tax'),
+            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax'),
             knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr_tax_rate'),
             'gi.applicable_tax_rate_percent as gstr_tax_rate_percent',
             'gi.itc_available as gstr_itc_available',
@@ -1419,6 +1418,7 @@ class ReconciliationModel {
             'gstr2b_invoice_total':  'gi.document_value',
             'gstr2b_taxable':        'gi.taxable_value',
             'gstr2b_tax':            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr2b_tax_total':      knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
             'gstr2b_igst':           'gi.igst',
             'gstr2b_cgst':           'gi.cgst',
             'gstr2b_sgst':           'gi.sgst',

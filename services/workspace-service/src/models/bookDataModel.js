@@ -458,6 +458,86 @@ class BookDataModel {
 
         return record || null;
     }
+
+    /**
+     * Get B2B purchase vouchers for the reconciliation dashboard (Book Data tab)
+     */
+    static async getReconBookData(workspaceId, filters = {}) {
+        const { gstin_id, fy_id, month, quarter, search, page = 1, page_size = 25 } = filters;
+        
+        let query = knex('purchase_vouchers as pi')
+            .where('pi.workspace_id', workspaceId)
+            .andWhere(builder => {
+                builder.whereNotNull('pi.supplier_gstin')
+                       .andWhereNot('pi.supplier_gstin', '')
+                       .andWhereNotNull('pi.supplier_invoice_no')
+                       .andWhereNot('pi.supplier_invoice_no', '');
+            });
+
+        if (gstin_id && gstin_id !== 'ALL') {
+            query = query.where('pi.gstin_id', gstin_id);
+        }
+        if (fy_id && fy_id !== 'ALL') {
+            query = query.where('pi.fy_id', fy_id);
+        }
+        if (month && month !== 'ALL') {
+            query = query.where('pi.month', month);
+        }
+        if (quarter && quarter !== 'ALL') {
+            query = query.where('pi.quarter', quarter);
+        }
+
+        if (search) {
+            query = query.where(function() {
+                this.where('pi.supplier_invoice_no', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_name', 'ilike', `%${search}%`);
+            });
+        }
+        
+        // Select fields aliased for frontend consistency
+        query = query.leftJoin('reconciliation_status as rs', 'pi.id', 'rs.book_data_id')
+            .select(
+                'pi.id',
+                'pi.supplier_gstin',
+                'pi.supplier_name',
+                'pi.supplier_invoice_no as purchase_invoice_number',
+                'pi.supplier_invoice_no as invoice_no',
+                'pi.supplier_invoice_date as purchase_invoice_date',
+                'pi.supplier_invoice_date as date',
+                'pi.net_amount as purchase_invoice_total',
+                'pi.taxable_total as purchase_taxable',
+                knex.raw('(COALESCE(pi.total_igst_amount,0) + COALESCE(pi.total_cgst_amount,0) + COALESCE(pi.total_sgst_amount,0) + COALESCE(pi.total_cess_amount,0)) as purchase_tax'),
+                'pi.total_igst_amount as purchase_igst',
+                'pi.total_cgst_amount as purchase_cgst',
+                'pi.total_sgst_amount as purchase_sgst',
+                'pi.total_cess_amount as purchase_cess',
+                'pi.book_vchr_no',
+                'pi.book_vchr_date',
+                'pi.voucher_type as purchase_voucher_type',
+                'pi.source_section as gst_type',
+                knex.raw('COALESCE(rs.recon_status, \'pending\') as action_status'),
+                knex.raw('COALESCE(rs.recon_status, \'pending\') as reconciliation_status'),
+                knex.raw('\'missing_in_portal\' as match_status') // Default for untracked book data in recon view
+            );
+
+        // Count totals
+        const totalsQuery = query.clone().clearSelect().clearOrder().count('* as total').first();
+        const totalsResult = await totalsQuery;
+        
+        const results = await query.orderBy('pi.supplier_invoice_date', 'desc')
+            .limit(page_size)
+            .offset((page - 1) * page_size);
+            
+        return {
+            results,
+            pagination: {
+                total: parseInt(totalsResult?.total || 0),
+                page: parseInt(page),
+                page_size: parseInt(page_size)
+            }
+        };
+    }
 }
 
 module.exports = BookDataModel;

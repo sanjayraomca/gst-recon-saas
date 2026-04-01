@@ -7,7 +7,8 @@ const {
     getRun,
     getRunResults,
     getRunProgress,
-    getRunTaxSummary
+    getRunTaxSummary,
+    getReconBookData
 } = require('../controllers/reconciliationController');
 
 const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
@@ -78,5 +79,8 @@ router.get('/runs/:run_id/results', getRunResults);
 
 // GET /reconciliation/runs/:run_id/tax-summary
 router.get('/runs/:run_id/tax-summary', getRunTaxSummary);
+
+// GET /reconciliation/book-data - Dedicated endpoint for Book Data tab
+router.get('/book-data', getReconBookData);
 
 module.exports = router;
