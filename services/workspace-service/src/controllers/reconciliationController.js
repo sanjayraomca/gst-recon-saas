@@ -1,4 +1,5 @@
 const ReconciliationModel = require('../models/reconciliationModel');
+const Reconciliation2AModel = require('../models/reconciliation2AModel');
 const BookDataModel = require('../models/bookDataModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
@@ -124,12 +125,30 @@ const getRunResults = async (req, res) => {
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
+        // Dispatcher: Determine which model to use based on run_type
+        let model = ReconciliationModel; // Default to 2B
+
+        if (runId !== 'all') {
+            const run = await ReconciliationModel.getRunById(workspaceId, runId);
+            if (!run) return errorResponse(res, 'Run not found', 404);
+            
+            // If it's a 2A or 2A vs 2B run, use the 2A model
+            const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run.run_type);
+            if (is2aRun) {
+                model = Reconciliation2AModel;
+            }
+        } else if (req.query.run_type && ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(req.query.run_type)) {
+            model = Reconciliation2AModel;
+        }
+
         const hasFilters = Object.keys(req.query || {}).length > 0;
         const transactionName = hasFilters ? 'FilterReconResults' : 'FetchReconResults';
         const cleanup = attachSqlFileLogger(transactionName);
-        const result = await ReconciliationModel.getRunResults(workspaceId, runId, req.query);
+        
+        const result = await model.getRunResults(workspaceId, runId, req.query);
+        
         cleanup();
-        if (!result) return errorResponse(res, 'Run not found', 404);
+        if (!result) return errorResponse(res, 'Results not found', 404);
 
         return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
             pagination: result.pagination,
@@ -146,9 +165,23 @@ const getRunTaxSummary = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         const runId = req.params.run_id;
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+
+        // Dispatcher: Determine which model to use
+        let model = ReconciliationModel;
+        if (runId !== 'all') {
+            const run = await ReconciliationModel.getRunById(workspaceId, runId);
+            const is2aRun = run && ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run.run_type);
+            if (is2aRun) {
+                model = Reconciliation2AModel;
+            }
+        } else if (req.query.run_type && ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(req.query.run_type)) {
+            model = Reconciliation2AModel;
+        }
+
         const cleanup = attachSqlFileLogger('TaxSummary');
-        const summary = await ReconciliationModel.getRunTaxSummary(workspaceId, runId, req.query);
+        const summary = await model.getRunTaxSummary(workspaceId, runId, req.query);
         cleanup();
+        
         return successResponse(res, summary, 'Tax summary retrieved successfully');
     } catch (error) {
         console.error('Error fetching tax summary:', error);

@@ -1,5 +1,6 @@
 const knex = require('../../../shared/src/db/connection');
 const progressEmitter = require('../utils/progressEmitter');
+const Reconciliation2AModel = require('./reconciliation2AModel');
 
 /**
  * Reconciliation Model
@@ -49,11 +50,16 @@ class ReconciliationModel {
             await trx.commit();
 
             const runId = reconRun.id;
-
+            const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
+ 
             // Trigger the matching task in the background (no await)
-            this.runMatchingTask(workspaceId, runId, taxPeriodId, runData).catch(err => {
-                console.error(`[AI Matching Error] Background task failed for run ${runId}:`, err);
-            });
+            if (is2a) {
+                Reconciliation2AModel.runMatchingTask(workspaceId, runId, taxPeriodId, runData).catch(e => console.error('2A Match Task Error:', e));
+            } else {
+                this.runMatchingTask(workspaceId, runId, taxPeriodId, runData).catch(err => {
+                    console.error(`[AI Matching Error] Background task failed for run ${runId}:`, err);
+                });
+            }
 
             return runId;
         } catch (error) {
@@ -584,6 +590,10 @@ class ReconciliationModel {
                             if (gstr2bIds.length > 0) this.orWhereIn('gstr2b_invoice_id', gstr2bIds);
                             if (gstr2aIds.length > 0) this.orWhereIn('gstr2a_invoice_id', gstr2aIds);
                             if (gstr2aSourceIds.length > 0) this.orWhereIn('gstr2a_source_id', gstr2aSourceIds);
+                        })
+                        .whereIn('recon_run_id', function() {
+                            this.select('id').from('reconciliation_runs')
+                                .where('run_type', 'PURCHASE_2B');
                         });
 
                     const deletedCount = await deleteQuery.delete();
@@ -742,7 +752,12 @@ class ReconciliationModel {
         } = filters;
 
         // Verify run belongs to workspace
-        const run = await this.getRunById(workspaceId, runId);
+        let run;
+        if (runId === 'all') {
+            run = { run_type: 'PURCHASE_2B' }; // Default for the 2B model
+        } else {
+            run = await this.getRunById(workspaceId, runId);
+        }
         if (!run) return null;
 
         const is2a = run.run_type === 'PURCHASE_2A';
@@ -828,7 +843,9 @@ class ReconciliationModel {
         // Apply Run ID filter ONLY if status is not 'pending'
         // If status is 'pending', we show all historical pending data for the workspace
         if (workflow_status === 'pending') {
-            query.where('rr.workspace_id', workspaceId);
+            query.where('rr.workspace_id', workspaceId)
+                .join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
+                .where('run_isolation.run_type', 'PURCHASE_2B');
         } else {
             query.where('rr.recon_run_id', runId);
         }
@@ -1662,12 +1679,18 @@ class ReconciliationModel {
     static async getRunTaxSummary(workspaceId, runId, filters = {}) {
         const { fy, quarter, month } = filters;
 
-        const run = await this.getRunById(workspaceId, runId);
+        let run;
+        if (runId === 'all') {
+            run = { run_type: 'PURCHASE_2B' };
+        } else {
+            run = await this.getRunById(workspaceId, runId);
+        }
         if (!run) return null;
 
         const is2a = run.run_type === 'PURCHASE_2A';
-        const gstrTable = is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
-        const gstrIdCol = is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
+        const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B';
+        const gstrTable = (is2a || is2aVs2b) ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+        const gstrIdCol = (is2a || is2aVs2b) ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
         // ── Period-grouped aggregation ───────────────────────────────────────────
         let aggQuery = knex('reconciliation_results as rr')
@@ -1703,6 +1726,9 @@ class ReconciliationModel {
             .modify(q => {
                 if (runId && runId !== 'all') {
                     q.where('rr.recon_run_id', runId);
+                } else {
+                    q.join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
+                     .where('run_isolation.run_type', 'PURCHASE_2B');
                 }
                 
                 let filterYear = null;

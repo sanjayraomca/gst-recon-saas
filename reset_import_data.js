@@ -44,6 +44,7 @@ const tablesToTruncate = [
     'sales_invoices',
     'reconciliation_results',
     'reconciliation_status',
+    'reconciliation_status_gst2a_vs_book',
     'reconciliation_runs',
     'supplier_master',
     'customer_master',
