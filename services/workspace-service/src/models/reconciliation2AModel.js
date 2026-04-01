@@ -127,6 +127,7 @@ class Reconciliation2AModel {
             const sourceBInvoices = await trx(gstrTable)
                 .where({ workspace_id: workspaceId })
                 .where('source_table', 'like', sourceBPrefix)
+                .whereNot('document_number_raw', 'like', '%-Total')
                 .modify(q => {
                     if (taxPeriod) {
                         q.whereRaw(`EXTRACT(MONTH FROM document_date) = ?`, [taxPeriod.month])
@@ -446,7 +447,13 @@ class Reconciliation2AModel {
             knex.raw('SUM(COALESCE(pi.taxable_total, sa.taxable_value, 0)) as book_taxable_total'),
             knex.raw('SUM(COALESCE(gi.taxable_value, 0)) as gstr_taxable_total'),
             knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0) + COALESCE(sa.total_tax, 0)) as book_tax_total'),
-            knex.raw('SUM(COALESCE(gi.total_tax, 0)) as gstr_tax_total')
+            knex.raw('SUM(COALESCE(gi.total_tax, 0)) as gstr_tax_total'),
+            knex.raw('SUM(COALESCE(pi.total_cgst_amount, sa.cgst, 0)) as book_cgst_total'),
+            knex.raw('SUM(COALESCE(pi.total_sgst_amount, sa.sgst, 0)) as book_sgst_total'),
+            knex.raw('SUM(COALESCE(pi.total_cess_amount, sa.cess, 0)) as book_cess_total'),
+            knex.raw('SUM(COALESCE(gi.cgst, 0)) as gstr_cgst_total'),
+            knex.raw('SUM(COALESCE(gi.sgst, 0)) as gstr_sgst_total'),
+            knex.raw('SUM(COALESCE(gi.cess, 0)) as gstr_cess_total')
         ).first();
 
         const total = parseInt(totalsResult.total_count || 0);
@@ -508,7 +515,14 @@ class Reconciliation2AModel {
                     purchase_taxable: parseFloat(totalsResult.book_taxable_total || 0),
                     gstr_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
                     purchase_tax: parseFloat(totalsResult.book_tax_total || 0),
-                    gstr_tax: parseFloat(totalsResult.gstr_tax_total || 0)
+                    gstr_tax: parseFloat(totalsResult.gstr_tax_total || 0),
+                    gstr2a_tax: parseFloat(totalsResult.gstr_tax_total || 0),
+                    purchase_cgst: parseFloat(totalsResult.book_cgst_total || 0),
+                    purchase_sgst: parseFloat(totalsResult.book_sgst_total || 0),
+                    purchase_cess: parseFloat(totalsResult.book_cess_total || 0),
+                    gstr_cgst: parseFloat(totalsResult.gstr_cgst_total || 0),
+                    gstr_sgst: parseFloat(totalsResult.gstr_sgst_total || 0),
+                    gstr_cess: parseFloat(totalsResult.gstr_cess_total || 0)
                 }
             }
         };
