@@ -695,8 +695,10 @@ class ReconciliationModel {
      * Get list of reconciliation runs
      */
     static async getRuns(workspaceId, filters = {}, pagination = {}) {
-        const { gstin_id, period_id, status, run_type } = filters;
-        const { page = 1, page_size = 20 } = pagination;
+        const { gstin_id, period_id, status } = filters;
+        const run_type = filters.run_type || filters.type;
+        const page = pagination.page || parseInt(filters.page) || 1;
+        const page_size = pagination.page_size || parseInt(filters.page_size) || 20;
         const offset = (page - 1) * page_size;
 
         const query = knex('reconciliation_runs')
@@ -755,7 +757,7 @@ class ReconciliationModel {
         // Verify run belongs to workspace
         let run;
         if (runId === 'all') {
-            run = { run_type: filters.run_type || 'PURCHASE_2B' }; // Respect provided run_type filter
+            run = { run_type: filters.run_type || filters.type || 'PURCHASE_2B' }; // Respect provided run_type or type filter
         } else {
             run = await this.getRunById(workspaceId, runId);
         }
@@ -846,7 +848,7 @@ class ReconciliationModel {
         if (workflow_status === 'pending') {
             query.where('rr.workspace_id', workspaceId)
                 .join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
-                .where('run_isolation.run_type', 'PURCHASE_2B');
+                .where('run_isolation.run_type', run.run_type);
         } else {
             query.where('rr.recon_run_id', runId);
         }
@@ -1380,6 +1382,7 @@ class ReconciliationModel {
             is2aVs2b ? 'sa.place_of_supply as purchase_pos' : 'pi.place_of_supply as purchase_pos',
             is2aVs2b ? 'sa.source_section as purchase_source_section' : 'pi.source_section as purchase_source_section',
             // Portal mapping
+            knex.raw(`COALESCE(pi.gstr_category, pi.source_section, ${is2aVs2b ? 'sa.source_section, ' : ''}gi.source_section) as gstr_category`),
             'gi.document_number_clean as gstr_invoice_number',
             'gi.document_date as gstr_invoice_date',
             'gi.document_value as gstr_invoice_total',
@@ -1418,8 +1421,8 @@ class ReconciliationModel {
             knex.raw(`(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) - 
                        (COALESCE(${is2aVs2b ? 'sa.total_tax' : 
                           (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' : 
-                                  '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as diff_tax,
-            rr.variance_amount as tax_diff`)
+                                  '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as diff_tax`),
+            knex.raw('rr.variance_amount as tax_diff')
         );
 
         // Map frontend sort keys to DB columns if necessary
