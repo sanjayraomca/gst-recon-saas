@@ -29,6 +29,30 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
     if (processedJson.data) processedJson = processedJson.data;
     if (processedJson.docdata) processedJson = processedJson.docdata;
 
+    // --- Validation: Differentiate between 2A and 2B JSON ---
+    const is2BSelected = gstrType.toUpperCase().includes('2B');
+    let hasITCFields = false;
+
+    if (processedJson.b2b) {
+        for (const section of processedJson.b2b) {
+            if (section.inv && section.inv.length > 0) {
+                const firstInv = section.inv[0];
+                if (firstInv.itc_avl !== undefined || firstInv.itcavl !== undefined) {
+                    hasITCFields = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if (is2BSelected && !hasITCFields && processedJson.b2b) {
+        throw new Error("File Type Mismatch: You selected GSTR-2B, but the provided JSON data appears to be a GSTR-2A report (it is missing 'itc_avl' fields). Please ensure you are uploading the correct file.");
+    }
+
+    if (!is2BSelected && hasITCFields && processedJson.b2b) {
+        throw new Error("File Type Mismatch: You selected GSTR-2A, but the provided JSON data appears to be a GSTR-2B report (it contains 'itc_avl' fields). Please ensure you are uploading the correct file.");
+    }
+
     // 1. Process B2B
     if (processedJson.b2b) {
         for (const section of processedJson.b2b) {

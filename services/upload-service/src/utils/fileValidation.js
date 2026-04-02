@@ -29,6 +29,37 @@ const validateFileType = (workbook, type) => {
                 message: `File Mismatch: The uploaded file does not appear to be a GSTR-2A/2B portal file. Expected sheets like 'B2B', 'IMPG', etc.`
             };
         }
+
+        // --- Granular differentiation between 2A and 2B ---
+        const b2bSheetName = workbook.SheetNames.find(s => s.toUpperCase().includes('B2B'));
+        if (b2bSheetName) {
+            const sheet = workbook.Sheets[b2bSheetName];
+            const xlsx = require('xlsx');
+            const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, range: 0 });
+            
+            let headerText = '';
+            for (let i = 0; i < Math.min(rows.length, 25); i++) {
+                headerText += ' ' + (rows[i]?.join(' ') || '');
+            }
+            headerText = headerText.toUpperCase();
+
+            const is2BSelected = typeUpper.includes('2B');
+            const hasITCHeader = headerText.includes('ITC AVAILABILITY') || headerText.includes('ITC_AVAILABILITY');
+
+            if (is2BSelected && !hasITCHeader) {
+                return {
+                    valid: false,
+                    message: `File Mismatch: You selected GSTR-2B, but the uploaded file appears to be a GSTR-2A report (it is missing the 'ITC Availability' column). Please upload the correct GSTR-2B file.`
+                };
+            }
+
+            if (!is2BSelected && hasITCHeader) {
+                return {
+                    valid: false,
+                    message: `File Mismatch: You selected GSTR-2A, but the uploaded file appears to be a GSTR-2B report (it contains the 'ITC Availability' column). Please upload the correct GSTR-2A file.`
+                };
+            }
+        }
     }
 
     // 2. Sales/Purchase Book Validation
