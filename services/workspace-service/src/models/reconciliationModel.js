@@ -51,7 +51,7 @@ class ReconciliationModel {
 
             const runId = reconRun.id;
             const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
- 
+
             // Trigger the matching task in the background (no await)
             if (is2a) {
                 Reconciliation2AModel.runMatchingTask(workspaceId, runId, taxPeriodId, runData).catch(e => console.error('2A Match Task Error:', e));
@@ -105,13 +105,13 @@ class ReconciliationModel {
             // 2. Fetch "Source A" invoices (Purchase or GSTR-2A)
             await progressEmitter.emitProgress(runId, 15, is2aVs2b ? 'Fetching GSTR-2A invoices...' : 'Fetching purchase invoices...');
             let purchaseInvoices = [];
-            
+
             if (is2aVs2b) {
                 // For 2A vs 2B, Source A is 2A invoices from portal
                 let sourceAQuery = trx('normalized_gstr2a_invoices')
                     .where({ workspace_id: workspaceId })
                     .where('source_table', 'like', 'gstr_2a%');
-                
+
                 if (taxPeriod) {
                     const isQuarterly = workspace?.filing_type === 'q';
                     if (isQuarterly && taxPeriod.quarter) {
@@ -190,7 +190,7 @@ class ReconciliationModel {
             }
 
             console.log(`[MatchingTask] Fetched ${purchaseInvoices.length} source invoices (${is2aVs2b ? 'GSTR-2A' : (is2a ? 'Items' : 'Vouchers')})`);
-            
+
             // For portal-to-portal runs, we need to ensure the source invoices (2A) have consistent column names for matching
             if (is2aVs2b) {
                 purchaseInvoices.forEach(inv => {
@@ -312,7 +312,7 @@ class ReconciliationModel {
                     const bestMatch = gstrInMatches[0];
                     matchedGstrIds.add(bestMatch.id);
                     matchedCount++;
-                    
+
                     const gstrTaxable = parseFloat(bestMatch.taxable_value) || 0;
                     const gstrTotalTax = parseFloat(bestMatch.total_tax) || 0;
 
@@ -369,7 +369,7 @@ class ReconciliationModel {
 
                     const dateDiff = Math.abs((pDateObj - gDate) / (1000 * 60 * 60 * 24));
                     const exactDate = dateDiff === 0;
-                    
+
                     // Use absolute values for amount matching to handle sign differences (Books vs Portal)
                     const exactTaxable = Math.abs(Math.abs(pTaxable) - Math.abs(gTaxable)) < 0.01;
                     const exactTax = Math.abs(Math.abs(pTax) - Math.abs(gTax)) < 0.01;
@@ -591,7 +591,7 @@ class ReconciliationModel {
                             if (gstr2aIds.length > 0) this.orWhereIn('gstr2a_invoice_id', gstr2aIds);
                             if (gstr2aSourceIds.length > 0) this.orWhereIn('gstr2a_source_id', gstr2aSourceIds);
                         })
-                        .whereIn('recon_run_id', function() {
+                        .whereIn('recon_run_id', function () {
                             this.select('id').from('reconciliation_runs')
                                 .where('run_type', 'PURCHASE_2B');
                         });
@@ -777,11 +777,11 @@ class ReconciliationModel {
             // Wait, the logic I used in runMatchingTask was:
             // Source A = validPurchaseInvoices (which are 2A if is2aVs2b)
             // Source B = validGstrInvoices (which are 2B if is2aVs2b)
-            
+
             // Re-evaluating gstrTable for gi (Source B)
             const sourceBTable = is2aVs2b ? 'normalized_gstr2b_invoices' : (is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices');
             const sourceBIdCol = is2aVs2b ? 'gstr2b_invoice_id' : (is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id');
-            
+
             query = knex('reconciliation_results as rr')
                 .leftJoin(`${sourceBTable} as gi`, `rr.${sourceBIdCol}`, 'gi.id')
                 .leftJoin('normalized_gstr2a_invoices as sa', 'rr.gstr2a_source_id', 'sa.id');
@@ -1159,16 +1159,28 @@ class ReconciliationModel {
                 // GSTR amounts (gi / Source B)
                 gstr_invoice_total: { cols: ['gi.document_value'], numeric: true },
                 gstr_taxable: { cols: ['gi.taxable_value'], numeric: true },
+                gstr_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
+                gstr2a_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
                 gstr_tax: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
+                gstr2a_tax_total: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
                 gstr_igst: { cols: ['gi.igst'], numeric: true },
                 gstr_cgst: { cols: ['gi.cgst'], numeric: true },
                 gstr_sgst: { cols: ['gi.sgst'], numeric: true },
                 gstr_cess: { cols: ['gi.cess'], numeric: true },
                 // Books / Source A amounts
-                book_invoice_total: { cols: is2aVs2b ? ['sa.document_value'] : ['pi.net_amount'], numeric: true },
+                book_invoice_total: { cols: is2aVs2b ? ['sa.document_value'] : (is2a ? [] : ['pi.net_amount']), numeric: true },
                 book_taxable: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)`)], numeric: true },
+                purchase_tax_rate: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.tax_rate' : (is2a ? 'ps.tax_rate' : 'pi.tax_rate')}, 0)`)], numeric: true },
+                book_tax_rate: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.tax_rate' : (is2a ? 'ps.tax_rate' : 'pi.tax_rate')}, 0)`)], numeric: true },
                 book_tax: {
-                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` : 
+                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` :
+                        `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`)], numeric: true
+                },
+                purchase_tax_total: {
+                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` :
                         `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
                           COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
                           COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
@@ -1178,7 +1190,12 @@ class ReconciliationModel {
                 book_cgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0)`)], numeric: true },
                 book_sgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0)`)], numeric: true },
                 book_cess: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)`)], numeric: true },
+                purchase_igst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0)`)], numeric: true },
+                purchase_cgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0)`)], numeric: true },
+                purchase_sgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0)`)], numeric: true },
+                purchase_cess: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)`)], numeric: true },
                 tax_diff: { cols: ['rr.variance_amount'], numeric: true },
+                difference: { cols: ['rr.variance_amount'], numeric: true },
             };
 
             Object.entries(parsedColumnFilters).forEach(([key, value]) => {
@@ -1272,9 +1289,9 @@ class ReconciliationModel {
                 knex.raw(`SUM(gi.taxable_value) as gstr2b_taxable_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)) as purchase_taxable_total`),
                 knex.raw(`SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2b_tax_total`),
-                knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.total_tax' : 
-                          (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' : 
-                                   '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as purchase_tax_total`),
+                knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.total_tax' :
+                    (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' :
+                        '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as purchase_tax_total`),
                 knex.raw('SUM(gi.cgst) as gstr2b_cgst_total'),
                 knex.raw('SUM(gi.sgst) as gstr2b_sgst_total'),
                 knex.raw('SUM(gi.cess) as gstr2b_cess_total'),
@@ -1357,14 +1374,14 @@ class ReconciliationModel {
             is2aVs2b ? 'sa.document_date as purchase_invoice_date' : knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date) as purchase_invoice_date'),
             knex.raw(`COALESCE(${is2aVs2b ? 'sa.document_value' : (is2a ? 'ps.net_amount' : 'pi.net_amount')}, 0) as purchase_invoice_total`),
             knex.raw(`COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0) as purchase_taxable`),
-            knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0)) as purchase_tax` : 
+            knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0)) as purchase_tax` :
                 `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
                   COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
                   COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
                   COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0)) as purchase_tax`),
             knex.raw(`CASE WHEN COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0) > 0 THEN 
-                        ROUND((${is2aVs2b ? 'COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))' : 
-                            `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
+                        ROUND((${is2aVs2b ? 'COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))' :
+                    `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
                                 COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
                                 COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
                                 COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`} / 
@@ -1419,46 +1436,63 @@ class ReconciliationModel {
             // Differences for UI parity
             knex.raw(`COALESCE(gi.taxable_value, 0) - COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0) as diff_taxable`),
             knex.raw(`(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) - 
-                       (COALESCE(${is2aVs2b ? 'sa.total_tax' : 
-                          (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' : 
-                                  '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as diff_tax`),
+                       (COALESCE(${is2aVs2b ? 'sa.total_tax' :
+                    (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' :
+                        '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as diff_tax`),
             knex.raw('rr.variance_amount as tax_diff')
         );
 
         // Map frontend sort keys to DB columns if necessary
         const sortMapping = {
             // Party info
-            'gstin':                 is2aVs2b ? knex.raw('COALESCE(sa.supplier_gstin, gi.supplier_gstin)') : 'supplier_gstin',
-            'name':                  is2aVs2b ? knex.raw('COALESCE(sa.supplier_name, gi.supplier_name)') : 'supplier_name',
-            'supplier_name':         is2aVs2b ? knex.raw('COALESCE(sa.supplier_name, gi.supplier_name)') : 'supplier_name',
-            'gst_type':              is2aVs2b ? 'sa.source_section' : knex.raw('COALESCE(pi.source_section, gi.source_section)'),
-            'invoice_no':            is2aVs2b ? 'sa.document_number_clean' : 'purchase_invoice_number',
-            'invoice_date':          is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date)') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
-            'date':                  is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date)') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
-            // Portal (Source B)
-            'gstr2b_invoice_total':  'gi.document_value',
-            'gstr2b_taxable':        'gi.taxable_value',
-            'gstr2b_tax':            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
-            'gstr2b_tax_total':      knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
-            'gstr2b_igst':           'gi.igst',
-            'gstr2b_cgst':           'gi.cgst',
-            'gstr2b_sgst':           'gi.sgst',
-            'gstr2b_cess':           'gi.cess',
+            'gstin': is2aVs2b ? knex.raw('COALESCE(sa.supplier_gstin, gi.supplier_gstin)') : 'supplier_gstin',
+            'name': is2aVs2b ? knex.raw('COALESCE(sa.supplier_name, gi.supplier_name)') : 'supplier_name',
+            'supplier_name': is2aVs2b ? knex.raw('COALESCE(sa.supplier_name, gi.supplier_name)') : 'supplier_name',
+            'gst_type': is2aVs2b ? 'sa.source_section' : knex.raw('COALESCE(pi.source_section, gi.source_section)'),
+            'invoice_no': is2aVs2b ? 'sa.document_number_clean' : 'purchase_invoice_number',
+            'invoice_date': is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date)') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
+            'date': is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date)') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
+
+            // Portal (Source B) - 2B / 2A / 2Avs2B Portal Data
+            'gstr_invoice_total': 'gi.document_value',
+            'gstr2b_invoice_total': 'gi.document_value',
+            'gstr_taxable': 'gi.taxable_value',
+            'gstr2b_taxable': 'gi.taxable_value',
+            'gstr_tax_rate': 'gi.tax_rate',
+            'gstr2a_tax_rate': 'gi.tax_rate',
+            'gstr2b_tax': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr_tax': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr2a_tax': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr2b_tax_total': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr2a_tax_total': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
+            'gstr_igst': 'gi.igst',
+            'gstr_cgst': 'gi.cgst',
+            'gstr_sgst': 'gi.sgst',
+            'gstr_cess': 'gi.cess',
+            'gstr2b_igst': 'gi.igst',
+            'gstr2b_cgst': 'gi.cgst',
+            'gstr2b_sgst': 'gi.sgst',
+            'gstr2b_cess': 'gi.cess',
+
             // Books / Source A
             'purchase_invoice_total': is2aVs2b ? 'sa.document_value' : 'purchase_invoice_total',
-            'purchase_taxable':      is2aVs2b ? 'sa.taxable_value' : 'purchase_taxable',
-            'purchase_tax':          is2aVs2b ? knex.raw('COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))') : 'purchase_tax',
-            'purchase_igst':         is2aVs2b ? 'sa.igst' : 'pi.total_igst_amount',
-            'purchase_cgst':         is2aVs2b ? 'sa.cgst' : 'pi.total_cgst_amount',
-            'purchase_sgst':         is2aVs2b ? 'sa.sgst' : 'pi.total_sgst_amount',
-            'purchase_cess':         is2aVs2b ? 'sa.cess' : 'pi.total_cess_amount',
-            'voucher_no':            is2aVs2b ? 'sa.document_number_clean' : 'pi.book_vchr_no',
-            'voucher_date':          is2aVs2b ? 'sa.document_date' : 'pi.book_vchr_date',
+            'purchase_taxable': is2aVs2b ? 'sa.taxable_value' : 'purchase_taxable',
+            'purchase_tax_rate': is2aVs2b ? 'sa.tax_rate' : 'pi.tax_rate',
+            'purchase_tax': is2aVs2b ? knex.raw('COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))') : 'purchase_tax',
+            'purchase_igst': is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'),
+            'purchase_cgst': is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'),
+            'purchase_sgst': is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'),
+            'purchase_cess': is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'),
+            'voucher_no': is2aVs2b ? 'sa.document_number_clean' : 'pi.book_vchr_no',
+            'voucher_date': is2aVs2b ? 'sa.document_date' : 'pi.book_vchr_date',
+            'gst_cat': is2aVs2b ? 'sa.source_section' : knex.raw('COALESCE(pi.gstr_category, pi.source_section, gi.source_section)'),
+
             // Status
-            'difference':            'rr.variance_amount',
-            'match_analysis':        'rr.match_status',
-            'action_status':         'reconciliation_status',
-            'created_at':            'rr.created_at'
+            'difference': 'rr.variance_amount',
+            'tax_diff': 'rr.variance_amount',
+            'match_analysis': 'rr.match_status',
+            'action_status': 'reconciliation_status',
+            'created_at': 'rr.created_at'
         };
 
         // Safe whitelist fallback — if sort_by is not in mapping and not a known safe alias, default to rr.created_at
@@ -1547,11 +1581,11 @@ class ReconciliationModel {
      */
     static areCategoriesCompatible(pCat, gCat) {
         if (!pCat || !gCat) return false;
-        
+
         // As per user request "dont do hardcode" and "clear all possible outcomes",
         // we allow matching between all documented financial types.
         const validTypes = ['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'IMPORT', 'ISD'];
-        
+
         // If both are recognized financial categories, they are "compatible" 
         // and we let the Invoice Number + Amount + GSTIN define the actual match.
         return validTypes.includes(pCat) && validTypes.includes(gCat);
@@ -1732,22 +1766,22 @@ class ReconciliationModel {
                     q.where('rr.recon_run_id', runId);
                 } else {
                     q.join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
-                     .where('run_isolation.run_type', 'PURCHASE_2B');
+                        .where('run_isolation.run_type', 'PURCHASE_2B');
                 }
-                
+
                 let filterYear = null;
                 if (fy && fy !== 'ALL') {
                     filterYear = parseInt(fy.split('-')[0]);
                     const months = [];
-                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${filterYear}`);
-                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${filterYear + 1}`);
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2, '0')}${filterYear}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2, '0')}${filterYear + 1}`);
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
                 if (quarter && quarter !== 'ALL') {
-                    const qtMap = { '1': [4,5,6], '2': [7,8,9], '3': [10,11,12], '4': [1,2,3] };
+                    const qtMap = { '1': [4, 5, 6], '2': [7, 8, 9], '3': [10, 11, 12], '4': [1, 2, 3] };
                     const qtMonths = qtMap[String(quarter)] || [];
                     if (filterYear) {
-                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? filterYear : filterYear + 1}`);
+                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2, '0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
                     }
                 }
@@ -1756,13 +1790,13 @@ class ReconciliationModel {
                     if (filterYear) {
                         const yearForMonth = (m >= 1 && m <= 3) ? filterYear + 1 : filterYear;
                         const exactPeriod = `${String(m).padStart(2, '0')}${yearForMonth}`;
-                        q.where(function() {
+                        q.where(function () {
                             this.where('tp.period_code', exactPeriod)
                                 .orWhere('gi.return_period', exactPeriod);
                         });
                     } else {
                         const paddedMonth = String(m).padStart(2, '0');
-                        q.where(function() {
+                        q.where(function () {
                             this.where('tp.period_code', 'LIKE', `${paddedMonth}%`)
                                 .orWhere('gi.return_period', 'LIKE', `${paddedMonth}%`);
                         });
@@ -1797,7 +1831,7 @@ class ReconciliationModel {
         // ── Invoice-level rows ───────────────────────────────────────────────────
         const invoices = await knex('reconciliation_results as rr')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin(`${gstrTable} as gi`, function() {
+            .leftJoin(`${gstrTable} as gi`, function () {
                 this.on('rr.gstr2b_invoice_id', '=', 'gi.id')
                     .orOn('rr.gstr2a_invoice_id', '=', 'gi.id');
             })
@@ -1813,15 +1847,15 @@ class ReconciliationModel {
                 if (fy && fy !== 'ALL') {
                     filterYear = parseInt(fy.split('-')[0]);
                     const months = [];
-                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2,'0')}${filterYear}`);
-                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2,'0')}${filterYear + 1}`);
+                    for (let m = 4; m <= 12; m++) months.push(`${String(m).padStart(2, '0')}${filterYear}`);
+                    for (let m = 1; m <= 3; m++)  months.push(`${String(m).padStart(2, '0')}${filterYear + 1}`);
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
                 if (quarter && quarter !== 'ALL') {
-                    const qtMap = { '1': [4,5,6], '2': [7,8,9], '3': [10,11,12], '4': [1,2,3] };
+                    const qtMap = { '1': [4, 5, 6], '2': [7, 8, 9], '3': [10, 11, 12], '4': [1, 2, 3] };
                     const qtMonths = qtMap[String(quarter)] || [];
                     if (filterYear) {
-                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2,'0')}${m >= 4 ? filterYear : filterYear + 1}`);
+                        const qPeriods = qtMonths.map(m => `${String(m).padStart(2, '0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
                     }
                 }
@@ -1830,13 +1864,13 @@ class ReconciliationModel {
                     if (filterYear) {
                         const yearForMonth = (m >= 1 && m <= 3) ? filterYear + 1 : filterYear;
                         const exactPeriod = `${String(m).padStart(2, '0')}${yearForMonth}`;
-                        q.where(function() {
+                        q.where(function () {
                             this.where('tp.period_code', exactPeriod)
                                 .orWhere('gi.return_period', exactPeriod);
                         });
                     } else {
                         const paddedMonth = String(m).padStart(2, '0');
-                        q.where(function() {
+                        q.where(function () {
                             this.where('tp.period_code', 'LIKE', `${paddedMonth}%`)
                                 .orWhere('gi.return_period', 'LIKE', `${paddedMonth}%`);
                         });
@@ -1876,7 +1910,7 @@ class ReconciliationModel {
                 periodMap[p] = {
                     period: p,
                     categories: {},
-                    books:  { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 },
+                    books: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 },
                     gstr2b: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 },
                 };
             }
@@ -1884,20 +1918,20 @@ class ReconciliationModel {
             periodMap[p].categories[cat] = {
                 category: cat,
                 invoices: [],
-                books:  { count: +row.books_count,  tax: +row.books_tax,  igst: +row.books_igst,  cgst: +row.books_cgst,  sgst: +row.books_sgst  },
+                books: { count: +row.books_count, tax: +row.books_tax, igst: +row.books_igst, cgst: +row.books_cgst, sgst: +row.books_sgst },
                 gstr2b: { count: +row.gstr2b_count, tax: +row.gstr2b_tax, igst: +row.gstr2b_igst, cgst: +row.gstr2b_cgst, sgst: +row.gstr2b_sgst },
             };
             // Accumulate period totals
-            periodMap[p].books.count  += +row.books_count;
-            periodMap[p].books.tax    += +row.books_tax;
-            periodMap[p].books.igst   += +row.books_igst;
-            periodMap[p].books.cgst   += +row.books_cgst;
-            periodMap[p].books.sgst   += +row.books_sgst;
+            periodMap[p].books.count += +row.books_count;
+            periodMap[p].books.tax += +row.books_tax;
+            periodMap[p].books.igst += +row.books_igst;
+            periodMap[p].books.cgst += +row.books_cgst;
+            periodMap[p].books.sgst += +row.books_sgst;
             periodMap[p].gstr2b.count += +row.gstr2b_count;
-            periodMap[p].gstr2b.tax   += +row.gstr2b_tax;
-            periodMap[p].gstr2b.igst  += +row.gstr2b_igst;
-            periodMap[p].gstr2b.cgst  += +row.gstr2b_cgst;
-            periodMap[p].gstr2b.sgst  += +row.gstr2b_sgst;
+            periodMap[p].gstr2b.tax += +row.gstr2b_tax;
+            periodMap[p].gstr2b.igst += +row.gstr2b_igst;
+            periodMap[p].gstr2b.cgst += +row.gstr2b_cgst;
+            periodMap[p].gstr2b.sgst += +row.gstr2b_sgst;
         });
 
         invoices.forEach(inv => {
@@ -1911,8 +1945,8 @@ class ReconciliationModel {
         // Compute grand totals
         const grand = { books: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 }, gstr2b: { count: 0, tax: 0, igst: 0, cgst: 0, sgst: 0 } };
         Object.values(periodMap).forEach(p => {
-            ['books','gstr2b'].forEach(side => {
-                ['count','tax','igst','cgst','sgst'].forEach(k => { grand[side][k] += p[side][k]; });
+            ['books', 'gstr2b'].forEach(side => {
+                ['count', 'tax', 'igst', 'cgst', 'sgst'].forEach(k => { grand[side][k] += p[side][k]; });
             });
         });
 
@@ -1920,7 +1954,7 @@ class ReconciliationModel {
             .sort((a, b) => a.period.localeCompare(b.period))
             .map(p => ({
                 ...p,
-                categories: Object.values(p.categories).sort((a,b) => a.category.localeCompare(b.category))
+                categories: Object.values(p.categories).sort((a, b) => a.category.localeCompare(b.category))
             }));
 
         return { periods, grand };
