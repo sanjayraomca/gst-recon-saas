@@ -695,7 +695,7 @@ class ReconciliationModel {
      * Get list of reconciliation runs
      */
     static async getRuns(workspaceId, filters = {}, pagination = {}) {
-        const { gstin_id, period_id, status } = filters;
+        const { gstin_id, period_id, status, run_type } = filters;
         const { page = 1, page_size = 20 } = pagination;
         const offset = (page - 1) * page_size;
 
@@ -705,6 +705,7 @@ class ReconciliationModel {
         if (gstin_id) query.where({ gstin_id });
         if (period_id) query.where({ period_id });
         if (status) query.where({ status });
+        if (run_type) query.where({ run_type });
 
         const runs = await query.clone()
             .orderBy('created_at', 'desc')
@@ -754,7 +755,7 @@ class ReconciliationModel {
         // Verify run belongs to workspace
         let run;
         if (runId === 'all') {
-            run = { run_type: 'PURCHASE_2B' }; // Default for the 2B model
+            run = { run_type: filters.run_type || 'PURCHASE_2B' }; // Respect provided run_type filter
         } else {
             run = await this.getRunById(workspaceId, runId);
         }
