@@ -252,14 +252,46 @@ class NormalizedGstr2aModel {
         }));
     }
 
+    /**
+     * Check which source_row_ids already exist in the database.
+     * @param {string[]} sourceRowIds 
+     * @returns {Promise<Set<string>>}
+     */
+    static async checkExistingSourceIds(sourceRowIds) {
+        if (!sourceRowIds || sourceRowIds.length === 0) return new Set();
+
+        const query = `
+            SELECT source_row_id 
+            FROM normalized_gstr2a_invoices 
+            WHERE source_row_id = ANY(?)
+        `;
+        try {
+            const result = await db.raw(query, [sourceRowIds]);
+            return new Set(result.rows.map(r => r.source_row_id));
+        } catch (err) {
+            console.error('[NormalizedGstr2aModel] checkExistingSourceIds error:', err.message);
+            return new Set();
+        }
+    }
+
     static async batchInsert(rows) {
-        if (!rows || rows.length === 0) return { inserted: 0 };
+        if (!rows || rows.length === 0) return { inserted: 0, skipped: 0 };
+
+        const sourceIds = rows.map(r => r.source_row_id);
+        const existingIds = await this.checkExistingSourceIds(sourceIds);
+        
+        const newRows = rows.filter(r => !existingIds.has(r.source_row_id));
+        const skippedCount = rows.length - newRows.length;
+
+        if (newRows.length === 0) {
+            return { inserted: 0, skipped: skippedCount };
+        }
 
         const BATCH_SIZE = 500;
         let totalInserted = 0;
 
-        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-            const batch = rows.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < newRows.length; i += BATCH_SIZE) {
+            const batch = newRows.slice(i, i + BATCH_SIZE);
             const columns = Object.keys(batch[0]);
             const placeholders = batch
                 .map(() => `(${columns.map(() => '?').join(', ')})`)
@@ -269,7 +301,7 @@ class NormalizedGstr2aModel {
             const query = `
                 INSERT INTO normalized_gstr2a_invoices (${columns.join(', ')})
                 VALUES ${placeholders}
-                ON CONFLICT (workspace_id, source_section, COALESCE(supplier_gstin, ''), COALESCE(document_number_clean, ''), COALESCE(return_period, ''))
+                ON CONFLICT (source_row_id) 
                 DO NOTHING
             `;
 
@@ -282,8 +314,8 @@ class NormalizedGstr2aModel {
             }
         }
 
-        console.log(`[NormalizedGstr2aModel] Inserted ${totalInserted} normalized rows`);
-        return { inserted: totalInserted };
+        console.log(`[NormalizedGstr2aModel] Inserted ${totalInserted} rows, skipped ${skippedCount} duplicates`);
+        return { inserted: totalInserted, skipped: skippedCount };
     }
 }
 

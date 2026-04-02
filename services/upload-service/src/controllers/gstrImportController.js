@@ -467,7 +467,7 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_b2b_invoices' : 'gstr_2b_b2b_invoices' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.b2b += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -479,9 +479,15 @@ class GSTRImportController {
                                     if (!addedSet.has(inv.invoice_number)) allDuplicateInvoices.push(inv.invoice_number);
                                 });
 
-                                totalSkipped += b2bInvoices.length - inserted;
+                                const currentSectionSkipped = (b2bInvoices.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += b2bInvoices.length;
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: b2bInvoices.length, rowsInserted: inserted, rowsSkipped: b2bInvoices.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: b2bInvoices.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                             if (b2baInvoices.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'B2BA', sheetName);
@@ -494,7 +500,7 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_b2ba_invoices' : 'gstr_2b_b2ba_invoices' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.b2ba += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -505,9 +511,15 @@ class GSTRImportController {
                                     if (!addedSet.has(inv.revised_invoice_number)) allDuplicateInvoices.push(inv.revised_invoice_number);
                                 });
 
-                                totalSkipped += b2baInvoices.length - inserted;
+                                const currentSectionSkipped = (b2baInvoices.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += b2baInvoices.length;
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: b2baInvoices.length, rowsInserted: inserted, rowsSkipped: b2baInvoices.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: b2baInvoices.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                             if (cdnrNotes.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNR', sheetName);
@@ -520,7 +532,7 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_cdnr' : 'gstr_2b_cdnr' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.cdnr += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
@@ -531,7 +543,8 @@ class GSTRImportController {
                                     if (!addedSet.has(inv.note_number)) allDuplicateInvoices.push(inv.note_number);
                                 });
 
-                                totalSkipped += cdnrNotes.length - inserted;
+                                const currentSectionSkipped = (cdnrNotes.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += cdnrNotes.length;
                                 
                                 // SMART CAPTURE: Add suppliers from CDNR to master directory
@@ -544,7 +557,12 @@ class GSTRImportController {
                                     await SupplierMasterService.batchUpsert(workspaceId, uniqueCdnrSuppliers);
                                 }
 
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnrNotes.length, rowsInserted: inserted, rowsSkipped: cdnrNotes.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: cdnrNotes.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                             if (cdnraNotes.length > 0) {
                                 const logId = await GSTRImportModel.createImportLog(importRecord.import_filing_id, 'CDNRA', sheetName);
@@ -557,13 +575,19 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_cdnra' : 'gstr_2b_cdnra' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.cdnra += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += cdnraNotes.length - inserted;
+                                const currentSectionSkipped = (cdnraNotes.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += cdnraNotes.length;
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: cdnraNotes.length, rowsInserted: inserted, rowsSkipped: cdnraNotes.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: cdnraNotes.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                         }
                         else if (sName.includes('IMPG') || sName.includes('IMPS')) {
@@ -596,13 +620,19 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_impg' : 'gstr_2b_impg' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.impg += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += impgRecords.length - inserted;
+                                const currentSectionSkipped = (impgRecords.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += impgRecords.length;
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: impgRecords.length, rowsInserted: inserted, rowsSkipped: impgRecords.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: impgRecords.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                         }
                         else if (sName.includes('ISD')) {
@@ -638,13 +668,19 @@ class GSTRImportController {
                                     sourceTable: isGstr2a ? 'gstr_2a_isd' : 'gstr_2b_isd' 
                                 });
 
-                                const { inserted: normIns } = await NormalizedModel.batchInsert(normRows);
+                                const { inserted: normIns, skipped: normSkip = 0 } = await NormalizedModel.batchInsert(normRows);
                                 sectionCounters.isd += inserted;
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
-                                totalSkipped += isdRecords.length - inserted;
+                                const currentSectionSkipped = (isdRecords.length - inserted) + normSkip;
+                                totalSkipped += currentSectionSkipped;
                                 totalRecords += isdRecords.length;
-                                await GSTRImportModel.finishImportLog(logId, { rowsFound: isdRecords.length, rowsInserted: inserted, rowsSkipped: isdRecords.length - inserted, rowsNormalized: normIns });
+                                await GSTRImportModel.finishImportLog(logId, { 
+                                    rowsFound: isdRecords.length, 
+                                    rowsInserted: inserted, 
+                                    rowsSkipped: currentSectionSkipped, 
+                                    rowsNormalized: normIns 
+                                });
                             }
                         }
                     }

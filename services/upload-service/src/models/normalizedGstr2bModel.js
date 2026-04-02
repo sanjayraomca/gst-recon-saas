@@ -322,7 +322,7 @@ class NormalizedGstr2bModel {
         }
 
         console.log(`[NormalizedGstr2bModel] Inserted ${totalInserted} normalized rows`);
-        return { inserted: totalInserted };
+        return { inserted: totalInserted, skipped: 0 };
     }
 
     // ─────────────────────────────────────────────────────────────
