@@ -464,14 +464,14 @@ class BookDataModel {
      */
     static async getReconBookData(workspaceId, filters = {}) {
         const { gstin_id, fy_id, month, quarter, search, page = 1, page_size = 25 } = filters;
-        
+
         let query = knex('purchase_vouchers as pi')
             .where('pi.workspace_id', workspaceId)
             .andWhere(builder => {
                 builder.whereNotNull('pi.supplier_gstin')
-                       .andWhereNot('pi.supplier_gstin', '')
-                       .andWhereNotNull('pi.supplier_invoice_no')
-                       .andWhereNot('pi.supplier_invoice_no', '');
+                    .andWhereNot('pi.supplier_gstin', '')
+                    .andWhereNotNull('pi.supplier_invoice_no')
+                    .andWhereNot('pi.supplier_invoice_no', '');
             });
 
         if (gstin_id && gstin_id !== 'ALL') {
@@ -488,13 +488,13 @@ class BookDataModel {
         }
 
         if (search) {
-            query = query.where(function() {
+            query = query.where(function () {
                 this.where('pi.supplier_invoice_no', 'ilike', `%${search}%`)
                     .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
                     .orWhere('pi.supplier_name', 'ilike', `%${search}%`);
             });
         }
-        
+
         // Select fields aliased for frontend consistency
         query = query.leftJoin('reconciliation_status as rs', 'pi.id', 'rs.book_data_id')
             .select(
@@ -524,11 +524,11 @@ class BookDataModel {
         // Count totals
         const totalsQuery = query.clone().clearSelect().clearOrder().count('* as total').first();
         const totalsResult = await totalsQuery;
-        
+
         const results = await query.orderBy('pi.supplier_invoice_date', 'desc')
             .limit(page_size)
             .offset((page - 1) * page_size);
-            
+
         return {
             results,
             pagination: {

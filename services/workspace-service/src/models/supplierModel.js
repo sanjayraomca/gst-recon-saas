@@ -36,7 +36,7 @@ class SupplierModel {
 
             const params = [
                 workspaceId,
-                searchPattern, 
+                searchPattern,
                 searchPattern,
                 limit,
                 offset
@@ -60,7 +60,7 @@ class SupplierModel {
         try {
             const result = await knex('supplier_master')
                 .where('workspace_id', workspaceId)
-                .where(function() {
+                .where(function () {
                     this.where('gstin', 'ILIKE', searchPattern)
                         .orWhere('supplier_name', 'ILIKE', searchPattern);
                 })
@@ -87,7 +87,7 @@ class SupplierModel {
                     updated_at: knex.fn.now()
                 })
                 .returning('*');
-            
+
             return updated[0];
         } catch (error) {
             console.error('[SupplierModel] Error in updateContact:', error);
@@ -105,61 +105,37 @@ class SupplierModel {
 
         try {
             const rawQuery = `
-                WITH combined_filings AS (
-                    SELECT supplier_gstin, filing_period, return_period, filing_date, document_date, workspace_id, supplier_name
-                    FROM normalized_gstr2a_invoices
-                    WHERE workspace_id = ?::uuid
-                    UNION ALL
-                    SELECT supplier_gstin, filing_period, return_period, filing_date, document_date, workspace_id, supplier_name
-                    FROM normalized_gstr2b_invoices
-                    WHERE workspace_id = ?::uuid
-                ),
-                latest_filing AS (
+                WITH latest_filing AS (
                     SELECT DISTINCT ON (supplier_gstin)
-                        supplier_gstin,
+                        supplier_gstin as gstin,
                         filing_period,
                         return_period,
                         filing_date,
                         document_date,
-                        supplier_name,
+                        supplier_name as name,
                         workspace_id
-                    FROM combined_filings
-                    ORDER BY supplier_gstin, filing_date DESC NULLS LAST, document_date DESC NULLS LAST
-                ),
-                all_suppliers AS (
-                    /* Get all GSTINs from master */
-                    SELECT gstin, supplier_name as name, id as master_id, workspace_id, is_active
-                    FROM supplier_master
+                    FROM normalized_gstr2b_invoices
                     WHERE workspace_id = ?::uuid
-                    
-                    UNION
-                    
-                    /* Get all GSTINs from filings that are missing from master */
-                    SELECT supplier_gstin as gstin, supplier_name as name, NULL::uuid as master_id, workspace_id, true as is_active
-                    FROM latest_filing
-                    WHERE supplier_gstin NOT IN (SELECT gstin FROM supplier_master WHERE workspace_id = ?::uuid)
+                    ORDER BY supplier_gstin, filing_date DESC NULLS LAST, document_date DESC NULLS LAST
                 )
                 SELECT 
-                    COALESCE(als.master_id, gen_random_uuid()) as id, /* Fallback ID for UI mapping */
-                    als.gstin,
-                    COALESCE(als.name, lf.supplier_name, 'Unknown') as name,
+                    COALESCE(sm.id, gen_random_uuid()) as id,
+                    lf.gstin,
+                    COALESCE(lf.name, sm.supplier_name, 'Unknown') as name,
                     lf.filing_period as last_period,
                     lf.return_period as last_return_period,
                     lf.filing_date as last_date,
-                    als.is_active
-                FROM all_suppliers als
-                LEFT JOIN latest_filing lf ON lf.supplier_gstin = als.gstin
-                WHERE (als.gstin ILIKE ? OR COALESCE(als.name, '') ILIKE ?)
+                    COALESCE(sm.is_active, true) as is_active
+                FROM latest_filing lf
+                LEFT JOIN supplier_master sm ON sm.gstin = lf.gstin AND sm.workspace_id = lf.workspace_id
+                WHERE (lf.gstin ILIKE ? OR lf.name ILIKE ?)
                 ORDER BY name ASC NULLS LAST
                 LIMIT ? OFFSET ?
             `;
 
             const params = [
-                workspaceId, // 2A
-                workspaceId, // 2B
-                workspaceId, // all_suppliers (master)
-                workspaceId, // all_suppliers (missing check)
-                searchPattern, 
+                workspaceId, // GSTR-2B source
+                searchPattern,
                 searchPattern,
                 limit,
                 offset
@@ -210,8 +186,6 @@ class SupplierModel {
         try {
             const rawQuery = `
                 WITH combined_history AS (
-                    SELECT return_period, filing_date, filing_period, workspace_id, supplier_gstin FROM normalized_gstr2a_invoices
-                    UNION ALL
                     SELECT return_period, filing_date, filing_period, workspace_id, supplier_gstin FROM normalized_gstr2b_invoices
                 )
                 SELECT 
