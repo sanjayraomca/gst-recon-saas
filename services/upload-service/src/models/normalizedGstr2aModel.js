@@ -301,7 +301,7 @@ class NormalizedGstr2aModel {
             const query = `
                 INSERT INTO normalized_gstr2a_invoices (${columns.join(', ')})
                 VALUES ${placeholders}
-                ON CONFLICT (source_row_id) 
+                ON CONFLICT (workspace_id, source_section, COALESCE(supplier_gstin, ''), COALESCE(document_number_clean, ''), COALESCE(return_period, ''))
                 DO NOTHING
             `;
 

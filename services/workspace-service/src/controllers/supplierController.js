@@ -71,12 +71,12 @@ const getFilingStatusListing = async (req, res) => {
         const filters = {
             search: req.query.search || '',
             page: parseInt(req.query.page) || 1,
-            limit: parseInt(req.query.pageSize) || 10
+            limit: parseInt(req.query.limit) || parseInt(req.query.pageSize) || 10
         };
 
         const [suppliers, total] = await Promise.all([
             SupplierModel.getFilingStatusListing(workspaceId, filters),
-            SupplierModel.countAll(workspaceId, filters)
+            SupplierModel.countFilingStatusListing(workspaceId, filters)
         ]);
         
         return res.json({

@@ -32,7 +32,7 @@ const buildColumnMap = (headerRow) => {
         else if (header.includes('GSTIN OF SUPPLIER')) colMap['gstin_supplier'] = index;
         else if (header.includes('TRADE/LEGAL NAME') || header.includes('TRADE NAME') || header === 'NAME') colMap['trade_name'] = index;
 
-        else if (header.includes('INVOICE NUMBER') || header.includes('INVOICE/REF') || header.match(/INVOICE NO\b|INV NO\b/)) {
+        else if (header.includes('INVOICE NUMBER') || header.includes('INVOICE/REF') || header.includes('INVOICE/DEBIT/CREDIT NOTE NUMBER') || header.match(/INVOICE NO\b|INV NO\b/)) {
             if (colMap['invoice_number'] !== undefined) {
                 colMap['original_invoice_number'] = colMap['invoice_number'];
                 colMap['invoice_number'] = index;
@@ -49,7 +49,7 @@ const buildColumnMap = (headerRow) => {
             }
         }
         else if (header.match(/INVOICE TYPE|NOTE TYPE|GST TYPE|GSTR TYPE|DOCUMENT TYPE/)) colMap['invoice_type'] = index;
-        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE') || header.match(/INV DATE\b|NT DATE\b|IDT\b|NTDT\b/)) {
+        else if (header.includes('INVOICE DATE') || header.includes('NOTE DATE') || header.includes('INVOICE/DEBIT/CREDIT NOTE DATE') || header.match(/INV DATE\b|NT DATE\b|IDT\b|NTDT\b/)) {
             if (colMap['invoice_date'] !== undefined) {
                 colMap['original_invoice_date'] = colMap['invoice_date'];
                 colMap['invoice_date'] = index;

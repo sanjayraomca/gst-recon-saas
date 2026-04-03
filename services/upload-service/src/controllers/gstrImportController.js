@@ -314,7 +314,10 @@ class GSTRImportController {
 
                         if (sName.includes('B2B') || sName.includes('CDNR') || sName.includes('CDN') || sName.includes('DN')) {
                             const sheetRecords = processB2BSheet(jsonRows, null, return_period, sheetName, gstr_type);
-                            console.log(`[DEBUG] Extracted ${sheetRecords.length} records from processor for ${sheetName}`);
+                            console.log(`[DEBUG] Extracted ${sheetRecords.length} raw records from ${sheetName} for ${gstr_type}`);
+                            if (sheetRecords.length > 0) {
+                                console.log(`[DEBUG] Sample record from ${sheetName}:`, JSON.stringify(sheetRecords[0]));
+                            }
 
                             const b2bInvoices = sheetRecords
                                 .filter(r => (r.target_table === 'gstr_2b_b2b_invoices' || r.target_table === 'gstr_2a_b2b_invoices') && r.invoice_number && r.invoice_date)

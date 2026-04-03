@@ -36,13 +36,13 @@ const parseExcelDate = (dateVal) => {
         return dateVal.toISOString().split('T')[0];
     }
 
-    // If string in DD/MM/YYYY or DD-MM-YYYY
+    // If string in DD/MM/YYYY or DD-MM-YYYY or DD-MMM-YYYY
     if (typeof dateVal === 'string') {
         const cleanDate = dateVal.trim();
         const parts = cleanDate.split(/[\/\-]/);
         if (parts.length === 3) {
             let day, month, year;
-            if (parts[2].length === 4) { // DD/MM/YYYY
+            if (parts[2].length === 4) { // DD/MM/YYYY or DD-MMM-YYYY
                 [day, month, year] = parts;
             } else if (parts[0].length === 4) { // YYYY/MM/DD
                 [year, month, day] = parts;
@@ -55,8 +55,14 @@ const parseExcelDate = (dateVal) => {
                 year = '20' + year;
             }
 
+            // Handle MMM (Jan, Feb...)
+            const months = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+            if (isNaN(month) && months[month.toLowerCase().substring(0, 3)]) {
+                month = months[month.toLowerCase().substring(0, 3)];
+            }
+
             if (day && month && year) {
-                return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
             }
         }
     }
