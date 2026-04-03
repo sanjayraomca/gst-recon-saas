@@ -34,7 +34,7 @@ class BookDataModel {
                 return { table: 'sales', invoiceTypes: ['DEBIT_NOTE'] };
             case 'purchase_invoice':
             case 'PURCHASE_REGISTER':
-                return { table: 'purchase', voucherTypes: ['PURCHASE'] };
+                return { table: 'purchase', voucherTypes: ['PURCHASE', 'EXPENSE', 'CREDIT_NOTE', 'DEBIT_NOTE'] };
             case 'PURCHASE_UPLOAD':
                 return { table: 'purchase' }; // Includes all: PA, EXP, CN, DN
             case 'expense_invoice':
@@ -299,7 +299,12 @@ class BookDataModel {
                     'ev.status',
                     'ev.book_type as bookType',
                     'ev.book_type as docType',
+                    'ev.voucher_type as vchType',
+                    'ev.voucher_type',
+                    'ev.source_section',
+                    'ev.is_rcm as reverseCharge',
                     'ev.round_off as roundOff',
+                    knex.raw("count(*) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
                     knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
                     knex.raw("(SELECT tax_per FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as \"taxPercent\"")
                 )
