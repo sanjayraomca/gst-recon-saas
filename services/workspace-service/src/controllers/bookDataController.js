@@ -41,7 +41,7 @@ const getBookData = async (req, res) => {
         // If tenantId is not in token (dev/legacy tokens), skip the check
         // but still filter by workspace_id (still scoped per org)
 
-        const pagination = export_mode === 'true'
+        const pagination = (export_mode === 'true' || req.query.all === 'true')
             ? { page: 1, page_size: 50000 }
             : { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 200) };
 
