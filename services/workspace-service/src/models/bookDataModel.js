@@ -208,6 +208,7 @@ class BookDataModel {
         } else if (resolved.table === 'purchase') {
             // --- purchase_vouchers ---
             let q = knex('purchase_vouchers as ev')
+                .leftJoin('reconciliation_status as rs', 'ev.id', 'rs.book_data_id')
                 .where('ev.workspace_id', workspaceId);
 
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
@@ -304,6 +305,8 @@ class BookDataModel {
                     'ev.source_section',
                     'ev.is_rcm as reverseCharge',
                     'ev.round_off as roundOff',
+                    'rs.recon_status as workflow_status',
+                    knex.raw("COALESCE(rs.extra_info->>'match_status', 'missing_in_portal') as match_status"),
                     knex.raw("count(*) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
                     knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
                     knex.raw("(SELECT tax_per FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as \"taxPercent\"")
