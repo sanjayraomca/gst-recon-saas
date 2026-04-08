@@ -101,6 +101,7 @@ class BookDataModel {
 
         let records = [];
         let total = 0;
+        let summary = { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0, roundOff: 0, net: 0 };
 
         if (resolved.table === 'sales') {
             // --- sales_invoices ---
@@ -168,8 +169,28 @@ class BookDataModel {
             // sales_invoices has filing_status, not status
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
-            const [{ count }] = await q.clone().count('* as count');
-            total = parseInt(count);
+            const summaryQuery = q.clone().select(
+                knex.raw('count(*) as count'),
+                knex.raw('sum(total_taxable_value) as total_taxable'),
+                knex.raw('sum(total_igst) as total_igst'),
+                knex.raw('sum(total_cgst) as total_cgst'),
+                knex.raw('sum(total_sgst) as total_sgst'),
+                knex.raw('sum(total_cess) as total_cess'),
+                knex.raw('sum(total_invoice_value) as total_net'),
+                knex.raw('sum(round_off) as total_round_off')
+            ).first();
+
+            const summaryResult = await summaryQuery;
+            total = parseInt(summaryResult.count || 0);
+            summary = {
+                taxable: parseFloat(summaryResult.total_taxable || 0),
+                igst: parseFloat(summaryResult.total_igst || 0),
+                cgst: parseFloat(summaryResult.total_cgst || 0),
+                sgst: parseFloat(summaryResult.total_sgst || 0),
+                cess: parseFloat(summaryResult.total_cess || 0),
+                net: parseFloat(summaryResult.total_net || 0),
+                roundOff: parseFloat(summaryResult.total_round_off || 0)
+            };
 
             let sortCol = 'si.invoice_date';
             if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
@@ -268,8 +289,28 @@ class BookDataModel {
             // purchase_vouchers has a plain 'status' column
             if (status && status !== 'all') q = q.where('ev.status', status);
 
-            const [{ count }] = await q.clone().count('* as count');
-            total = parseInt(count);
+            const summaryQuery = q.clone().select(
+                knex.raw('count(*) as count'),
+                knex.raw('sum(taxable_total) as total_taxable'),
+                knex.raw('sum(total_igst_amount) as total_igst'),
+                knex.raw('sum(total_cgst_amount) as total_cgst'),
+                knex.raw('sum(total_sgst_amount) as total_sgst'),
+                knex.raw('sum(total_cess_amount) as total_cess'),
+                knex.raw('sum(round_off) as total_round_off'),
+                knex.raw('sum(net_amount) as total_net')
+            ).first();
+
+            const summaryResult = await summaryQuery;
+            total = parseInt(summaryResult.count || 0);
+            summary = {
+                taxable: parseFloat(summaryResult.total_taxable || 0),
+                igst: parseFloat(summaryResult.total_igst || 0),
+                cgst: parseFloat(summaryResult.total_cgst || 0),
+                sgst: parseFloat(summaryResult.total_sgst || 0),
+                cess: parseFloat(summaryResult.total_cess || 0),
+                roundOff: parseFloat(summaryResult.total_round_off || 0),
+                net: parseFloat(summaryResult.total_net || 0)
+            };
 
             let sortCol = 'ev.supplier_invoice_date';
             if (sort_by === 'invoiceNo') sortCol = 'ev.supplier_invoice_no';
@@ -318,6 +359,7 @@ class BookDataModel {
 
         return {
             data: records,
+            summary: summary, // Added summary totals
             pagination: {
                 page: parseInt(page),
                 page_size: parseInt(page_size),
