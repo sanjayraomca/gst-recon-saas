@@ -12,7 +12,7 @@ async function checkColumns() {
     const client = new Client(dbConfig);
     try {
         await client.connect();
-        
+
         console.log('--- Columns in sales_invoices ---');
         const salesCols = await client.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'sales_invoices'");
         console.log(salesCols.rows.map(r => r.column_name).join(', '));
