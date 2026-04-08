@@ -9,6 +9,8 @@ const resolveSalesInvoiceType = (vchType, custGstin) => {
     if (t === 'DN') return 'DEBIT_NOTE';
     if (t === 'EXPORT') return 'EXPORT';
     if (t === 'SEZ') return 'SEZ';
+    if (t === 'RDB2C') return 'B2C';
+    if (t === 'NONGST') return 'NO GST';
     return (custGstin && isValidGSTIN(custGstin)) ? 'B2B' : 'B2C_SMALL';
 };
 
@@ -17,6 +19,8 @@ const resolveSalesBookType = (vchType) => {
     if (t === 'SR') return 'SR';
     if (t === 'CN') return 'CN';
     if (t === 'DN') return 'DN';
+    if (t === 'RDB2C') return 'RDB2C';
+    if (t === 'NONGST') return 'NONGST';
     return 'SA';
 };
 
@@ -25,6 +29,8 @@ const resolvePurchaseVoucherType = (vchType) => {
     if (t === 'EXP' || t === 'EXPENSE') return 'EXPENSE';
     if (t === 'DN' || t === 'DEBIT_NOTE' || t === 'DEBIT NOTE') return 'DEBIT_NOTE';
     if (t === 'CN' || t === 'CREDIT_NOTE' || t === 'CREDIT NOTE') return 'CREDIT_NOTE';
+    if (t === 'RDB2C') return 'B2C';
+    if (t === 'NONGST') return 'NO GST';
     return 'PURCHASE'; 
 };
 
@@ -34,6 +40,8 @@ const resolvePurchaseBookType = (vchType) => {
     if (t === 'DN' || t === 'DEBIT_NOTE' || t === 'DEBIT NOTE') return 'DN';
     if (t === 'CN' || t === 'CREDIT_NOTE' || t === 'CREDIT NOTE') return 'CN';
     if (t === 'SR' || t === 'PR') return 'SR';
+    if (t === 'RDB2C') return 'RDB2C';
+    if (t === 'NONGST') return 'NONGST';
     return 'PA';
 };
 
@@ -43,7 +51,9 @@ const resolveSourceSection = (bookType, isAmendment, gstin) => {
     if (t === 'CN') return 'cdnr-c';
     if (t === 'DN') return 'cdnr-d';
     if (t === 'SR' || t === 'PR') return 'cdnr-r';
-    if ((t === 'PA' || t === 'EXP' || t === 'SA') && gstin) return 'b2b';
+    if (t === 'RDB2C') return 'B2C';
+    if (t === 'NONGST') return 'NO GST';
+    if ((t === 'PA' || t === 'EXP' || t === 'SA') && gstin) return 'B2B';
     return null;
 };
 
