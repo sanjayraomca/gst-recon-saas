@@ -102,6 +102,7 @@ class BookDataModel {
         let records = [];
         let total = 0;
         let summary = { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0, roundOff: 0, net: 0 };
+        const group_by_supplier = filters.group_by_supplier === 'true' || filters.group_by === 'supplier';
 
         if (resolved.table === 'sales') {
             // --- sales_invoices ---
@@ -170,7 +171,7 @@ class BookDataModel {
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
             const summaryQuery = q.clone().select(
-                knex.raw('count(*) as count'),
+                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(si.customer_gstin), \'\'), coalesce(si.customer_name, \'\'))) as count' : 'count(*) as count'),
                 knex.raw('sum(total_taxable_value) as total_taxable'),
                 knex.raw('sum(total_igst) as total_igst'),
                 knex.raw('sum(total_cgst) as total_cgst'),
@@ -199,32 +200,54 @@ class BookDataModel {
             else if (sort_by === 'totalAmt') sortCol = 'si.total_invoice_value';
             else if (sort_by === 'date') sortCol = 'si.invoice_date';
 
-            records = await q
-                .select(
-                    'si.id',
-                    'si.invoice_number as invoiceNo',
-                    'si.invoice_number as invoice_number',
-                    knex.raw("to_char(si.invoice_date, 'DD-MM-YYYY') as date"),
-                    'si.customer_name as party',
-                    knex.raw("trim(si.customer_gstin) as gstin"),
-                    'si.total_taxable_value as taxableAmt',
-                    'si.total_cgst as cgst',
-                    'si.total_sgst as sgst',
-                    'si.total_igst as igst',
-                    'si.total_cess as cess',
-                    'si.total_invoice_value as totalAmt',
-                    'si.place_of_supply as placeOfSupply',
-                    knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
-                    'si.filing_status as status',
-                    'si.invoice_type as docType',
-                    'si.book_type as bookType',
-                    'si.round_off as roundOff',
-                    knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
-                    knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\"")
-                )
-                .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
-                .limit(page_size)
-                .offset(offset);
+            if (group_by_supplier) {
+                records = await q
+                    .select(
+                        knex.raw('si.customer_name as party'),
+                        knex.raw('trim(si.customer_gstin) as gstin'),
+                        knex.raw('sum(si.total_taxable_value) as "taxableAmt"'),
+                        knex.raw('sum(si.total_cgst) as cgst'),
+                        knex.raw('sum(si.total_sgst) as sgst'),
+                        knex.raw('sum(si.total_igst) as igst'),
+                        knex.raw('sum(si.total_cess) as cess'),
+                        knex.raw('sum(si.total_invoice_value) as "totalAmt"'),
+                        knex.raw('sum(si.round_off) as "roundOff"'),
+                        knex.raw('count(*) as "invoiceCount"'),
+                        knex.raw('max(si.place_of_supply) as "placeOfSupply"'),
+                        knex.raw('max(si.invoice_type) as "docType"')
+                    )
+                    .groupByRaw('trim(si.customer_gstin), si.customer_name')
+                    .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
+                    .limit(page_size)
+                    .offset(offset);
+            } else {
+                records = await q
+                    .select(
+                        'si.id',
+                        'si.invoice_number as invoiceNo',
+                        'si.invoice_number as invoice_number',
+                        knex.raw("to_char(si.invoice_date, 'DD-MM-YYYY') as date"),
+                        'si.customer_name as party',
+                        knex.raw("trim(si.customer_gstin) as gstin"),
+                        'si.total_taxable_value as taxableAmt',
+                        'si.total_cgst as cgst',
+                        'si.total_sgst as sgst',
+                        'si.total_igst as igst',
+                        'si.total_cess as cess',
+                        'si.total_invoice_value as totalAmt',
+                        'si.place_of_supply as placeOfSupply',
+                        knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
+                        'si.filing_status as status',
+                        'si.invoice_type as docType',
+                        'si.book_type as bookType',
+                        'si.round_off as roundOff',
+                        knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
+                        knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\"")
+                    )
+                    .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
+                    .limit(page_size)
+                    .offset(offset);
+            }
 
         } else if (resolved.table === 'purchase') {
             // --- purchase_vouchers ---
@@ -290,7 +313,7 @@ class BookDataModel {
             if (status && status !== 'all') q = q.where('ev.status', status);
 
             const summaryQuery = q.clone().select(
-                knex.raw('count(*) as count'),
+                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(ev.supplier_gstin), \'\'), coalesce(ev.supplier_name, \'\'))) as count' : 'count(*) as count'),
                 knex.raw('sum(taxable_total) as total_taxable'),
                 knex.raw('sum(total_igst_amount) as total_igst'),
                 knex.raw('sum(total_cgst_amount) as total_cgst'),
@@ -319,42 +342,64 @@ class BookDataModel {
             else if (sort_by === 'totalAmt') sortCol = 'ev.net_amount';
             else if (sort_by === 'date') sortCol = 'ev.supplier_invoice_date';
 
-            records = await q
-                .select(
-                    'ev.id',
-                    'ev.supplier_invoice_no as invoiceNo',
-                    'ev.supplier_invoice_no as invoice_number',
-                    'ev.book_vchr_no as bookVchrNo',
-                    'ev.book_vchr_no as book_vchr_no',
-                    knex.raw("to_char(ev.supplier_invoice_date, 'DD-MM-YYYY') as date"),
-                    knex.raw("to_char(ev.book_vchr_date, 'DD-MM-YYYY') as \"bookVchrDate\""),
-                    'ev.supplier_name as party',
-                    'ev.supplier_gstin as gstin',
-                    'ev.taxable_total as taxableAmt',
-                    'ev.total_cgst_amount as cgst',
-                    'ev.total_sgst_amount as sgst',
-                    'ev.total_igst_amount as igst',
-                    'ev.total_cess_amount as cess',
-                    'ev.net_amount as totalAmt',
-                    'ev.place_of_supply as placeOfSupply',
-                    'ev.is_interstate as isInterstate',
-                    'ev.status',
-                    'ev.book_type as bookType',
-                    'ev.book_type as docType',
-                    'ev.voucher_type as vchType',
-                    'ev.voucher_type',
-                    'ev.source_section',
-                    'ev.is_rcm as reverseCharge',
-                    'ev.round_off as roundOff',
-                    'rs.recon_status as workflow_status',
-                    knex.raw("COALESCE(rs.extra_info->>'match_status', 'missing_in_portal') as match_status"),
-                    knex.raw("count(*) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
-                    knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
-                    knex.raw("(SELECT tax_per FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as \"taxPercent\"")
-                )
-                .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
-                .limit(page_size)
-                .offset(offset);
+            if (group_by_supplier) {
+                records = await q
+                    .select(
+                        knex.raw('ev.supplier_name as party'),
+                        knex.raw('ev.supplier_gstin as gstin'),
+                        knex.raw('sum(ev.taxable_total) as "taxableAmt"'),
+                        knex.raw('sum(ev.total_cgst_amount) as cgst'),
+                        knex.raw('sum(ev.total_sgst_amount) as sgst'),
+                        knex.raw('sum(ev.total_igst_amount) as igst'),
+                        knex.raw('sum(ev.total_cess_amount) as cess'),
+                        knex.raw('sum(ev.net_amount) as "totalAmt"'),
+                        knex.raw('sum(ev.round_off) as "roundOff"'),
+                        knex.raw('count(*) as "invoiceCount"'),
+                        knex.raw('max(ev.place_of_supply) as "placeOfSupply"'),
+                        knex.raw('max(ev.voucher_type) as "vchType"')
+                    )
+                    .groupByRaw('ev.supplier_gstin, ev.supplier_name')
+                    .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
+                    .limit(page_size)
+                    .offset(offset);
+            } else {
+                records = await q
+                    .select(
+                        'ev.id',
+                        'ev.supplier_invoice_no as invoiceNo',
+                        'ev.supplier_invoice_no as invoice_number',
+                        'ev.book_vchr_no as bookVchrNo',
+                        'ev.book_vchr_no as book_vchr_no',
+                        knex.raw("to_char(ev.supplier_invoice_date, 'DD-MM-YYYY') as date"),
+                        knex.raw("to_char(ev.book_vchr_date, 'DD-MM-YYYY') as \"bookVchrDate\""),
+                        'ev.supplier_name as party',
+                        'ev.supplier_gstin as gstin',
+                        'ev.taxable_total as taxableAmt',
+                        'ev.total_cgst_amount as cgst',
+                        'ev.total_sgst_amount as sgst',
+                        'ev.total_igst_amount as igst',
+                        'ev.total_cess_amount as cess',
+                        'ev.net_amount as totalAmt',
+                        'ev.place_of_supply as placeOfSupply',
+                        'ev.is_interstate as isInterstate',
+                        'ev.status',
+                        'ev.book_type as bookType',
+                        'ev.book_type as docType',
+                        'ev.voucher_type as vchType',
+                        'ev.voucher_type',
+                        'ev.source_section',
+                        'ev.is_rcm as reverseCharge',
+                        'ev.round_off as roundOff',
+                        'rs.recon_status as workflow_status',
+                        knex.raw("COALESCE(rs.extra_info->>'match_status', 'missing_in_portal') as match_status"),
+                        knex.raw("count(*) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
+                        knex.raw("(SELECT description FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as description"),
+                        knex.raw("(SELECT tax_per FROM purchase_items WHERE purchase_id = ev.id ORDER BY id ASC LIMIT 1) as \"taxPercent\"")
+                    )
+                    .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
+                    .limit(page_size)
+                    .offset(offset);
+            }
         }
 
         return {

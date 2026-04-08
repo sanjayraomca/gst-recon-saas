@@ -48,7 +48,7 @@ const getBookData = async (req, res) => {
         const result = await BookDataModel.getByType(
             workspaceId,
             type,
-            { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir },
+            { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir, group_by_supplier: req.query.group_by_supplier || req.query.group_by },
             pagination
         );
 
