@@ -537,7 +537,7 @@ class BookDataModel {
                         'ev.book_type as docType',
                         'ev.voucher_type as vchType',
                         'ev.voucher_type',
-                        'ev.source_section',
+                        'ev.source_section as gstType',
                         'ev.is_rcm as reverseCharge',
                         'ev.round_off as roundOff',
                         'rs.recon_status as workflow_status',
@@ -622,6 +622,7 @@ class BookDataModel {
                 knex.raw('COALESCE(SUM(si.total_cgst),0) as cgst'),
                 knex.raw('COALESCE(SUM(si.total_sgst),0) as sgst'),
                 knex.raw('COALESCE(SUM(si.total_cess),0) as cess'),
+                knex.raw('COALESCE(SUM(si.round_off),0) as round_off'),
                 knex.raw('COALESCE(SUM(si.total_invoice_value),0) as invoice_value')
             );
             salesResults[t.id] = {
@@ -631,6 +632,7 @@ class BookDataModel {
                 cgst: parseFloat(row.cgst),
                 sgst: parseFloat(row.sgst),
                 cess: parseFloat(row.cess),
+                roundOff: parseFloat(row.round_off),
                 invoiceValue: parseFloat(row.invoice_value)
             };
         }
@@ -689,6 +691,7 @@ class BookDataModel {
                 knex.raw('COALESCE(SUM(ev.total_cgst_amount),0) as cgst'),
                 knex.raw('COALESCE(SUM(ev.total_sgst_amount),0) as sgst'),
                 knex.raw('COALESCE(SUM(ev.total_cess_amount),0) as cess'),
+                knex.raw('COALESCE(SUM(ev.round_off),0) as round_off'),
                 knex.raw('COALESCE(SUM(ev.net_amount),0) as invoice_value')
             );
             purchaseResults[t.id] = {
@@ -698,6 +701,7 @@ class BookDataModel {
                 cgst: parseFloat(row.cgst),
                 sgst: parseFloat(row.sgst),
                 cess: parseFloat(row.cess),
+                roundOff: parseFloat(row.round_off),
                 invoiceValue: parseFloat(row.invoice_value)
             };
         }
