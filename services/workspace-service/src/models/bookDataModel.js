@@ -91,13 +91,114 @@ class BookDataModel {
         return q.whereRaw(`to_char(${dateCol}, 'YYYY-MM') = ?`, [period]);
     }
 
+    /**
+     * _applyColumnFilters - Helper to apply dynamic column-level filters (JSON-based)
+     * Supports various operations like eq, cn, bw, gt, lt, etc.
+     */
+    static _applyColumnFilters(q, columnFilters, mapping) {
+        if (!columnFilters || Object.keys(columnFilters).length === 0) return q;
+
+        Object.entries(columnFilters).forEach(([colKey, filter]) => {
+            if (!filter || (!filter.val && !['nu', 'nn'].includes(filter.op))) return;
+
+            const dbCol = mapping[colKey];
+            if (!dbCol) return;
+
+            const { op, val } = filter;
+            const lowVal = String(val || '').toLowerCase();
+
+            switch (op) {
+                case 'eq': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) = ?`, [lowVal]); break;
+                case 'ne': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) != ?`, [lowVal]); break;
+                case 'bw': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
+                case 'bn': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`${lowVal}%`]); break;
+                case 'ew': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
+                case 'en': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
+                case 'cn': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
+                case 'nc': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
+                case 'lt': q.where(dbCol, '<', val); break;
+                case 'le': q.where(dbCol, '<=', val); break;
+                case 'gt': q.where(dbCol, '>', val); break;
+                case 'ge': q.where(dbCol, '>=', val); break;
+                case 'in':
+                    const vals = String(val).split(',').map(v => v.trim()).filter(Boolean);
+                    if (vals.length > 0) q.whereIn(dbCol, vals);
+                    break;
+                case 'ni':
+                    const nvals = String(val).split(',').map(v => v.trim()).filter(Boolean);
+                    if (nvals.length > 0) q.whereNotIn(dbCol, nvals);
+                    break;
+                case 'nu': q.whereNull(dbCol).orWhereRaw(`CAST(${dbCol} AS TEXT) = ''`); break;
+                case 'nn': q.whereNotNull(dbCol).whereRaw(`CAST(${dbCol} AS TEXT) != ''`); break;
+                
+                // Date specific ops (Today, Yesterday, etc.) handled by frontend passing the right date range
+                // or we can handle "custom" here if needed.
+                case 'today':
+                case 'yesterday':
+                case 'last7':
+                case 'last30':
+                case 'custom':
+                    if (val) q.whereRaw(`${dbCol}::date = ?::date`, [val]);
+                    break;
+            }
+        });
+        return q;
+    }
+
+    /**
+     * _applyAdvancedFilters - Shared logic for sidebar/adv filters.
+     */
+    static _applyAdvancedFilters(q, filters, mapping) {
+        // GSTINs (Multi)
+        if (filters.gstins && Array.isArray(filters.gstins) && filters.gstins.length > 0) {
+            q.whereIn(mapping.gstin, filters.gstins);
+        }
+        // Parties (Multi)
+        if (filters.parties && Array.isArray(filters.parties) && filters.parties.length > 0) {
+            q.whereIn(mapping.party, filters.parties);
+        }
+        // Supply Type
+        if (filters.supply_type === 'INTERSTATE') {
+            q.where(mapping.is_interstate, true);
+        } else if (filters.supply_type === 'INTRASTATE') {
+            q.where(mapping.is_interstate, false);
+        }
+        // Roundoff only
+        if (filters.roundoff_only === 'true' || filters.roundoff_only === true || filters.roundoff_only == 1) {
+            q.whereRaw(`COALESCE(${mapping.roundoff}, 0) != 0`);
+        }
+        // Amount Range (Taxable)
+        if (filters.amt_min) q.whereRaw(`${mapping.taxableAmt} >= ?`, [parseFloat(filters.amt_min)]);
+        if (filters.amt_max) q.whereRaw(`${mapping.taxableAmt} <= ?`, [parseFloat(filters.amt_max)]);
+        // Amount Range (Net)
+        if (filters.amt_net_min) q.whereRaw(`${mapping.totalAmt} >= ?`, [parseFloat(filters.amt_net_min)]);
+        if (filters.amt_net_max) q.whereRaw(`${mapping.totalAmt} <= ?`, [parseFloat(filters.amt_net_max)]);
+        
+        // Place of Supply (Multi)
+        if (filters.place_of_supply) {
+            const codes = String(filters.place_of_supply).split(',').filter(Boolean);
+            if (codes.length > 0) {
+                q.where(function () {
+                    codes.forEach(code => {
+                        this.orWhere(mapping.placeOfSupply, 'ilike', `${code.trim()}%`);
+                    });
+                });
+            }
+        }
+        return q;
+    }
+
     static async getByType(workspaceId, bookTypeId, filters = {}, pagination = {}) {
         const resolved = BookDataModel._resolveType(bookTypeId);
         if (!resolved) throw new Error(`Unknown book type: ${bookTypeId}`);
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
-        const { search, status, period, gstin, date_from, date_to, year, amt_min, amt_max, place_of_supply, sort_by, sort_dir = 'desc' } = filters;
+        const { 
+            search, status, period, gstin, date_from, date_to, year, 
+            amt_min, amt_max, amt_net_min, amt_net_max,
+            place_of_supply, sort_by, sort_dir = 'desc' 
+        } = filters;
 
         let records = [];
         let total = 0;
@@ -112,8 +213,42 @@ class BookDataModel {
             if (resolved.invoiceTypes) q = q.whereIn('si.invoice_type', resolved.invoiceTypes);
             if (resolved.bookTypes) q = q.whereIn('si.book_type', resolved.bookTypes);
 
-            // Period, Year, and Date Range logic (Combined OR)
-            q = q.where(function () {
+            // Advanced filters
+            BookDataModel._applyAdvancedFilters(q, filters, {
+                gstin: 'si.customer_gstin',
+                party: 'si.customer_name',
+                is_interstate: 'si.is_interstate',
+                roundoff: 'si.round_off',
+                taxableAmt: 'si.total_taxable_value',
+                totalAmt: 'si.total_invoice_value',
+                placeOfSupply: 'si.place_of_supply'
+            });
+
+            // Column filters mapping
+            const colMapping = {
+                invoiceNo: 'si.invoice_number',
+                date: 'si.invoice_date',
+                party: 'si.customer_name',
+                gstin: 'si.customer_gstin',
+                taxableAmt: 'si.total_taxable_value',
+                igst: 'si.total_igst',
+                cgst: 'si.total_cgst',
+                sgst: 'si.total_sgst',
+                cess: 'si.total_cess',
+                totalAmt: 'si.total_invoice_value',
+                status: 'si.filing_status',
+                docType: 'si.invoice_type',
+                placeOfSupply: 'si.place_of_supply'
+            };
+
+            if (filters.column_filters) {
+                let cf = filters.column_filters;
+                if (typeof cf === 'string') cf = JSON.parse(cf);
+                BookDataModel._applyColumnFilters(q, cf, colMapping);
+            }
+
+            // Apply legacy period/search logic alongside new filters for full composability
+                q = q.where(function () {
                 // If we have period, use it (ANDed with others usually, but here we treat as one of the options)
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {
@@ -155,18 +290,7 @@ class BookDataModel {
             }
             if (date_from) q = q.whereRaw(`si.invoice_date >= ?::date`, [date_from]);
             if (date_to) q = q.whereRaw(`si.invoice_date <= ?::date`, [date_to]);
-            if (amt_min) q = q.whereRaw(`si.total_taxable_value >= ?`, [parseFloat(amt_min)]);
-            if (amt_max) q = q.whereRaw(`si.total_taxable_value <= ?`, [parseFloat(amt_max)]);
-            if (place_of_supply) {
-                const codes = place_of_supply.split(',').filter(Boolean);
-                if (codes.length > 0) {
-                    q = q.where(function () {
-                        codes.forEach(code => {
-                            this.orWhere('si.place_of_supply', 'ilike', `${code}%`);
-                        });
-                    });
-                }
-            }
+
             // sales_invoices has filing_status, not status
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
@@ -258,8 +382,45 @@ class BookDataModel {
             if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
             if (resolved.bookTypes) q = q.whereIn('ev.book_type', resolved.bookTypes);
 
-            // Period, Year, and Date Range logic (Combined OR)
-            q = q.where(function () {
+            // Advanced filters
+            BookDataModel._applyAdvancedFilters(q, filters, {
+                gstin: 'ev.supplier_gstin',
+                party: 'ev.supplier_name',
+                is_interstate: 'ev.is_interstate',
+                roundoff: 'ev.round_off',
+                taxableAmt: 'ev.taxable_total',
+                totalAmt: 'ev.net_amount',
+                placeOfSupply: 'ev.place_of_supply'
+            });
+
+            // Column filters mapping
+            const colMappingPr = {
+                invoiceNo: 'ev.supplier_invoice_no',
+                bookVchrNo: 'ev.book_vchr_no',
+                date: 'ev.supplier_invoice_date',
+                bookVchrDate: 'ev.book_vchr_date',
+                party: 'ev.supplier_name',
+                gstin: 'ev.supplier_gstin',
+                taxableAmt: 'ev.taxable_total',
+                igst: 'ev.total_igst_amount',
+                cgst: 'ev.total_cgst_amount',
+                sgst: 'ev.total_sgst_amount',
+                cess: 'ev.total_cess_amount',
+                totalAmt: 'ev.net_amount',
+                status: 'ev.status',
+                docType: 'ev.book_type',
+                vchType: 'ev.voucher_type',
+                placeOfSupply: 'ev.place_of_supply'
+            };
+
+            if (filters.column_filters) {
+                let cf = filters.column_filters;
+                if (typeof cf === 'string') cf = JSON.parse(cf);
+                BookDataModel._applyColumnFilters(q, cf, colMappingPr);
+            }
+
+            // Apply legacy logic alongside new filters
+                q = q.where(function () {
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {
                         BookDataModel._addPeriodFilter(this, period, 'ev.supplier_invoice_date');
@@ -297,18 +458,7 @@ class BookDataModel {
             }
             if (date_from) q = q.whereRaw(`ev.supplier_invoice_date >= ?::date`, [date_from]);
             if (date_to) q = q.whereRaw(`ev.supplier_invoice_date <= ?::date`, [date_to]);
-            if (amt_min) q = q.whereRaw(`ev.taxable_total >= ?`, [parseFloat(amt_min)]);
-            if (amt_max) q = q.whereRaw(`ev.taxable_total <= ?`, [parseFloat(amt_max)]);
-            if (place_of_supply) {
-                const codes = place_of_supply.split(',').filter(Boolean);
-                if (codes.length > 0) {
-                    q = q.where(function () {
-                        codes.forEach(code => {
-                            this.orWhere('ev.place_of_supply', 'ilike', `${code}%`);
-                        });
-                    });
-                }
-            }
+
             // purchase_vouchers has a plain 'status' column
             if (status && status !== 'all') q = q.where('ev.status', status);
 
@@ -417,7 +567,8 @@ class BookDataModel {
      * getSummary - returns aggregate totals for all 9 book types in a single call.
      * Used by the grouped cards UI to show live counts + tax breakdown per type.
      */
-    static async getSummary(workspaceId, { period, year, date_from, date_to } = {}) {
+    static async getSummary(workspaceId, filters = {}) {
+        const { period, year, date_from, date_to } = filters;
         // --- Sales types ---
         const salesTypes = [
             { id: 'sales_invoice', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'], bookTypes: null },
@@ -430,6 +581,17 @@ class BookDataModel {
             let q = knex('sales_invoices as si').where('si.workspace_id', workspaceId);
             if (t.invoiceTypes) q = q.whereIn('si.invoice_type', t.invoiceTypes);
             if (t.bookTypes) q = q.whereIn('si.book_type', t.bookTypes);
+
+            // Advanced filters
+            BookDataModel._applyAdvancedFilters(q, filters, {
+                gstin: 'si.customer_gstin',
+                party: 'si.customer_name',
+                is_interstate: 'si.is_interstate',
+                roundoff: 'si.round_off',
+                taxableAmt: 'si.total_taxable_value',
+                totalAmt: 'si.total_invoice_value',
+                placeOfSupply: 'si.place_of_supply'
+            });
 
             q = q.where(function () {
                 if (period && period !== 'ALL') {
@@ -486,6 +648,17 @@ class BookDataModel {
             let q = knex('purchase_vouchers as ev').where('ev.workspace_id', workspaceId);
             if (t.voucherTypes) q = q.whereIn('ev.voucher_type', t.voucherTypes);
             if (t.bookTypes) q = q.whereIn('ev.book_type', t.bookTypes);
+
+            // Advanced filters
+            BookDataModel._applyAdvancedFilters(q, filters, {
+                gstin: 'ev.supplier_gstin',
+                party: 'ev.supplier_name',
+                is_interstate: 'ev.is_interstate',
+                roundoff: 'ev.round_off',
+                taxableAmt: 'ev.taxable_total',
+                totalAmt: 'ev.net_amount',
+                placeOfSupply: 'ev.place_of_supply'
+            });
 
             q = q.where(function () {
                 if (period && period !== 'ALL') {
@@ -632,6 +805,50 @@ class BookDataModel {
                 page_size: parseInt(page_size)
             }
         };
+    }
+
+    /**
+     * getMasters - fetches unique GSTINs and Party Names for multi-select filters.
+     */
+    static async getMasters(workspaceId, bookTypeId) {
+        const resolved = BookDataModel._resolveType(bookTypeId);
+        if (!resolved) throw new Error(`Unknown book type: ${bookTypeId}`);
+
+        if (resolved.table === 'sales') {
+            let qGstins = knex('sales_invoices')
+                .where('workspace_id', workspaceId)
+                .whereNotNull('customer_gstin')
+                .whereNot('customer_gstin', '')
+                .select(knex.raw('DISTINCT trim(customer_gstin) as value'), knex.raw('trim(customer_gstin) as label'))
+                .orderBy('value', 'asc');
+
+            let qParties = knex('sales_invoices')
+                .where('workspace_id', workspaceId)
+                .whereNotNull('customer_name')
+                .whereNot('customer_name', '')
+                .select(knex.raw('DISTINCT customer_name as value'), knex.raw('customer_name as label'))
+                .orderBy('value', 'asc');
+
+            const [gstins, parties] = await Promise.all([qGstins, qParties]);
+            return { gstins, parties };
+        } else {
+            let qGstins = knex('purchase_vouchers')
+                .where('workspace_id', workspaceId)
+                .whereNotNull('supplier_gstin')
+                .whereNot('supplier_gstin', '')
+                .select(knex.raw('DISTINCT trim(supplier_gstin) as value'), knex.raw('trim(supplier_gstin) as label'))
+                .orderBy('value', 'asc');
+
+            let qParties = knex('purchase_vouchers')
+                .where('workspace_id', workspaceId)
+                .whereNotNull('supplier_name')
+                .whereNot('supplier_name', '')
+                .select(knex.raw('DISTINCT supplier_name as value'), knex.raw('supplier_name as label'))
+                .orderBy('value', 'asc');
+
+            const [gstins, parties] = await Promise.all([qGstins, qParties]);
+            return { gstins, parties };
+        }
     }
 }
 

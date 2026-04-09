@@ -1,6 +1,7 @@
 const BookDataModel = require('../models/bookDataModel');
 const knex = require('../../../shared/src/db/connection');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * BookDataController
@@ -16,7 +17,13 @@ const getBookData = async (req, res) => {
             return errorResponse(res, 'X-Workspace-ID header is required', 400);
         }
 
-        const { type, search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, page, page_size, sort_by, sort_dir, export_mode } = req.query;
+        const { 
+            type, search, status, period, gstin, date_from, date_to, 
+            amt_min, amt_max, minNetAmt, maxNetAmt, place_of_supply, page, page_size, 
+            sort_by, sort_dir, export_mode,
+            gstins, parties, supply_type, roundoff_only, column_filters
+        } = req.query;
+
         if (!type) {
             return errorResponse(res, 'Query param "type" is required (e.g. sales_invoice, cn_purchase)', 400);
         }
@@ -45,12 +52,40 @@ const getBookData = async (req, res) => {
             ? { page: 1, page_size: 50000 }
             : { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 200) };
 
+        // Parse multi-select arrays if they come as strings
+        const parseArr = (val) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return val.split(',').filter(Boolean);
+        };
+
         const result = await BookDataModel.getByType(
             workspaceId,
             type,
-            { search, status, period, gstin, date_from, date_to, amt_min, amt_max, place_of_supply, sort_by, sort_dir, group_by_supplier: req.query.group_by_supplier || req.query.group_by },
+            { 
+                search, status, period, gstin, date_from, date_to, 
+                amt_min, amt_max, amt_net_min: minNetAmt, amt_net_max: maxNetAmt,
+                place_of_supply, sort_by, sort_dir, 
+                group_by_supplier: req.query.group_by_supplier || req.query.group_by,
+                gstins: parseArr(gstins),
+                parties: parseArr(parties),
+                supply_type,
+                roundoff_only,
+                column_filters
+            },
             pagination
         );
+
+        // --- ACTIVITY LOG ---
+        await logActivity({
+            userId: req.user?.id || req.user?.sub,
+            tenantId: tenantId,
+            workspaceId: workspaceId,
+            actionType: 'VIEW',
+            entityType: 'BOOK_DATA',
+            details: { type, page: pagination.page, filterCount: Object.keys(column_filters || {}).length },
+            req
+        });
 
         return successResponse(res, result, `${type} records retrieved successfully`);
     } catch (error) {
@@ -64,7 +99,11 @@ const getBookDataSummary = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        const { period, year, date_from, date_to } = req.query;
+        const { 
+            period, year, date_from, date_to,
+            amt_min, amt_max, minNetAmt, maxNetAmt,
+            gstins, parties, supply_type, roundoff_only, place_of_supply
+        } = req.query;
 
         const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
         if (tenantId) {
@@ -72,7 +111,33 @@ const getBookDataSummary = async (req, res) => {
             if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
         }
 
-        const summary = await BookDataModel.getSummary(workspaceId, { period, year, date_from, date_to });
+        const parseArr = (val) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return val.split(',').filter(Boolean);
+        };
+
+        const summary = await BookDataModel.getSummary(workspaceId, { 
+            period, year, date_from, date_to,
+            amt_min, amt_max, amt_net_min: minNetAmt, amt_net_max: maxNetAmt,
+            gstins: parseArr(gstins),
+            parties: parseArr(parties),
+            supply_type,
+            roundoff_only,
+            place_of_supply
+        });
+
+        // --- ACTIVITY LOG ---
+        await logActivity({
+            userId: req.user?.id || req.user?.sub,
+            tenantId: tenantId,
+            workspaceId: workspaceId,
+            actionType: 'VIEW_SUMMARY',
+            entityType: 'BOOK_DATA',
+            details: { period, year },
+            req
+        });
+
         return successResponse(res, summary, 'Summary retrieved successfully');
     } catch (error) {
         console.error('BookDataController.getBookDataSummary error:', error);
@@ -104,5 +169,27 @@ const getBookDataById = async (req, res) => {
     }
 };
 
-module.exports = { getBookData, getBookDataSummary, getBookDataById };
+const getBookDataMasters = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+
+        const { type } = req.query;
+        if (!type) return errorResponse(res, 'Query param "type" is required', 400);
+
+        const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
+        if (tenantId) {
+            const workspace = await knex('workspaces').where({ id: workspaceId, tenant_id: tenantId }).select('id').first();
+            if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
+        }
+
+        const masters = await BookDataModel.getMasters(workspaceId, type);
+        return successResponse(res, masters, 'Masters retrieved successfully');
+    } catch (error) {
+        console.error('BookDataController.getBookDataMasters error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+module.exports = { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters };
 
