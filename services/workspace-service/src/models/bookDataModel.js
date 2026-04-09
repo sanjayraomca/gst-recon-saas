@@ -488,11 +488,19 @@ class BookDataModel {
             };
 
             let sortCol = 'ev.supplier_invoice_date';
-            if (sort_by === 'invoiceNo') sortCol = 'ev.supplier_invoice_no';
+            if (sort_by === 'invoiceNo' || sort_by === 'ref_vchr_no') sortCol = 'ev.supplier_invoice_no';
             else if (sort_by === 'party') sortCol = 'ev.supplier_name';
+            else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'ev.supplier_gstin';
             else if (sort_by === 'taxableAmt') sortCol = 'ev.taxable_total';
-            else if (sort_by === 'totalAmt') sortCol = 'ev.net_amount';
-            else if (sort_by === 'date') sortCol = 'ev.supplier_invoice_date';
+            else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = 'ev.net_amount';
+            else if (sort_by === 'date' || sort_by === 'ref_vchr_date') sortCol = 'ev.supplier_invoice_date';
+            else if (sort_by === 'bookVchrNo') sortCol = 'ev.book_vchr_no';
+            else if (sort_by === 'bookVchrDate') sortCol = 'ev.book_vchr_date';
+            else if (sort_by === 'igst') sortCol = 'ev.total_igst_amount';
+            else if (sort_by === 'cgst') sortCol = 'ev.total_cgst_amount';
+            else if (sort_by === 'sgst') sortCol = 'ev.total_sgst_amount';
+            else if (sort_by === 'cess') sortCol = 'ev.total_cess_amount';
+            else if (sort_by === 'roundOff') sortCol = 'ev.round_off';
 
             if (group_by_supplier) {
                 records = await q
