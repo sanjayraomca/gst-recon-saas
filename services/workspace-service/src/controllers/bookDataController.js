@@ -102,7 +102,8 @@ const getBookDataSummary = async (req, res) => {
         const { 
             period, year, date_from, date_to,
             amt_min, amt_max, minNetAmt, maxNetAmt,
-            gstins, parties, supply_type, roundoff_only, place_of_supply
+            gstins, parties, supply_type, roundoff_only, place_of_supply,
+            column_filters, search
         } = req.query;
 
         const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
@@ -124,7 +125,9 @@ const getBookDataSummary = async (req, res) => {
             parties: parseArr(parties),
             supply_type,
             roundoff_only,
-            place_of_supply
+            place_of_supply,
+            column_filters,
+            search
         });
 
         // --- ACTIVITY LOG ---

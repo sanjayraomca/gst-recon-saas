@@ -130,7 +130,7 @@ class BookDataModel {
                     break;
                 case 'nu': q.whereNull(dbCol).orWhereRaw(`CAST(${dbCol} AS TEXT) = ''`); break;
                 case 'nn': q.whereNotNull(dbCol).whereRaw(`CAST(${dbCol} AS TEXT) != ''`); break;
-                
+
                 // Date specific ops (Today, Yesterday, etc.) handled by frontend passing the right date range
                 // or we can handle "custom" here if needed.
                 case 'today':
@@ -173,7 +173,7 @@ class BookDataModel {
         // Amount Range (Net)
         if (filters.amt_net_min) q.whereRaw(`${mapping.totalAmt} >= ?`, [parseFloat(filters.amt_net_min)]);
         if (filters.amt_net_max) q.whereRaw(`${mapping.totalAmt} <= ?`, [parseFloat(filters.amt_net_max)]);
-        
+
         // Place of Supply (Multi)
         if (filters.place_of_supply) {
             const codes = String(filters.place_of_supply).split(',').filter(Boolean);
@@ -194,10 +194,10 @@ class BookDataModel {
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
-        const { 
-            search, status, period, gstin, date_from, date_to, year, 
+        const {
+            search, status, period, gstin, date_from, date_to, year,
             amt_min, amt_max, amt_net_min, amt_net_max,
-            place_of_supply, sort_by, sort_dir = 'desc' 
+            place_of_supply, sort_by, sort_dir = 'desc'
         } = filters;
 
         let records = [];
@@ -248,7 +248,7 @@ class BookDataModel {
             }
 
             // Apply legacy period/search logic alongside new filters for full composability
-                q = q.where(function () {
+            q = q.where(function () {
                 // If we have period, use it (ANDed with others usually, but here we treat as one of the options)
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {
@@ -395,9 +395,11 @@ class BookDataModel {
 
             // Column filters mapping
             const colMappingPr = {
-                invoiceNo: 'ev.supplier_invoice_no',
+                invoiceNo: 'ev.supplier_invoice_no', // legacy
+                ref_vchr_no: 'ev.supplier_invoice_no', // UI key
                 bookVchrNo: 'ev.book_vchr_no',
-                date: 'ev.supplier_invoice_date',
+                date: 'ev.supplier_invoice_date', // legacy
+                ref_vchr_date: 'ev.supplier_invoice_date', // UI key
                 bookVchrDate: 'ev.book_vchr_date',
                 party: 'ev.supplier_name',
                 gstin: 'ev.supplier_gstin',
@@ -420,7 +422,7 @@ class BookDataModel {
             }
 
             // Apply legacy logic alongside new filters
-                q = q.where(function () {
+            q = q.where(function () {
                 if (period && period !== 'ALL') {
                     this.orWhere(function () {
                         BookDataModel._addPeriodFilter(this, period, 'ev.supplier_invoice_date');
@@ -568,7 +570,12 @@ class BookDataModel {
      * Used by the grouped cards UI to show live counts + tax breakdown per type.
      */
     static async getSummary(workspaceId, filters = {}) {
-        const { period, year, date_from, date_to } = filters;
+        const { period, year, date_from, date_to, column_filters, search } = filters;
+        
+        let cf = column_filters;
+        if (cf && typeof cf === 'string') {
+            try { cf = JSON.parse(cf); } catch(e) { cf = null; }
+        }
         // --- Sales types ---
         const salesTypes = [
             { id: 'sales_invoice', invoiceTypes: ['B2B', 'B2C_SMALL', 'B2C_LARGE', 'EXPORT', 'SEZ'], bookTypes: null },
@@ -614,6 +621,34 @@ class BookDataModel {
                     this.whereRaw('1=1');
                 }
             });
+
+            // Column filters for summary (Sales)
+            if (cf) {
+                const colMappingSales = {
+                    invoiceNo: 'si.invoice_number',
+                    date: 'si.invoice_date',
+                    party: 'si.customer_name',
+                    gstin: 'si.customer_gstin',
+                    taxableAmt: 'si.total_taxable_value',
+                    igst: 'si.total_igst',
+                    cgst: 'si.total_cgst',
+                    sgst: 'si.total_sgst',
+                    cess: 'si.total_cess',
+                    totalAmt: 'si.total_invoice_value',
+                    status: 'si.filing_status',
+                    docType: 'si.invoice_type',
+                    placeOfSupply: 'si.place_of_supply'
+                };
+                BookDataModel._applyColumnFilters(q, cf, colMappingSales);
+            }
+
+            if (search) {
+                q = q.where(function () {
+                    this.where('si.invoice_number', 'ilike', `%${search}%`)
+                        .orWhere('si.customer_name', 'ilike', `%${search}%`)
+                        .orWhere('si.customer_gstin', 'ilike', `%${search}%`);
+                });
+            }
 
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
@@ -684,6 +719,39 @@ class BookDataModel {
                 }
             });
 
+            // Column filters for summary (Purchase)
+            if (cf) {
+                const colMappingPr = {
+                    invoiceNo: 'ev.supplier_invoice_no',
+                    ref_vchr_no: 'ev.supplier_invoice_no',
+                    bookVchrNo: 'ev.book_vchr_no',
+                    date: 'ev.supplier_invoice_date',
+                    ref_vchr_date: 'ev.supplier_invoice_date',
+                    bookVchrDate: 'ev.book_vchr_date',
+                    party: 'ev.supplier_name',
+                    gstin: 'ev.supplier_gstin',
+                    taxableAmt: 'ev.taxable_total',
+                    igst: 'ev.total_igst_amount',
+                    cgst: 'ev.total_cgst_amount',
+                    sgst: 'ev.total_sgst_amount',
+                    cess: 'ev.total_cess_amount',
+                    totalAmt: 'ev.net_amount',
+                    status: 'ev.status',
+                    docType: 'ev.book_type',
+                    vchType: 'ev.voucher_type',
+                    placeOfSupply: 'ev.place_of_supply'
+                };
+                BookDataModel._applyColumnFilters(q, cf, colMappingPr);
+            }
+
+            if (search) {
+                q = q.where(function () {
+                    this.where('ev.supplier_invoice_no', 'ilike', `%${search}%`)
+                        .orWhere('ev.supplier_name', 'ilike', `%${search}%`)
+                        .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
+                });
+            }
+
             const [row] = await q.select(
                 knex.raw('COUNT(*) as total'),
                 knex.raw('COALESCE(SUM(ev.taxable_total),0) as taxable'),
@@ -706,7 +774,32 @@ class BookDataModel {
             };
         }
 
-        return { ...salesResults, ...purchaseResults };
+        const allTypeSummary = { ...salesResults, ...purchaseResults };
+
+        // Calculate Category-level Aggregates (useful for the new Purchase/Sales Listing pages)
+        const purchaseAgg = Object.values(purchaseResults).reduce((acc, curr) => ({
+            total: (acc.total || 0) + (curr.total || 0),
+            taxable: (acc.taxable || 0) + (curr.taxable || 0),
+            igst: (acc.igst || 0) + (curr.igst || 0),
+            cgst: (acc.cgst || 0) + (curr.cgst || 0),
+            sgst: (acc.sgst || 0) + (curr.sgst || 0),
+            cess: (acc.cess || 0) + (curr.cess || 0),
+            roundOff: (acc.roundOff || 0) + (curr.roundOff || 0),
+            invoiceValue: (acc.invoiceValue || 0) + (curr.invoiceValue || 0)
+        }), {});
+
+        const salesAgg = Object.values(salesResults).reduce((acc, curr) => ({
+            total: (acc.total || 0) + (curr.total || 0),
+            taxable: (acc.taxable || 0) + (curr.taxable || 0),
+            igst: (acc.igst || 0) + (curr.igst || 0),
+            cgst: (acc.cgst || 0) + (curr.cgst || 0),
+            sgst: (acc.sgst || 0) + (curr.sgst || 0),
+            cess: (acc.cess || 0) + (curr.cess || 0),
+            roundOff: (acc.roundOff || 0) + (curr.roundOff || 0),
+            invoiceValue: (acc.invoiceValue || 0) + (curr.invoiceValue || 0)
+        }), {});
+
+        return { ...allTypeSummary, aggregated: purchaseAgg, salesAgg };
     }
 
     /**
