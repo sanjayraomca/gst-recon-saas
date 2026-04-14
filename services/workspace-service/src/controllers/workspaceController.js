@@ -734,15 +734,30 @@ const getDataDateRange = async (req, res) => {
             if (purchaseRange?.max_date) maxDates.push(purchaseRange.max_date);
         }
 
-        // 2. Fetch GSTR dates if type is 'gstr' or 'recon'
-        if (!type || type === 'gstr' || type === 'recon') {
-            const gstrRange = await knex('normalized_gstr2b_invoices')
+        // 2. Fetch GSTR dates if type is 'gstr', 'gstr2b', 'gstr2a', or 'recon'
+        if (!type || type.startsWith('gstr') || type === 'recon') {
+            const gstrTable = type === 'gstr2a' ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+            const gstrRange = await knex(gstrTable)
                 .where('workspace_id', id)
                 .select(
                     knex.raw('MIN(document_date) as min_date'),
                     knex.raw('MAX(document_date) as max_date')
                 )
                 .first();
+            
+            // If we are looking for generic 'gstr' or 'recon', also check the other table if first was empty
+            if ((!type || type === 'gstr' || type === 'recon') && !gstrRange?.min_date) {
+                const otherTable = gstrTable === 'normalized_gstr2b_invoices' ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+                const otherRange = await knex(otherTable)
+                    .where('workspace_id', id)
+                    .select(
+                        knex.raw('MIN(document_date) as min_date'),
+                        knex.raw('MAX(document_date) as max_date')
+                    )
+                    .first();
+                if (otherRange?.min_date) minDates.push(otherRange.min_date);
+                if (otherRange?.max_date) maxDates.push(otherRange.max_date);
+            }
 
             if (gstrRange?.min_date) minDates.push(gstrRange.min_date);
             if (gstrRange?.max_date) maxDates.push(gstrRange.max_date);

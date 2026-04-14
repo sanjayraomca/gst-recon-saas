@@ -1,5 +1,6 @@
 const Gstr2bInvoiceModel = require('../models/gstr2bInvoiceModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * Get all GSTR2B invoices with filters and pagination
@@ -29,6 +30,16 @@ const getAllInvoices = async (req, res) => {
 
         const result = await Gstr2bInvoiceModel.getAll(workspaceId, filters, pagination);
 
+        // Log Activity
+        await logActivity({
+            userId: req.user?.id || req.user?.sub,
+            workspaceId,
+            actionType: 'VIEW_MODULE',
+            entityType: 'GSTR2B_REGISTER',
+            details: { filters, pagination, total_records: result.data.length },
+            req
+        });
+
         return successResponse(res, {
             invoices: result.data,
             pagination: result.pagination
@@ -56,6 +67,17 @@ const getInvoiceById = async (req, res) => {
         if (!invoice) {
             return errorResponse(res, 'GSTR2B invoice not found', 404);
         }
+
+        // Log Activity
+        await logActivity({
+            userId: req.user?.id || req.user?.sub,
+            workspaceId,
+            actionType: 'VIEW_RECORD',
+            entityType: 'GSTR2B_INVOICE',
+            entityId: invoiceId,
+            details: { invoice_number: invoice.document_number_clean || invoice.document_number_raw },
+            req
+        });
 
         return successResponse(res, invoice, 'GSTR2B invoice retrieved successfully');
     } catch (error) {

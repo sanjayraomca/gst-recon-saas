@@ -105,6 +105,9 @@ router.get('/import/history', verifyToken, GSTRImportController.getImportHistory
 // Get active periods
 router.get('/active-periods', verifyToken, GSTRImportController.getActivePeriods);
 
+// Get dynamic filter options for multi-selects (Blueprint Rule 6)
+router.get('/filter-options', verifyToken, GSTRImportController.getFilterOptions);
+
 // Get specific import details
 router.get('/import/:import_filing_id', verifyToken, GSTRImportController.getImportById);
 

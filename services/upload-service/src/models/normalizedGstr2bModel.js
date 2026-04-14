@@ -457,9 +457,18 @@ class NormalizedGstr2bModel {
         const allowedSortColumns = {
             'invoice_number': 'document_number_clean',
             'date': 'document_date',
-            'party_gstn': 'supplier_gstin',
+            'party_gstn': 'supplier_gstin', // legacy fallback
+            'party_name': 'supplier_name',
+            'gstin': 'supplier_gstin',
+            'doc_type': 'document_type',
             'taxable_amount': 'taxable_value',
-            'tax_amount': 'total_tax'
+            'tax_amount': 'total_tax',
+            'igst': 'igst',
+            'cgst': 'cgst',
+            'sgst': 'sgst',
+            'cess': 'cess',
+            'return_period': 'return_period',
+            'eligibility': 'itc_available'
         };
 
         if (sortBy && allowedSortColumns[sortBy]) {
@@ -635,6 +644,54 @@ class NormalizedGstr2bModel {
         );
 
         return result.rows[0];
+    }
+
+    /**
+     * Get distinct filter options for high-cardinality fields
+     */
+    static async getFilterOptions({ workspaceId, returnPeriod, field, importType }) {
+        if (!workspaceId) throw new Error('workspaceId is required for getFilterOptions');
+
+        const dbField = field === 'gstins' ? 'supplier_gstin' : 'supplier_name';
+        const conditions = ['workspace_id = ?', `${dbField} IS NOT NULL` ];
+        const params = [workspaceId];
+
+        if (returnPeriod && returnPeriod !== 'ALL') {
+            if (returnPeriod.startsWith('Q')) {
+                const q = returnPeriod.substring(1, 2);
+                const year = parseInt(returnPeriod.substring(2));
+                let periods = [];
+                if (q === '1') periods = [`04${year}`, `05${year}`, `06${year}`];
+                else if (q === '2') periods = [`07${year}`, `08${year}`, `09${year}`];
+                else if (q === '3') periods = [`10${year}`, `11${year}`, `12${year}`];
+                else if (q === '4') {
+                    const nextYear = year + 1;
+                    periods = [`01${nextYear}`, `02${nextYear}`, `03${nextYear}`];
+                }
+                conditions.push('return_period = ANY(?)');
+                params.push(periods);
+            } else {
+                conditions.push('return_period = ?');
+                params.push(returnPeriod);
+            }
+        }
+
+        if (importType) {
+            conditions.push('import_type = ?');
+            params.push(importType.toUpperCase());
+        }
+
+        const whereClause = conditions.join(' AND ');
+        const query = `
+            SELECT DISTINCT ${dbField} as value, ${dbField} as label
+            FROM v_gstr_listing
+            WHERE ${whereClause}
+            ORDER BY ${dbField} ASC
+            LIMIT 1000
+        `;
+
+        const result = await db.raw(query, params);
+        return result.rows;
     }
 }
 
