@@ -45,6 +45,10 @@ class BookDataModel {
                 return { table: 'purchase', voucherTypes: ['CREDIT_NOTE'], bookTypes: ['CN'] };
             case 'dn_purchase':
                 return { table: 'purchase', voucherTypes: ['DEBIT_NOTE'], bookTypes: ['DN'] };
+            case 'customer':
+                return { table: 'sales' };
+            case 'supplier':
+                return { table: 'purchase' };
             default:
                 return null;
         }
