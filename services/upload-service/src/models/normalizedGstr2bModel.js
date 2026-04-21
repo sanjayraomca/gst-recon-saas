@@ -354,6 +354,7 @@ class NormalizedGstr2bModel {
             returnPeriod,
             sourceSection,
             supplierGstin,
+            supplierName,
             documentNumber,
             searchTerm,
             itcAvailable,
@@ -406,8 +407,20 @@ class NormalizedGstr2bModel {
             params.push(sourceSection.toUpperCase());
         }
         if (supplierGstin) {
-            conditions.push('supplier_gstin ILIKE ?');
-            params.push(`%${supplierGstin}%`);
+            const gstins = supplierGstin.split(',').map(g => g.trim()).filter(Boolean);
+            if (gstins.length > 0) {
+                const placeholders = gstins.map(() => '?').join(',');
+                conditions.push(`supplier_gstin IN (${placeholders})`);
+                params.push(...gstins);
+            }
+        }
+        if (supplierName) {
+            const names = supplierName.split(',').map(n => n.trim()).filter(Boolean);
+            if (names.length > 0) {
+                const placeholders = names.map(() => '?').join(',');
+                conditions.push(`supplier_name IN (${placeholders})`);
+                params.push(...names);
+            }
         }
         if (documentNumber) {
             conditions.push('(document_number_clean ILIKE ? OR document_number_raw ILIKE ?)');
