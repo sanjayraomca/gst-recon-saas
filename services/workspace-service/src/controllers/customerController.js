@@ -15,7 +15,15 @@ const getAllCustomers = async (req, res) => {
         const filters = {
             search: req.query.search || '',
             page: parseInt(req.query.page) || 1,
-            limit: parseInt(req.query.pageSize) || 10
+            limit: parseInt(req.query.page_size) || parseInt(req.query.pageSize) || 10,
+            registration_status: req.query.registration_status,
+            customer_gstin: req.query.customer_gstin,
+            customer_name: req.query.customer_name,
+            state_codes: req.query.state_codes,
+            from_date: req.query.from_date,
+            to_date: req.query.to_date,
+            sort_by: req.query.sort_by,
+            sort_order: req.query.sort_order
         };
 
         const [customers, total] = await Promise.all([

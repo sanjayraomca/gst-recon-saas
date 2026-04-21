@@ -6,44 +6,94 @@ const knex = require('../../../shared/src/db/connection');
  */
 class CustomerModel {
     /**
+     * Build the base query with filters
+     */
+    static _buildBaseQuery(workspaceId, filters = {}) {
+        const { search, customer_gstin, customer_name, state_codes, registration_status } = filters;
+        
+        let query = knex('customer_master as cm')
+            .leftJoin('state_code_master as scm', 'scm.code', knex.raw('SUBSTRING(cm.gstin, 1, 2)'))
+            .leftJoin('workspaces as w', 'w.id', 'cm.workspace_id')
+            .where('cm.workspace_id', workspaceId);
+
+        if (search) {
+            const searchPattern = `%${search}%`;
+            query.where(function () {
+                this.where('cm.gstin', 'ILIKE', searchPattern)
+                    .orWhere('cm.customer_name', 'ILIKE', searchPattern);
+            });
+        }
+
+        if (customer_gstin) {
+            const gstins = customer_gstin.split(',').map(s => s.trim()).filter(Boolean);
+            if (gstins.length > 0) query.whereIn('cm.gstin', gstins);
+        }
+
+        if (customer_name) {
+            const names = customer_name.split(',').map(s => s.trim()).filter(Boolean);
+            if (names.length > 0) query.whereIn('cm.customer_name', names);
+        }
+
+        if (state_codes) {
+            const states = state_codes.split(',').map(s => s.trim()).filter(Boolean);
+            if (states.length > 0) {
+                query.whereIn(knex.raw('SUBSTRING(cm.gstin, 1, 2)'), states);
+            }
+        }
+
+
+
+        
+        if (registration_status) {
+            if (registration_status === 'registered') {
+                query.whereRaw("COALESCE(cm.gstin, '') != '' AND cm.gstin NOT ILIKE '%UNREGISTERED%'");
+            } else if (registration_status === 'unregistered') {
+                query.whereRaw("COALESCE(cm.gstin, '') = '' OR cm.gstin ILIKE '%UNREGISTERED%'");
+            }
+        }
+
+        return query;
+    }
+
+    /**
      * Get paginated unique customers for a workspace
      */
     static async getAll(workspaceId, filters = {}) {
-        const { search, page = 1, limit = 10 } = filters;
+        const { page = 1, limit = 10, sort_by, sort_order } = filters;
         const offset = (page - 1) * limit;
-        const searchPattern = search ? `%${search}%` : '%%';
 
         try {
-            const rawQuery = `
-                SELECT 
-                    cm.id,
-                    cm.gstin,
-                    cm.customer_name as name,
-                    cm.email,
-                    cm.phone,
-                    COALESCE(scm.state, w.state, 'Other') as state_name,
-                    cm.is_active,
-                    cm.created_at,
-                    cm.updated_at
-                FROM customer_master cm
-                LEFT JOIN state_code_master scm ON scm.code = SUBSTRING(cm.gstin, 1, 2)
-                LEFT JOIN workspaces w ON w.id = cm.workspace_id
-                WHERE cm.workspace_id = ?::uuid
-                AND (cm.gstin ILIKE ? OR COALESCE(cm.customer_name, '') ILIKE ?)
-                ORDER BY cm.customer_name ASC NULLS LAST
-                LIMIT ? OFFSET ?
-            `;
+            const query = this._buildBaseQuery(workspaceId, filters);
+            
+            query.select([
+                'cm.id',
+                'cm.gstin',
+                'cm.customer_name as name',
+                'cm.email',
+                'cm.phone',
+                knex.raw("COALESCE(scm.state, w.state, 'Other') as state_name"),
+                'cm.is_active',
+                'cm.created_at',
+                'cm.updated_at'
+            ]);
 
-            const params = [
-                workspaceId,
-                searchPattern, 
-                searchPattern,
-                limit,
-                offset
-            ];
+            const orderDir = sort_order === 'desc' ? 'desc' : 'asc';
+            if (sort_by) {
+                const sortMap = {
+                    'name': 'cm.customer_name',
+                    'gstin': 'cm.gstin',
+                    'state_name': knex.raw("COALESCE(scm.state, w.state, 'Other')")
+                };
+                const sortCol = sortMap[sort_by] || 'cm.customer_name';
+                query.orderBy(sortCol, orderDir, 'last');
+            } else {
+                query.orderBy('cm.customer_name', 'asc', 'last');
+            }
 
-            const result = await knex.raw(rawQuery, params);
-            return result.rows || [];
+            query.limit(limit).offset(offset);
+
+            const result = await query;
+            return result || [];
         } catch (error) {
             console.error('[CustomerModel] Error in getAll:', error);
             throw error;
@@ -54,19 +104,10 @@ class CustomerModel {
      * Get total count for pagination
      */
     static async countAll(workspaceId, filters = {}) {
-        const { search } = filters;
-        const searchPattern = search ? `%${search}%` : '%%';
-
         try {
-            const result = await knex('customer_master')
-                .where('workspace_id', workspaceId)
-                .where(function() {
-                    this.where('gstin', 'ILIKE', searchPattern)
-                        .orWhere('customer_name', 'ILIKE', searchPattern);
-                })
-                .count('id as total');
-
-            return parseInt(result[0].total) || 0;
+            const query = this._buildBaseQuery(workspaceId, filters);
+            const result = await query.count('cm.id as total').first();
+            return parseInt(result?.total || 0);
         } catch (error) {
             console.error('[CustomerModel] Error in countAll:', error);
             throw error;
