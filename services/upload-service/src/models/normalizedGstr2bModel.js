@@ -355,11 +355,15 @@ class NormalizedGstr2bModel {
             sourceSection,
             supplierGstin,
             documentNumber,
+            searchTerm,
             itcAvailable,
             fromDate,
             toDate,
             minAmount,
             maxAmount,
+            minNetAmount,
+            maxNetAmount,
+            supplyType,
             stateCodes,
             sortBy,
             sortOrder = 'asc',
@@ -409,6 +413,10 @@ class NormalizedGstr2bModel {
             conditions.push('(document_number_clean ILIKE ? OR document_number_raw ILIKE ?)');
             params.push(`%${documentNumber}%`, `%${documentNumber}%`);
         }
+        if (searchTerm) {
+            conditions.push('(supplier_gstin ILIKE ? OR document_number_clean ILIKE ? OR document_number_raw ILIKE ? OR supplier_name ILIKE ?)');
+            params.push(`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`);
+        }
         if (itcAvailable !== undefined && itcAvailable !== null && itcAvailable !== '') {
             const val = itcAvailable === true || itcAvailable === 'true' || itcAvailable === '1';
             conditions.push('itc_available = ?');
@@ -429,6 +437,19 @@ class NormalizedGstr2bModel {
         if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '') {
             conditions.push('document_value <= ?');
             params.push(parseFloat(maxAmount));
+        }
+        if (minNetAmount !== undefined && minNetAmount !== null && minNetAmount !== '') {
+            conditions.push('(COALESCE(taxable_value, 0) + COALESCE(total_tax, 0)) >= ?');
+            params.push(parseFloat(minNetAmount));
+        }
+        if (maxNetAmount !== undefined && maxNetAmount !== null && maxNetAmount !== '') {
+            conditions.push('(COALESCE(taxable_value, 0) + COALESCE(total_tax, 0)) <= ?');
+            params.push(parseFloat(maxNetAmount));
+        }
+        if (supplyType === 'INTRASTATE') {
+            conditions.push('(COALESCE(cgst, 0) > 0 OR COALESCE(sgst, 0) > 0)');
+        } else if (supplyType === 'INTERSTATE') {
+            conditions.push('COALESCE(igst, 0) > 0');
         }
         if (stateCodes) {
             const states = stateCodes.split(',').map(s => s.trim()).filter(Boolean);
@@ -526,11 +547,15 @@ class NormalizedGstr2bModel {
             sourceSection,
             supplierGstin,
             documentNumber,
+            searchTerm,
             itcAvailable,
             fromDate,
             toDate,
             minAmount,
             maxAmount,
+            minNetAmount,
+            maxNetAmount,
+            supplyType,
             stateCodes,
             importType
         } = filters;
@@ -571,6 +596,10 @@ class NormalizedGstr2bModel {
             conditions.push('(document_number_clean ILIKE ? OR document_number_raw ILIKE ?)');
             params.push(`%${documentNumber}%`, `%${documentNumber}%`);
         }
+        if (searchTerm) {
+            conditions.push('(supplier_gstin ILIKE ? OR document_number_clean ILIKE ? OR document_number_raw ILIKE ? OR supplier_name ILIKE ?)');
+            params.push(`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`);
+        }
         if (itcAvailable !== undefined && itcAvailable !== null && itcAvailable !== '') {
             const val = itcAvailable === true || itcAvailable === 'true' || itcAvailable === '1';
             conditions.push('itc_available = ?');
@@ -591,6 +620,19 @@ class NormalizedGstr2bModel {
         if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '') {
             conditions.push('document_value <= ?');
             params.push(parseFloat(maxAmount));
+        }
+        if (minNetAmount !== undefined && minNetAmount !== null && minNetAmount !== '') {
+            conditions.push('(COALESCE(taxable_value, 0) + COALESCE(total_tax, 0)) >= ?');
+            params.push(parseFloat(minNetAmount));
+        }
+        if (maxNetAmount !== undefined && maxNetAmount !== null && maxNetAmount !== '') {
+            conditions.push('(COALESCE(taxable_value, 0) + COALESCE(total_tax, 0)) <= ?');
+            params.push(parseFloat(maxNetAmount));
+        }
+        if (supplyType === 'INTRASTATE') {
+            conditions.push('(COALESCE(cgst, 0) > 0 OR COALESCE(sgst, 0) > 0)');
+        } else if (supplyType === 'INTERSTATE') {
+            conditions.push('COALESCE(igst, 0) > 0');
         }
         if (stateCodes) {
             const states = stateCodes.split(',').map(s => s.trim()).filter(Boolean);
