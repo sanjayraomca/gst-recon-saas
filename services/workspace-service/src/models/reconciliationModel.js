@@ -1024,11 +1024,9 @@ class ReconciliationModel {
                 const dateStr = endDate.toISOString().split('T')[0];
                 query.where(function () {
                     if (is2aVs2b) {
-                        this.where('sa.document_date', '<=', dateStr)
-                            .orWhere('gi.document_date', '<=', dateStr);
+                        this.where(knex.raw('COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)'), '<=', dateStr);
                     } else {
-                        this.where('pi.supplier_invoice_date', '<=', dateStr)
-                            .orWhere('gi.document_date', '<=', dateStr);
+                        this.where(knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)'), '<=', dateStr);
                     }
                 });
             } else {
@@ -1046,21 +1044,15 @@ class ReconciliationModel {
                         self.where(function () {
                             // Books / Source A invoice date
                             if (is2aVs2b) {
-                                this.whereRaw('EXTRACT(MONTH FROM sa.document_date) = ?', [m]);
+                                this.whereRaw('EXTRACT(MONTH FROM COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)) = ?', [m]);
                                 if (yearForMonth) {
-                                    this.andWhereRaw('EXTRACT(YEAR FROM sa.document_date) = ?', [yearForMonth]);
+                                    this.andWhereRaw('EXTRACT(YEAR FROM COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)) = ?', [yearForMonth]);
                                 }
                             } else {
-                                this.whereRaw('EXTRACT(MONTH FROM pi.supplier_invoice_date) = ?', [m]);
+                                this.whereRaw('EXTRACT(MONTH FROM COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)) = ?', [m]);
                                 if (yearForMonth) {
-                                    this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForMonth]);
+                                    this.andWhereRaw('EXTRACT(YEAR FROM COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)) = ?', [yearForMonth]);
                                 }
-                            }
-                        }).orWhere(function () {
-                            // Portal document date
-                            this.whereRaw('EXTRACT(MONTH FROM gi.document_date) = ?', [m]);
-                            if (yearForMonth) {
-                                this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForMonth]);
                             }
                         });
                     } else if (quarter && quarter !== 'ALL') {
@@ -1070,24 +1062,14 @@ class ReconciliationModel {
                         const qMonths = quarterMonthMap[q] || [];
 
                         self.where(function () {
-                            if (is2aVs2b) {
-                                this.whereIn(knex.raw('EXTRACT(MONTH FROM sa.document_date)::int'), qMonths);
-                                if (filterYear) {
-                                    const yearForQ = q === 4 ? filterYear + 1 : filterYear;
-                                    this.andWhereRaw('EXTRACT(YEAR FROM sa.document_date) = ?', [yearForQ]);
-                                }
-                            } else {
-                                this.whereIn(knex.raw('EXTRACT(MONTH FROM pi.supplier_invoice_date)::int'), qMonths);
-                                if (filterYear) {
-                                    const yearForQ = q === 4 ? filterYear + 1 : filterYear;
-                                    this.andWhereRaw('EXTRACT(YEAR FROM pi.supplier_invoice_date) = ?', [yearForQ]);
-                                }
-                            }
-                        }).orWhere(function () {
-                            this.whereIn(knex.raw('EXTRACT(MONTH FROM gi.document_date)::int'), qMonths);
+                            const dateExpr = is2aVs2b 
+                                ? 'COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)'
+                                : 'COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)';
+                            
+                            this.whereIn(knex.raw(`EXTRACT(MONTH FROM ${dateExpr})::int`), qMonths);
                             if (filterYear) {
                                 const yearForQ = q === 4 ? filterYear + 1 : filterYear;
-                                this.andWhereRaw('EXTRACT(YEAR FROM gi.document_date) = ?', [yearForQ]);
+                                this.andWhereRaw(`EXTRACT(YEAR FROM ${dateExpr}) = ?`, [yearForQ]);
                             }
                         });
                     } else if (filterYear) {
@@ -1095,23 +1077,13 @@ class ReconciliationModel {
                         const startYear = filterYear;
                         const endYear = filterYear + 1;
                         self.where(function () {
-                            if (is2aVs2b) {
-                                this.whereRaw(
-                                    `(EXTRACT(YEAR FROM sa.document_date) = ? AND EXTRACT(MONTH FROM sa.document_date) >= 4
-                                    OR EXTRACT(YEAR FROM sa.document_date) = ? AND EXTRACT(MONTH FROM sa.document_date) <= 3)`,
-                                    [startYear, endYear]
-                                );
-                            } else {
-                                this.whereRaw(
-                                    `(EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) >= 4
-                                    OR EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) <= 3)`,
-                                    [startYear, endYear]
-                                );
-                            }
-                        }).orWhere(function () {
+                            const dateExpr = is2aVs2b 
+                                ? 'COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)'
+                                : 'COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)';
+                            
                             this.whereRaw(
-                                `(EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4
-                                OR EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)`,
+                                `(EXTRACT(YEAR FROM ${dateExpr}) = ? AND EXTRACT(MONTH FROM ${dateExpr}) >= 4
+                                OR EXTRACT(YEAR FROM ${dateExpr}) = ? AND EXTRACT(MONTH FROM ${dateExpr}) <= 3)`,
                                 [startYear, endYear]
                             );
                         });
@@ -1148,8 +1120,8 @@ class ReconciliationModel {
                 gstin: { cols: is2aVs2b ? ['sa.supplier_gstin', 'gi.supplier_gstin'] : ['pi.supplier_gstin', 'gi.supplier_gstin'], exact: true },
                 name: { cols: is2aVs2b ? ['sa.supplier_name', 'gi.supplier_name'] : ['pi.supplier_name', 'gi.supplier_name'] },
                 gst_type: { cols: is2aVs2b ? ['sa.source_section', 'gi.source_section'] : ['pi.source_section', 'gi.source_section'] },
-                invoice_no: { cols: is2aVs2b ? ['sa.document_number_clean', 'gi.document_number_clean'] : ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
-                invoice_date: { cols: is2aVs2b ? ['sa.document_date', 'gi.document_date'] : ['pi.supplier_invoice_date', 'gi.document_date'], dateCol: true },
+                invoice_no: { cols: is2aVs2b ? ['COALESCE(sa.document_number_clean, gi.document_number_clean, gi.isd_document_number, gi.boe_number)', 'COALESCE(gi.document_number_clean, gi.isd_document_number, gi.boe_number)'] : ['pi.supplier_invoice_no', 'COALESCE(gi.document_number_clean, gi.isd_document_number, gi.boe_number)'] },
+                invoice_date: { cols: is2aVs2b ? ['COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)', 'COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date)'] : ['COALESCE(pi.supplier_invoice_date, pi.book_vchr_date)', 'COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date)'], dateCol: true },
                 voucher_no: { cols: is2aVs2b ? [] : ['pi.book_vchr_no'] },
                 gst_cat: { cols: is2aVs2b ? ['sa.source_section'] : ['pi.gstr_category'] },
                 voucher_date: { cols: is2aVs2b ? [] : ['pi.book_vchr_date'], dateCol: true },
@@ -1157,7 +1129,7 @@ class ReconciliationModel {
                 status: { cols: ['rr.match_status'], exact: true },
                 action_status: { cols: [knex.raw("COALESCE(rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
                 // GSTR amounts (gi / Source B)
-                gstr_invoice_total: { cols: ['gi.document_value'], numeric: true },
+                gstr_invoice_total: { cols: [knex.raw('COALESCE(gi.document_value, gi.taxable_value, (COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)))')], numeric: true },
                 gstr_taxable: { cols: ['gi.taxable_value'], numeric: true },
                 gstr_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
                 gstr2a_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
@@ -1286,7 +1258,7 @@ class ReconciliationModel {
         const totalsQuery = query.clone()
             .clearSelect()
             .select(
-                knex.raw(`SUM(gi.taxable_value) as gstr2b_taxable_total`),
+                knex.raw(`SUM(COALESCE(gi.taxable_value, 0)) as gstr2b_taxable_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)) as purchase_taxable_total`),
                 knex.raw(`SUM(COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0))) as gstr2b_tax_total`),
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.total_tax' :
@@ -1351,8 +1323,6 @@ class ReconciliationModel {
             'rr.decision_reason',
             'rr.action_required',
             'rr.action_status',
-            'rr.books_value',
-            'rr.portal_value',
             'rr.variance_amount',
             'rr.created_at',
             'rr.updated_at',
@@ -1365,11 +1335,32 @@ class ReconciliationModel {
             is2aVs2b ? knex.raw('COALESCE(sa.supplier_name, gi.supplier_name) as supplier_name') : knex.raw('COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name'),
             is2aVs2b ? knex.raw('COALESCE(sa.supplier_gstin, gi.supplier_gstin) as supplier_gstin') : knex.raw('COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin'),
             'sm.email as supplier_email',
-            is2aVs2b ? knex.raw('COALESCE(sa.document_number_clean, gi.document_number_clean) as supplier_invoice_no') : knex.raw('COALESCE(pi.supplier_invoice_no, gi.document_number_clean) as supplier_invoice_no'),
-            is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date) as supplier_invoice_date') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date) as supplier_invoice_date'),
-            is2aVs2b ? 'gi.return_period as return_period' : knex.raw('COALESCE(tp.period_code, gi.return_period) as return_period'), // Explicit period code
 
-            // Purchase/Books mapping
+            // --- UNIFIED MIRRORS (Ensures compatibility with any frontend version) ---
+            // 1. Invoice Number Mirror (Aggressive Fallbacks)
+            knex.raw(`COALESCE(NULLIF(${is2aVs2b ? 'sa.document_number_clean' : 'pi.supplier_invoice_no'}, ''), NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.boe_number) as supplier_invoice_no`),
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.isd_document_number, gi.boe_number) as gstr_invoice_number`),
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.isd_document_number, gi.boe_number) as invoice_no`),
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.isd_document_number, gi.boe_number) as inv_no`),
+            
+            // 2. Date Mirror (Aggressive Fallbacks)
+            knex.raw(`COALESCE(${is2aVs2b ? 'sa.document_date' : 'pi.supplier_invoice_date'}, gi.document_date, gi.isd_document_date, gi.boe_date) as supplier_invoice_date`),
+            knex.raw(`COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date) as gstr_invoice_date`),
+            knex.raw(`COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date) as invoice_date`),
+            
+            // 3. Amount / Total Mirror
+            knex.raw(`COALESCE(NULLIF(gi.document_value, 0), gi.taxable_value + COALESCE(gi.igst,0) + COALESCE(gi.cgst,0) + COALESCE(gi.sgst,0) + COALESCE(gi.cess,0)) as portal_value`),
+            knex.raw(`COALESCE(NULLIF(gi.document_value, 0), gi.taxable_value + COALESCE(gi.igst,0) + COALESCE(gi.cgst,0) + COALESCE(gi.sgst,0) + COALESCE(gi.cess,0)) as gstr_invoice_total`),
+            knex.raw(`COALESCE(NULLIF(gi.document_value, 0), gi.taxable_value + COALESCE(gi.igst,0) + COALESCE(gi.cgst,0) + COALESCE(gi.sgst,0) + COALESCE(gi.cess,0)) as gstr2b_invoice_total`),
+            
+            // 4. Taxable Mirror
+            'gi.taxable_value as gstr_taxable',
+            'gi.taxable_value as taxable_value',
+            'gi.taxable_value as gstr2b_taxable',
+            
+            is2aVs2b ? 'gi.return_period as return_period' : knex.raw('COALESCE(tp.period_code, gi.return_period) as return_period'),
+
+            // Purchase/Books specific
             is2aVs2b ? 'sa.document_number_clean as purchase_invoice_number' : 'pi.supplier_invoice_no as purchase_invoice_number',
             is2aVs2b ? 'sa.document_date as purchase_invoice_date' : knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date) as purchase_invoice_date'),
             knex.raw(`COALESCE(${is2aVs2b ? 'sa.document_value' : (is2a ? 'ps.net_amount' : 'pi.net_amount')}, 0) as purchase_invoice_total`),
@@ -1379,41 +1370,18 @@ class ReconciliationModel {
                   COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
                   COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
                   COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0)) as purchase_tax`),
-            knex.raw(`CASE WHEN COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0) > 0 THEN 
-                        ROUND((${is2aVs2b ? 'COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))' :
-                    `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
-                                COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
-                                COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
-                                COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`} / 
-                                COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 1)) * 100) 
-                        ELSE 0 END as purchase_tax_rate`),
-            is2aVs2b ? 'sa.reverse_charge as purchase_is_rcm' : 'pi.is_rcm as purchase_is_rcm',
-            knex.raw(`COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0) as purchase_cess`),
-            is2aVs2b ? knex.raw('NULL as purchase_is_interstate') : 'pi.is_interstate as purchase_is_interstate',
-            is2aVs2b ? knex.raw('NULL as book_vchr_no') : 'pi.book_vchr_no',
-            is2aVs2b ? knex.raw('NULL as book_vchr_date') : 'pi.book_vchr_date',
-            is2aVs2b ? knex.raw('NULL as book_type') : 'pi.book_type',
-            is2aVs2b ? 'sa.filing_period as purchase_filing_period' : 'pi.filing_period as purchase_filing_period',
-            is2aVs2b ? 'sa.filing_date as purchase_filing_date' : 'pi.filing_date as purchase_filing_date',
-            is2aVs2b ? knex.raw('NULL as purchase_itc_eligible') : 'pi.itc_eligible as purchase_itc_eligible',
-            is2aVs2b ? 'sa.place_of_supply as purchase_pos' : 'pi.place_of_supply as purchase_pos',
-            is2aVs2b ? 'sa.source_section as purchase_source_section' : 'pi.source_section as purchase_source_section',
-            // Portal mapping
-            knex.raw(`COALESCE(pi.gstr_category, pi.source_section, ${is2aVs2b ? 'sa.source_section, ' : ''}gi.source_section) as gstr_category`),
-            'gi.document_number_clean as gstr_invoice_number',
-            'gi.document_date as gstr_invoice_date',
-            'gi.document_value as gstr_invoice_total',
-            'gi.taxable_value as gstr_taxable',
-            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr_tax'),
-            knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax'),
+            
+            // Portal (GSTR-2B) specific
+            knex.raw(`COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr_tax`),
+            knex.raw(`COALESCE(gi.total_tax, COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) as gstr2b_tax`),
             knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END as gstr_tax_rate'),
-            'gi.applicable_tax_rate_percent as gstr_tax_rate_percent',
+            'gi.igst as gstr_igst',
+            'gi.cgst as gstr_cgst',
+            'gi.sgst as gstr_sgst',
+            'gi.cess as gstr_cess',
             'gi.itc_available as gstr_itc_available',
             'gi.itc_eligibility as gstr_itc_eligibility',
-            'gi.itc_reason as gstr_itc_reason',
-            'gi.cess as gstr_cess',
-            'gi.original_invoice_number as gstr_original_invoice_number',
-            'gi.original_invoice_date as gstr_original_invoice_date',
+            'gi.source_section as gstr_source_section',
             'gi.filing_period as gstr_filing_period',
             'gi.filing_date as gstr_filing_date',
             'gi.reverse_charge as gstr_reverse_charge',
@@ -1439,7 +1407,19 @@ class ReconciliationModel {
                        (COALESCE(${is2aVs2b ? 'sa.total_tax' :
                     (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' :
                         '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as diff_tax`),
-            knex.raw('rr.variance_amount as tax_diff')
+            knex.raw('rr.variance_amount as tax_diff'),
+
+            // --- BULLETPROOF FORCED ALIGNMENT (Moves mirrors to end of query to prevent shadowing) ---
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.isd_document_number, gi.boe_number) as portal_inv_no`),
+            knex.raw(`COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date) as portal_inv_date`),
+            
+            // Reforce Party Info keys at the end
+            knex.raw(`COALESCE(NULLIF(${is2aVs2b ? 'sa.document_number_clean' : 'pi.supplier_invoice_no'}, ''), NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.boe_number) as supplier_invoice_no`),
+            knex.raw(`COALESCE(${is2aVs2b ? 'sa.document_date' : 'pi.supplier_invoice_date'}, gi.document_date, gi.isd_document_date, gi.boe_date) as supplier_invoice_date`),
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), gi.document_number_raw, 'MISSING_IN_DB') as v3_check_no`),
+            // --- HAMMER FORCE KEYS (Absolute Dedicated Identification) ---
+            knex.raw(`COALESCE(NULLIF(gi.document_number_clean, ''), NULLIF(gi.document_number_raw, ''), gi.isd_document_number, gi.boe_number) as hammer_force_no`),
+            knex.raw(`COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date) as hammer_force_date`)
         );
 
         // Map frontend sort keys to DB columns if necessary
@@ -1454,8 +1434,9 @@ class ReconciliationModel {
             'date': is2aVs2b ? knex.raw('COALESCE(sa.document_date, gi.document_date)') : knex.raw('COALESCE(pi.supplier_invoice_date, gi.document_date)'),
 
             // Portal (Source B) - 2B / 2A / 2Avs2B Portal Data
-            'gstr_invoice_total': 'gi.document_value',
-            'gstr2b_invoice_total': 'gi.document_value',
+            'gstr_invoice_date': knex.raw('COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date)'),
+            'gstr_invoice_total': knex.raw('COALESCE(gi.document_value, gi.taxable_value, (COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)))'),
+            'gstr2b_invoice_total': knex.raw('COALESCE(gi.document_value, gi.taxable_value, (COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)))'),
             'gstr_taxable': 'gi.taxable_value',
             'gstr2b_taxable': 'gi.taxable_value',
             'gstr_tax_rate': 'gi.tax_rate',
