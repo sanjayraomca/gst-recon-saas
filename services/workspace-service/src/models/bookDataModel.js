@@ -322,11 +322,32 @@ class BookDataModel {
             };
 
             let sortCol = 'si.invoice_date';
-            if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
-            else if (sort_by === 'party') sortCol = 'si.customer_name';
-            else if (sort_by === 'taxableAmt') sortCol = 'si.total_taxable_value';
-            else if (sort_by === 'totalAmt') sortCol = 'si.total_invoice_value';
-            else if (sort_by === 'date') sortCol = 'si.invoice_date';
+            if (group_by_supplier) {
+                if (sort_by === 'party') sortCol = 'si.customer_name';
+                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = knex.raw(' trim(si.customer_gstin) ');
+                else if (sort_by === 'taxableAmt') sortCol = knex.raw(' sum(si.total_taxable_value) ');
+                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = knex.raw(' sum(si.total_invoice_value) ');
+                else if (sort_by === 'igst') sortCol = knex.raw(' sum(si.total_igst) ');
+                else if (sort_by === 'cgst') sortCol = knex.raw(' sum(si.total_cgst) ');
+                else if (sort_by === 'sgst') sortCol = knex.raw(' sum(si.total_sgst) ');
+                else if (sort_by === 'cess') sortCol = knex.raw(' sum(si.total_cess) ');
+                else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(si.round_off) ');
+                else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) ');
+                else sortCol = 'si.customer_name'; // Fallback
+            } else {
+                if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
+                else if (sort_by === 'party') sortCol = 'si.customer_name';
+                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'si.customer_gstin';
+                else if (sort_by === 'taxableAmt') sortCol = 'si.total_taxable_value';
+                else if (sort_by === 'totalAmt' || sort_by === 'net') sortCol = 'si.total_invoice_value';
+                else if (sort_by === 'date') sortCol = 'si.invoice_date';
+                else if (sort_by === 'igst') sortCol = 'si.total_igst';
+                else if (sort_by === 'cgst') sortCol = 'si.total_cgst';
+                else if (sort_by === 'sgst') sortCol = 'si.total_sgst';
+                else if (sort_by === 'cess') sortCol = 'si.total_cess';
+                else if (sort_by === 'roundOff') sortCol = 'si.round_off';
+                else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) OVER (PARTITION BY COALESCE(NULLIF(si.customer_gstin, \'\'), si.customer_name)) ');
+            }
 
             if (group_by_supplier) {
                 records = await q
@@ -492,19 +513,34 @@ class BookDataModel {
             };
 
             let sortCol = 'ev.supplier_invoice_date';
-            if (sort_by === 'invoiceNo' || sort_by === 'ref_vchr_no') sortCol = 'ev.supplier_invoice_no';
-            else if (sort_by === 'party') sortCol = 'ev.supplier_name';
-            else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'ev.supplier_gstin';
-            else if (sort_by === 'taxableAmt') sortCol = 'ev.taxable_total';
-            else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = 'ev.net_amount';
-            else if (sort_by === 'date' || sort_by === 'ref_vchr_date') sortCol = 'ev.supplier_invoice_date';
-            else if (sort_by === 'bookVchrNo') sortCol = 'ev.book_vchr_no';
-            else if (sort_by === 'bookVchrDate') sortCol = 'ev.book_vchr_date';
-            else if (sort_by === 'igst') sortCol = 'ev.total_igst_amount';
-            else if (sort_by === 'cgst') sortCol = 'ev.total_cgst_amount';
-            else if (sort_by === 'sgst') sortCol = 'ev.total_sgst_amount';
-            else if (sort_by === 'cess') sortCol = 'ev.total_cess_amount';
-            else if (sort_by === 'roundOff') sortCol = 'ev.round_off';
+            if (group_by_supplier) {
+                if (sort_by === 'party') sortCol = 'party';
+                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'gstin';
+                else if (sort_by === 'taxableAmt') sortCol = knex.raw(' sum(ev.taxable_total) ');
+                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = knex.raw(' sum(ev.net_amount) ');
+                else if (sort_by === 'igst') sortCol = knex.raw(' sum(ev.total_igst_amount) ');
+                else if (sort_by === 'cgst') sortCol = knex.raw(' sum(ev.total_cgst_amount) ');
+                else if (sort_by === 'sgst') sortCol = knex.raw(' sum(ev.total_sgst_amount) ');
+                else if (sort_by === 'cess') sortCol = knex.raw(' sum(ev.total_cess_amount) ');
+                else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(ev.round_off) ');
+                else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) ');
+                else sortCol = 'party'; // Default fallback that is safe for GROUP BY
+            } else {
+                if (sort_by === 'invoiceNo' || sort_by === 'ref_vchr_no') sortCol = 'ev.supplier_invoice_no';
+                else if (sort_by === 'party') sortCol = 'ev.supplier_name';
+                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'ev.supplier_gstin';
+                else if (sort_by === 'taxableAmt') sortCol = 'ev.taxable_total';
+                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = 'ev.net_amount';
+                else if (sort_by === 'date' || sort_by === 'ref_vchr_date') sortCol = 'ev.supplier_invoice_date';
+                else if (sort_by === 'bookVchrNo') sortCol = 'ev.book_vchr_no';
+                else if (sort_by === 'bookVchrDate') sortCol = 'ev.book_vchr_date';
+                else if (sort_by === 'igst') sortCol = 'ev.total_igst_amount';
+                else if (sort_by === 'cgst') sortCol = 'ev.total_cgst_amount';
+                else if (sort_by === 'sgst') sortCol = 'ev.total_sgst_amount';
+                else if (sort_by === 'cess') sortCol = 'ev.total_cess_amount';
+                else if (sort_by === 'roundOff') sortCol = 'ev.round_off';
+                else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, \'\'), ev.supplier_name)) ');
+            }
 
             if (group_by_supplier) {
                 records = await q
