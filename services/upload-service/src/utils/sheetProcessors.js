@@ -20,7 +20,7 @@ const getHeaderIndex = (rows, keywords) => {
 const buildColumnMap = (headerRow) => {
     const colMap = {};
     headerRow.forEach((cell, index) => {
-        const header = cell?.toString().toUpperCase().trim() || '';
+        const header = cell?.toString().toUpperCase().replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim() || '';
 
         // Amendment Specifics (Old format explicit names)
         if (header.includes('ORIGINAL INVOICE/NOTE NUMBER') || header.includes('ORIGINAL INVOICE NUMBER') || header.includes('ORIGINAL NOTE NUMBER')) colMap['original_invoice_number'] = index;
@@ -78,7 +78,7 @@ const buildColumnMap = (headerRow) => {
 
         // GSTR-2B Specifics
         else if (header.match(/GSTR-1\/IFF\/GSTR-5 PERIOD|FILING PERIOD|SUPPLIER FILING PERIOD/)) colMap['filing_period'] = index;
-        else if (header.match(/FILING DATE|SUPPLIER FILING DATE/)) colMap['filing_date'] = index;
+        else if (header.match(/GSTR-1[\/A-Z0-9-]* DATE|FILING DATE|SUPPLIER FILING DATE/)) colMap['filing_date'] = index;
         else if (header.match(/^STATUS$|RECONCILED STATUS|RECONCILIATION STATUS|RECON STATUS/)) colMap['reconciliation_status'] = index;
         else if (header.includes('ITC AVAILABILITY')) colMap['itc_availability'] = index;
         else if (header.includes('REASON')) colMap['unavailability_reason'] = index;
@@ -250,6 +250,8 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
     let stickyDate = null;
     let stickyPlaceOfSupply = '';
     let stickyReverseCharge = 'N';
+    let stickyFilingDate = null;
+    let stickyFilingPeriod = null;
 
     for (let i = dataStartIndex; i < rows.length; i++) {
         const row = rows[i];
@@ -268,6 +270,8 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
             stickyDate = parseExcelDate(row[colMap['invoice_date']]);
             stickyPlaceOfSupply = colMap['place_of_supply'] !== undefined ? row[colMap['place_of_supply']] : null;
             stickyReverseCharge = colMap['reverse_charge'] !== undefined ? (row[colMap['reverse_charge']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Y' : 'N') : 'N';
+            stickyFilingDate = parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null);
+            stickyFilingPeriod = colMap['filing_period'] !== undefined ? row[colMap['filing_period']] : null;
         } else if (stickyGstin && (row[colMap['taxable_value']] !== undefined || row[colMap['igst_amount']] !== undefined)) {
             // Use sticky values for rows that look like data but miss headers
             gstin = stickyGstin;
@@ -303,8 +307,8 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cleanAmount(colMap['cess_amount'] !== undefined ? row[colMap['cess_amount']] : 0),
-            filing_period: colMap['filing_period'] !== undefined ? row[colMap['filing_period']] : null,
-            filing_date: gstin === stickyGstin ? stickyDate : parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null),
+            filing_period: gstin === stickyGstin ? stickyFilingPeriod : (colMap['filing_period'] !== undefined ? row[colMap['filing_period']] : null),
+            filing_date: gstin === stickyGstin ? stickyFilingDate : parseExcelDate(colMap['filing_date'] !== undefined ? row[colMap['filing_date']] : null),
             reconciliation_status: colMap['reconciliation_status'] !== undefined ? extractReconStatus(row[colMap['reconciliation_status']]) : 'pending',
             itc_availability: colMap['itc_availability'] !== undefined ? (row[colMap['itc_availability']]?.toString().toUpperCase().match(/Y|YES|TRUE/) ? 'Yes' : 'No') : 'Yes',
             unavailability_reason: colMap['unavailability_reason'] !== undefined ? row[colMap['unavailability_reason']] : null,
