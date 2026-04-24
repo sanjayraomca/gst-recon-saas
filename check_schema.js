@@ -1,17 +1,14 @@
-const knex = require('./services/workspace-service/src/../../shared/src/db/connection');
+const knex = require('./shared/src/db/connection');
 
-async function applyMigration() {
-  try {
-    console.log('Adding gstr2a_source_id to reconciliation_results...');
-    await knex.schema.alterTable('reconciliation_results', table => {
-      table.uuid('gstr2a_source_id').references('id').inTable('normalized_gstr2a_invoices').nullable();
-    });
-    console.log('Migration successful!');
-    process.exit(0);
-  } catch (error) {
-    console.error('Migration failed:', error.message);
-    process.exit(1);
-  }
+async function checkSchema() {
+    try {
+        const columns = await knex('reconciliation_results').columnInfo();
+        console.log('reconciliation_results columns:', Object.keys(columns));
+        process.exit(0);
+    } catch (err) {
+        console.error(err);
+        process.exit(1);
+    }
 }
 
-applyMigration();
+checkSchema();

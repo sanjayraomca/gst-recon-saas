@@ -736,6 +736,10 @@ class ReconciliationModel {
             search,
             min_amount,
             max_amount,
+            min_net_amount,
+            max_net_amount,
+            supply_type,
+            roundoff_only,
             has_variance,
             supplier_gstin,
             date_from,
@@ -825,12 +829,24 @@ class ReconciliationModel {
         // For 2A vs 2B, we use gstr2a_source_id and gstr2b_invoice_id for status tracking
         if (is2aVs2b) {
             query = query
-                .leftJoin('reconciliation_status as rs_pi', 'rr.gstr2a_source_id', 'rs_pi.gstr_data_id')
-                .leftJoin('reconciliation_status as rs_gi', 'rr.gstr2b_invoice_id', 'rs_gi.gstr_data_id');
+                .leftJoin('reconciliation_status as rs_pi', function () {
+                    this.on('rr.gstr2a_source_id', '=', 'rs_pi.gstr_data_id')
+                        .andOn('rs_pi.workspace_id', '=', 'rr.workspace_id');
+                })
+                .leftJoin('reconciliation_status as rs_gi', function () {
+                    this.on('rr.gstr2b_invoice_id', '=', 'rs_gi.gstr_data_id')
+                        .andOn('rs_gi.workspace_id', '=', 'rr.workspace_id');
+                });
         } else {
             query = query
-                .leftJoin('reconciliation_status as rs_pi', 'rr.purchase_invoice_id', 'rs_pi.book_data_id')
-                .leftJoin('reconciliation_status as rs_gi', `rr.${gstrIdCol}`, 'rs_gi.gstr_data_id');
+                .leftJoin('reconciliation_status as rs_pi', function () {
+                    this.on('rr.purchase_invoice_id', '=', 'rs_pi.book_data_id')
+                        .andOn('rs_pi.workspace_id', '=', 'rr.workspace_id');
+                })
+                .leftJoin('reconciliation_status as rs_gi', function () {
+                    this.on(`rr.${gstrIdCol}`, '=', 'rs_gi.gstr_data_id')
+                        .andOn('rs_gi.workspace_id', '=', 'rr.workspace_id');
+                });
         }
 
         query = query.leftJoin('supplier_master as sm', function () {
@@ -961,8 +977,8 @@ class ReconciliationModel {
                     this.where('sa.document_value', '>=', min)
                         .orWhere('gi.document_value', '>=', min);
                 } else {
-                    this.where('pi.net_amount', '>=', min)
-                        .orWhere('gi.document_value', '>=', min);
+                    this.where('pi.taxable_total', '>=', min)
+                        .orWhere('gi.taxable_value', '>=', min);
                 }
             });
         }
@@ -974,10 +990,56 @@ class ReconciliationModel {
                     this.where('sa.document_value', '<=', max)
                         .orWhere('gi.document_value', '<=', max);
                 } else {
+                    this.where('pi.taxable_total', '<=', max)
+                        .orWhere('gi.taxable_value', '<=', max);
+                }
+            });
+        }
+
+        if (isValidNumeric(min_net_amount)) {
+            const min = parseFloat(min_net_amount);
+            query.where(function () {
+                if (is2aVs2b) {
+                    this.where('sa.document_value', '>=', min)
+                        .orWhere('gi.document_value', '>=', min);
+                } else {
+                    this.where('pi.net_amount', '>=', min)
+                        .orWhere('gi.document_value', '>=', min);
+                }
+            });
+        }
+
+        if (isValidNumeric(max_net_amount)) {
+            const max = parseFloat(max_net_amount);
+            query.where(function () {
+                if (is2aVs2b) {
+                    this.where('sa.document_value', '<=', max)
+                        .orWhere('gi.document_value', '<=', max);
+                } else {
                     this.where('pi.net_amount', '<=', max)
                         .orWhere('gi.document_value', '<=', max);
                 }
             });
+        }
+
+        if (supply_type && supply_type !== 'ALL') {
+            if (supply_type === 'INTRASTATE') {
+                query.where(function () {
+                    this.where('gi.cgst', '>', 0)
+                        .orWhere('gi.sgst', '>', 0)
+                        .orWhere('pi.total_cgst_amount', '>', 0)
+                        .orWhere('pi.total_sgst_amount', '>', 0);
+                });
+            } else if (supply_type === 'INTERSTATE') {
+                query.where(function () {
+                    this.where('gi.igst', '>', 0)
+                        .orWhere('pi.total_igst_amount', '>', 0);
+                });
+            }
+        }
+
+        if (roundoff_only === 'true' || roundoff_only === true) {
+            query.whereRaw('ABS(rr.variance_amount) > 0 AND ABS(rr.variance_amount) <= 1');
         }
 
         if (has_variance === 'true') {
@@ -1127,7 +1189,7 @@ class ReconciliationModel {
                 voucher_date: { cols: is2aVs2b ? [] : ['pi.book_vchr_date'], dateCol: true },
                 // Match status / action
                 status: { cols: ['rr.match_status'], exact: true },
-                action_status: { cols: [knex.raw("COALESCE(rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
+                action_status: { cols: [knex.raw("COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
                 // GSTR amounts (gi / Source B)
                 gstr_invoice_total: { cols: [knex.raw('COALESCE(gi.document_value, gi.taxable_value, (COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)))')], numeric: true },
                 gstr_taxable: { cols: ['gi.taxable_value'], numeric: true },
@@ -1416,7 +1478,7 @@ class ReconciliationModel {
             `),
 
             // Workflow status from the separate table, defaulting to 'pending'
-            knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status'),
+            knex.raw('COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, \'pending\') as reconciliation_status'),
 
             // Differences for UI parity
             knex.raw(`COALESCE(gi.taxable_value, 0) - COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0) as diff_taxable`),
