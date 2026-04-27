@@ -874,12 +874,11 @@ class ReconciliationModel {
             }
         });
 
-        // Apply Run ID filter ONLY if status is not 'pending'
-        // If status is 'pending', we show all historical pending data for the workspace
-        if (workflow_status === 'pending') {
+        // ── Filter by Run ID or Workspace ────────────────────────────────────────
+        if (runId === 'all') {
             query.where('rr.workspace_id', workspaceId)
-                .join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
-                .where('run_isolation.run_type', run.run_type);
+                .join('reconciliation_runs as r_all', 'rr.recon_run_id', 'r_all.id')
+                .where('r_all.run_type', run.run_type);
         } else {
             query.where('rr.recon_run_id', runId);
         }
@@ -951,25 +950,19 @@ class ReconciliationModel {
 
         if (date_from) {
             query.where(function () {
-                if (is2aVs2b) {
-                    this.where('sa.document_date', '>=', date_from)
-                        .orWhere('gi.document_date', '>=', date_from);
-                } else {
-                    this.where('pi.supplier_invoice_date', '>=', date_from)
-                        .orWhere('gi.document_date', '>=', date_from);
-                }
+                const dateExpr = is2aVs2b
+                    ? knex.raw('COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)')
+                    : knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)');
+                this.where(dateExpr, '>=', date_from);
             });
         }
 
         if (date_to) {
             query.where(function () {
-                if (is2aVs2b) {
-                    this.where('sa.document_date', '<=', date_to)
-                        .orWhere('gi.document_date', '<=', date_to);
-                } else {
-                    this.where('pi.supplier_invoice_date', '<=', date_to)
-                        .orWhere('gi.document_date', '<=', date_to);
-                }
+                const dateExpr = is2aVs2b
+                    ? knex.raw('COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)')
+                    : knex.raw('COALESCE(pi.supplier_invoice_date, pi.book_vchr_date, gi.document_date, gi.isd_document_date, gi.boe_date)');
+                this.where(dateExpr, '<=', date_to);
             });
         }
 
