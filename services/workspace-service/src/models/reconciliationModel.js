@@ -245,8 +245,15 @@ class ReconciliationModel {
             let missingCount = 0;
 
             // Step 0: Include all invoices for matching (bypassing strict GSTIN filter for IMPG)
-            const validPurchaseInvoices = purchaseInvoices;
-            const validGstrInvoices = gstrInvoices;
+            // But explicitly exclude RDB2C and NONGST data as requested
+            const validPurchaseInvoices = purchaseInvoices.filter(inv => {
+                const cat = String(inv.gstr_category || inv.document_category || '').toUpperCase();
+                return cat !== 'RDB2C' && cat !== 'NONGST';
+            });
+            const validGstrInvoices = gstrInvoices.filter(inv => {
+                const cat = String(inv.document_category || inv.source_table || '').toUpperCase();
+                return !cat.includes('RDB2C') && !cat.includes('NONGST');
+            });
 
             const mapCategory = (booksType) => {
                 const type = (booksType || '').toString().toUpperCase();
@@ -894,6 +901,14 @@ class ReconciliationModel {
                 this.where('pi.supplier_gstin', '!=', '')
                     .orWhere('gi.supplier_gstin', '!=', '');
             }
+        });
+
+        // Hide special categories that should not be reconciled as per user request
+        query.where(function () {
+            this.whereNot(function () {
+                this.where(knex.raw("UPPER(COALESCE(gi.document_category, ''))"), 'IN', ['RDB2C', 'NONGST'])
+                    .orWhere(knex.raw("UPPER(COALESCE(pi.gstr_category, ''))"), 'IN', ['RDB2C', 'NONGST']);
+            });
         });
 
         // --- Apply Filters ---
