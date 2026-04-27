@@ -131,7 +131,7 @@ const getRunResults = async (req, res) => {
         if (runId !== 'all') {
             const run = await ReconciliationModel.getRunById(workspaceId, runId);
             if (!run) return errorResponse(res, 'Run not found', 404);
-            
+
             // If it's a 2A or 2A vs 2B run, use the 2A model
             const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run.run_type);
             if (is2aRun) {
@@ -144,9 +144,9 @@ const getRunResults = async (req, res) => {
         const hasFilters = Object.keys(req.query || {}).length > 0;
         const transactionName = hasFilters ? 'FilterReconResults' : 'FetchReconResults';
         const cleanup = attachSqlFileLogger(transactionName);
-        
+
         const result = await model.getRunResults(workspaceId, runId, req.query);
-        
+
         cleanup();
         if (!result) return errorResponse(res, 'Results not found', 404);
 
@@ -181,7 +181,7 @@ const getRunTaxSummary = async (req, res) => {
         const cleanup = attachSqlFileLogger('TaxSummary');
         const summary = await model.getRunTaxSummary(workspaceId, runId, req.query);
         cleanup();
-        
+
         return successResponse(res, summary, 'Tax summary retrieved successfully');
     } catch (error) {
         console.error('Error fetching tax summary:', error);

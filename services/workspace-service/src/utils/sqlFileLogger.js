@@ -11,7 +11,7 @@ const knex = require('../../../shared/src/db/connection');
  */
 function attachSqlFileLogger(transactionName) {
     const queriesDir = path.join(__dirname, '../queries');
-    
+
     // Ensure directory exists (redundant but safe)
     if (!fs.existsSync(queriesDir)) {
         fs.mkdirSync(queriesDir, { recursive: true });
@@ -26,7 +26,7 @@ function attachSqlFileLogger(transactionName) {
             const placeholder = new RegExp(`\\$${i + 1}`, 'g');
             const safeVal = typeof val === 'string' ? `'${val}'` : (val === null ? 'NULL' : val);
             sql = sql.replace(placeholder, safeVal);
-            
+
             if (sql.includes('?')) {
                 sql = sql.replace('?', safeVal);
             }

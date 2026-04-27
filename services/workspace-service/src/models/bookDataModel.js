@@ -619,10 +619,10 @@ class BookDataModel {
      */
     static async getSummary(workspaceId, filters = {}) {
         const { period, year, date_from, date_to, column_filters, search } = filters;
-        
+
         let cf = column_filters;
         if (cf && typeof cf === 'string') {
-            try { cf = JSON.parse(cf); } catch(e) { cf = null; }
+            try { cf = JSON.parse(cf); } catch (e) { cf = null; }
         }
         // --- Sales types ---
         const salesTypes = [
