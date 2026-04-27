@@ -1321,20 +1321,29 @@ class ReconciliationModel {
 
         if (search) {
             query.where(function () {
+                const searchStr = `%${search}%`;
                 if (is2aVs2b) {
-                    this.where('sa.supplier_name', 'ilike', `%${search}%`)
-                        .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
-                        .orWhere('sa.document_number_clean', 'ilike', `%${search}%`)
-                        .orWhere('gi.document_number_clean', 'ilike', `%${search}%`)
-                        .orWhere('sa.supplier_gstin', 'ilike', `%${search}%`)
-                        .orWhere('gi.supplier_gstin', 'ilike', `%${search}%`);
+                    this.where('sa.supplier_name', 'ilike', searchStr)
+                        .orWhere('gi.supplier_name', 'ilike', searchStr)
+                        .orWhere('sa.document_number_clean', 'ilike', searchStr)
+                        .orWhere('sa.document_number_raw', 'ilike', searchStr)
+                        .orWhere('gi.document_number_clean', 'ilike', searchStr)
+                        .orWhere('gi.document_number_raw', 'ilike', searchStr)
+                        .orWhere('gi.isd_document_number', 'ilike', searchStr)
+                        .orWhere('gi.boe_number', 'ilike', searchStr)
+                        .orWhere('sa.supplier_gstin', 'ilike', searchStr)
+                        .orWhere('gi.supplier_gstin', 'ilike', searchStr);
                 } else {
-                    this.where('pi.supplier_name', 'ilike', `%${search}%`)
-                        .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
-                        .orWhere('pi.supplier_invoice_no', 'ilike', `%${search}%`)
-                        .orWhere('gi.document_number_clean', 'ilike', `%${search}%`)
-                        .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
-                        .orWhere('gi.supplier_gstin', 'ilike', `%${search}%`);
+                    this.where('pi.supplier_name', 'ilike', searchStr)
+                        .orWhere('gi.supplier_name', 'ilike', searchStr)
+                        .orWhere('pi.supplier_invoice_no', 'ilike', searchStr)
+                        .orWhere('pi.book_vchr_no', 'ilike', searchStr)
+                        .orWhere('gi.document_number_clean', 'ilike', searchStr)
+                        .orWhere('gi.document_number_raw', 'ilike', searchStr)
+                        .orWhere('gi.isd_document_number', 'ilike', searchStr)
+                        .orWhere('gi.boe_number', 'ilike', searchStr)
+                        .orWhere('pi.supplier_gstin', 'ilike', searchStr)
+                        .orWhere('gi.supplier_gstin', 'ilike', searchStr);
                 }
             });
         }

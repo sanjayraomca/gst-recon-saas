@@ -682,6 +682,25 @@ class Reconciliation2AModel {
             }
         });
 
+        if (search) {
+            const searchStr = `%${search}%`;
+            query.where(function () {
+                this.where('pi.supplier_name', 'ilike', searchStr)
+                    .orWhere('sa.supplier_name', 'ilike', searchStr)
+                    .orWhere('gi.supplier_name', 'ilike', searchStr)
+                    .orWhere('gb.supplier_name', 'ilike', searchStr)
+                    .orWhere('pi.supplier_invoice_no', 'ilike', searchStr)
+                    .orWhere('pi.book_vchr_no', 'ilike', searchStr)
+                    .orWhere('gi.document_number_clean', 'ilike', searchStr)
+                    .orWhere('sa.document_number_raw', 'ilike', searchStr)
+                    .orWhere('gb.document_number_raw', 'ilike', searchStr)
+                    .orWhere('pi.supplier_gstin', 'ilike', searchStr)
+                    .orWhere('gi.supplier_gstin', 'ilike', searchStr)
+                    .orWhere('sa.supplier_gstin', 'ilike', searchStr)
+                    .orWhere('gb.supplier_gstin', 'ilike', searchStr);
+            });
+        }
+
         // Totals
         const totalsResult = await query.clone().clearSelect().select(
             knex.raw('COUNT(*) as total_count'),
