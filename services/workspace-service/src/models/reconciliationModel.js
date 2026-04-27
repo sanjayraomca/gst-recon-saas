@@ -1580,8 +1580,8 @@ class ReconciliationModel {
             'gstr2b_invoice_total', 'gstr2b_taxable', 'gstr2b_tax', 'gstr2b_tax_rate',
             'purchase_invoice_total', 'purchase_taxable', 'purchase_tax', 'purchase_tax_rate',
             'return_period', 'gst_type', 'reconciliation_status', 'rr.created_at', 'rr.match_status', 'rr.variance_amount',
-            'gstin', 'name', 'tax', 'gstType', 'invoiceRef', 'gstrInvoiceDate', 'gstrInvoiceAmt', 'gstrTaxableAmt', 
-            'gstrTaxRate', 'gstrTaxAmt', 'gstrTaxPeriod', 'booksInvoiceDate', 'booksInvoiceAmt', 'booksTaxableAmt', 
+            'gstin', 'name', 'tax', 'gstType', 'invoiceRef', 'gstrInvoiceDate', 'gstrInvoiceAmt', 'gstrTaxableAmt',
+            'gstrTaxRate', 'gstrTaxAmt', 'gstrTaxPeriod', 'booksInvoiceDate', 'booksInvoiceAmt', 'booksTaxableAmt',
             'booksTaxRate', 'booksTaxAmt', 'booksVoucherNo', 'gstrType', 'taxPeriod', 'status', 'diff', 'action'
         ]);
 

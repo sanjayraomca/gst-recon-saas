@@ -281,9 +281,25 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                 : (orgGstin && custGstinClean ? orgGstin.substring(0, 2) !== custGstinClean.substring(0, 2) : false);
             const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
 
-            // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
+            // Use filing_period from sheet if available, otherwise derive from invDate
+            let filingPeriodFromSheet = null;
+            if (filingPeriodSheetIdx !== null) {
+                const raw = (row[filingPeriodSheetIdx] ?? '').toString().trim();
+                const digits = raw.replace(/\D/g, '');
+                // Accept 5 or 6 digit values; store exactly as-is from the sheet
+                if (digits.length === 6) {
+                    filingPeriodFromSheet = digits;
+                } else if (digits.length === 5) {
+                    filingPeriodFromSheet = digits.padStart(6, '0');
+                }
+            }
+
+            // Fallback: Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
             const dateParts = invDate.split('-');
             const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
+            const finalFilingPeriod = filingPeriodFromSheet || derivedFilingPeriod;
+            console.log(`[processSalesSheet] invoice=${invNum} date=${invDate} sheet_fp=${filingPeriodSheetIdx !== null ? row[filingPeriodSheetIdx] : 'N/A'} derived=${derivedFilingPeriod} final=${finalFilingPeriod}`);
 
             // Build t_extra_info: all raw sheet columns not already mapped to a DB field
             const tExtraInfo = {};
@@ -318,8 +334,8 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
                     total_sgst: 0,
                     total_cess: 0,
                     total_invoice_value: 0,
-                    filing_period: derivedFilingPeriod,
-                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
+                    filing_period: finalFilingPeriod,
+                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : finalFilingPeriod,
                     original_invoice_no: origInvNoIdx !== null ? (row[origInvNoIdx] ?? '').toString().trim() : null,
                     original_invoice_date: origInvDateIdx !== null ? parseDate(row[origInvDateIdx]) : null,
                     original_book_vchr_no: origVchrNoIdx !== null ? (row[origVchrNoIdx] ?? '').toString().trim() : null,
@@ -547,9 +563,25 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                 : (orgGstin && supplierGstinClean ? orgGstin.substring(0, 2) !== supplierGstinClean.substring(0, 2) : false);
             const rc = rcIdx !== null ? (row[rcIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
 
-            // Derive filing_period (MMYYYY) from invDate (YYYY-MM-DD)
+            // Use filing_period from sheet if available, otherwise derive from invDate
+            let filingPeriodFromSheet = null;
+            if (filingPeriodSheetIdx !== null) {
+                const raw = (row[filingPeriodSheetIdx] ?? '').toString().trim();
+                const digits = raw.replace(/\D/g, '');
+                // Accept 5 or 6 digit values; store exactly as-is from the sheet
+                if (digits.length === 6) {
+                    filingPeriodFromSheet = digits;
+                } else if (digits.length === 5) {
+                    filingPeriodFromSheet = digits.padStart(6, '0');
+                }
+            }
+
+            // Fallback: Derive filing_period (MMYYYY) from bookVchrDate (YYYY-MM-DD)
             const dateParts = bookVchrDate.split('-');
             const derivedFilingPeriod = dateParts.length === 3 ? `${dateParts[1]}${dateParts[0]}` : (returnPeriod || null);
+
+            const finalFilingPeriod = filingPeriodFromSheet || derivedFilingPeriod;
+            console.log(`[processPurchaseSheet] vchr=${bookVchrNo} date=${bookVchrDate} sheet_fp=${filingPeriodSheetIdx !== null ? row[filingPeriodSheetIdx] : 'N/A'} derived=${derivedFilingPeriod} final=${finalFilingPeriod}`);
 
             // Build t_extra_info: all raw sheet columns not already mapped to a DB field
             const tExtraInfo = {};
@@ -588,8 +620,8 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
                     net_amount: 0,
                     itc_eligible: true,
                     itc_claimed: false,
-                    filing_period: derivedFilingPeriod,
-                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : derivedFilingPeriod,
+                    filing_period: finalFilingPeriod,
+                    return_period: returnPeriodIdx !== null ? (row[returnPeriodIdx] ?? '').toString().trim() : finalFilingPeriod,
                     is_amendment: isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false,
                     source_section: resolveSourceSection(bookType, isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false, supplierGstinClean),
                     gstr_category: gstrCategory,

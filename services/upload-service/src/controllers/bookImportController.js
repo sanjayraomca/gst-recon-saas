@@ -365,7 +365,10 @@ class BookImportController {
                             periodCache[mmyyyy] = await TaxPeriodService.ensureTaxPeriodExists(mmyyyy, db);
                         }
                         doc.header.tax_period_id = periodCache[mmyyyy];
-                        doc.header.filing_period = mmyyyy;
+                        // Only override filing_period if the sheet did NOT provide one
+                        if (!doc.header.filing_period) {
+                            doc.header.filing_period = mmyyyy;
+                        }
                     } else {
                         console.warn(`[DEBUG] Skipping dynamic period resolution for invalid parts: yyyy=${yyyy}, mm=${mm}, dateStr=${dateStr}`);
                     }
