@@ -153,6 +153,10 @@ class Reconciliation2AModel {
             const createMatchResult = (overrides) => ({
                 recon_run_id: runId,
                 workspace_id: workspaceId,
+                purchase_invoice_id: null,
+                gstr2a_invoice_id: null,
+                gstr2a_source_id: null,
+                gstr2b_invoice_id: null,
                 match_status: 'unmatched',
                 match_score: 0.00,
                 match_confidence: 'LOW',
@@ -161,6 +165,7 @@ class Reconciliation2AModel {
                 portal_value: 0,
                 variance_amount: 0,
                 itc_decision: 'PENDING',
+                decision_reason: null,
                 action_priority: 'MEDIUM',
                 action_status: 'pending',
                 created_at: knex.fn.now(),
@@ -279,7 +284,7 @@ class Reconciliation2AModel {
                 matchResults.push(createMatchResult({
                     purchase_invoice_id: is2aVs2b ? null : invA.id,
                     gstr2a_source_id: is2aVs2b ? invA.id : null,
-                    match_status: 'missing_in_portal',
+                    match_status: 'not_in_portal',
                     books_value: taxA,
                     variance_amount: taxA,
                     decision_reason: `Not found in ${is2aVs2b ? 'GSTR-2B' : 'GSTR-2A'}`
@@ -293,7 +298,7 @@ class Reconciliation2AModel {
                 matchResults.push(createMatchResult({
                     gstr2a_invoice_id: is2aVs2b ? null : invB.id,
                     gstr2b_invoice_id: is2aVs2b ? invB.id : null,
-                    match_status: 'missing_in_books',
+                    match_status: 'not_in_books',
                     portal_value: taxB,
                     variance_amount: -taxB,
                     decision_reason: 'Not found in records'
@@ -304,25 +309,37 @@ class Reconciliation2AModel {
             if (matchResults.length > 0) {
                 await progressEmitter.emitProgress(runId, 85, 'Saving results...');
 
-                // Clear existing for these IDs
-                const pIds = matchResults.map(r => r.purchase_invoice_id).filter(Boolean);
-                const g2aIds = matchResults.map(r => r.gstr2a_invoice_id).filter(Boolean);
-                const g2asIds = matchResults.map(r => r.gstr2a_source_id).filter(Boolean);
 
-                if (pIds.length || g2aIds.length || g2asIds.length) {
-                    await trx('reconciliation_results').where('workspace_id', workspaceId).where(function () {
-                        if (pIds.length) this.orWhereIn('purchase_invoice_id', pIds);
-                        if (g2aIds.length) this.orWhereIn('gstr2a_invoice_id', g2aIds);
-                        if (g2asIds.length) this.orWhereIn('gstr2a_source_id', g2asIds);
-                    })
-                        .whereIn('recon_run_id', function () {
-                            this.select('id').from('reconciliation_runs')
-                                .whereIn('run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B']);
+                // 1. Final Deduplication
+                const finalResults = [];
+                const seenKeys = new Set();
+                for (const r of matchResults) {
+                    const key = `${r.purchase_invoice_id || r.gstr2a_invoice_id || r.gstr2a_source_id || Math.random()}`;
+                    if (!seenKeys.has(key)) {
+                        finalResults.push(r);
+                        seenKeys.add(key);
+                    }
+                }
+
+                // 2. Aggressive Cleanup to prevent unique constraint conflicts
+                const pIds = finalResults.map(r => r.purchase_invoice_id).filter(Boolean);
+                const g2aIds = finalResults.map(r => r.gstr2a_invoice_id).filter(Boolean);
+                if (pIds.length > 0 || g2aIds.length > 0) {
+                    await trx('reconciliation_results')
+                        .where('workspace_id', workspaceId)
+                        .where(function () {
+                            if (pIds.length) this.orWhereIn('purchase_invoice_id', pIds);
+                            if (g2aIds.length) this.orWhereIn('gstr2a_invoice_id', g2aIds);
                         })
                         .delete();
                 }
 
-                const inserted = await trx('reconciliation_results').insert(matchResults).returning('*');
+                // 3. Batch Insert safely
+                await trx.batchInsert('reconciliation_results', finalResults, 100);
+
+                // Fetch inserted to use for status updates
+                const inserted = await trx('reconciliation_results')
+                    .where({ recon_run_id: runId, workspace_id: workspaceId });
 
                 // Update 2A specific status table
                 await progressEmitter.emitProgress(runId, 95, 'Updating status tracking...');
@@ -332,7 +349,7 @@ class Reconciliation2AModel {
                     tenant_id: tenantId,
                     gstr_data_id: r.gstr2a_invoice_id || null,
                     book_data_id: r.purchase_invoice_id || null,
-                    recon_status: r.match_status === 'matched' ? 'matched' : (r.match_status === 'missing_in_portal' ? 'not_in_portal' : 'not_in_books'),
+                    recon_status: r.match_status === 'matched' ? 'matched' : (r.match_status === 'not_in_portal' ? 'not_in_portal' : 'not_in_books'),
                 }));
 
                 // 1. Deduplicate summary status (Key by Book ID or GSTR ID)
@@ -440,7 +457,11 @@ class Reconciliation2AModel {
         // ── Standard Filters ─────────────────────────────────────────────────
         if (match_status && match_status !== 'all') {
             const statusList = Array.isArray(match_status) ? match_status : match_status.split(',').map(s => s.trim());
-            query.whereIn('rr.match_status', statusList);
+            // Normalize legacy aliases
+            const normalizedStatus = new Set(statusList);
+            if (normalizedStatus.has('missing_in_portal')) normalizedStatus.add('not_in_portal');
+            if (normalizedStatus.has('missing_in_books')) normalizedStatus.add('not_in_books');
+            query.whereIn('rr.match_status', Array.from(normalizedStatus));
         }
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'pending') {
@@ -706,8 +727,8 @@ class Reconciliation2AModel {
             knex.raw('COUNT(*) as total_count'),
             knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match') THEN 1 ELSE 0 END) as matched_count"),
             knex.raw("SUM(CASE WHEN rr.match_status IN ('mismatch', 'partial_match') THEN 1 ELSE 0 END) as mismatch_count"),
-            knex.raw("SUM(CASE WHEN rr.match_status = 'missing_in_portal' THEN 1 ELSE 0 END) as missing_in_portal_count"),
-            knex.raw("SUM(CASE WHEN rr.match_status = 'missing_in_books' THEN 1 ELSE 0 END) as missing_in_books_count"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_portal', 'not_in_portal') THEN 1 ELSE 0 END) as missing_in_portal_count"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_books', 'not_in_books') THEN 1 ELSE 0 END) as missing_in_books_count"),
             knex.raw('SUM(COALESCE(pi.taxable_total, gb.taxable_value, 0)) as book_taxable_total'),
             knex.raw('SUM(COALESCE(gi.taxable_value, sa.taxable_value, 0)) as gstr_taxable_total'),
             knex.raw('SUM(COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0) + COALESCE(gb.total_tax, 0)) as book_tax_total'),
