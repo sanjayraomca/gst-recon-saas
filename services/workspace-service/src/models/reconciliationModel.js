@@ -1198,76 +1198,96 @@ class ReconciliationModel {
                 gstin: { cols: is2aVs2b ? ['sa.supplier_gstin', 'gi.supplier_gstin'] : ['pi.supplier_gstin', 'gi.supplier_gstin'], exact: true },
                 name: { cols: is2aVs2b ? ['sa.supplier_name', 'gi.supplier_name'] : ['pi.supplier_name', 'gi.supplier_name'] },
                 gst_type: { cols: is2aVs2b ? ['sa.source_section', 'gi.source_section'] : ['pi.source_section', 'gi.source_section'] },
-                invoice_no: { cols: is2aVs2b ? ['COALESCE(sa.document_number_clean, gi.document_number_clean, gi.isd_document_number, gi.boe_number)', 'COALESCE(gi.document_number_clean, gi.isd_document_number, gi.boe_number)'] : ['pi.supplier_invoice_no', 'COALESCE(gi.document_number_clean, gi.isd_document_number, gi.boe_number)'] },
-                invoice_date: { cols: is2aVs2b ? ['COALESCE(sa.document_date, gi.document_date, gi.isd_document_date, gi.boe_date)', 'COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date)'] : ['COALESCE(pi.supplier_invoice_date, pi.book_vchr_date)', 'COALESCE(gi.document_date, gi.isd_document_date, gi.boe_date)'], dateCol: true },
+                gstType: { cols: is2aVs2b ? ['sa.source_section', 'gi.source_section'] : ['pi.source_section', 'gi.source_section'] },
+                invoice_no: { cols: is2aVs2b ? ['sa.document_number_clean', 'gi.document_number_clean'] : ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
+                invoice_date: { cols: is2aVs2b ? ['sa.document_date', 'gi.document_date'] : ['pi.supplier_invoice_date', 'gi.document_date'], dateCol: true },
+                invoiceRef: { cols: is2aVs2b ? ['sa.document_number_clean', 'gi.document_number_clean'] : ['pi.supplier_invoice_no', 'gi.document_number_clean'] },
                 voucher_no: { cols: is2aVs2b ? [] : ['pi.book_vchr_no'] },
+                booksVoucherNo: { cols: is2aVs2b ? [] : ['pi.book_vchr_no'] },
                 gst_cat: { cols: is2aVs2b ? ['sa.source_section'] : ['pi.gstr_category'] },
+                gstrType: { cols: is2aVs2b ? ['sa.source_section'] : ['pi.gstr_category'] },
                 voucher_date: { cols: is2aVs2b ? [] : ['pi.book_vchr_date'], dateCol: true },
-                // Match status / action
+                taxPeriod: { cols: is2aVs2b ? ['gi.return_period'] : ['tp.period_code', 'gi.return_period'] },
+                // Match status / action / diff
                 status: { cols: ['rr.match_status'], exact: true },
                 action_status: { cols: [knex.raw("COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
-                // GSTR amounts (gi / Source B)
-                gstr_invoice_total: { cols: [knex.raw('COALESCE(gi.document_value, gi.taxable_value, (COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0)))')], numeric: true },
-                gstr_taxable: { cols: ['gi.taxable_value'], numeric: true },
-                gstr_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
-                gstr2a_tax_rate: { cols: ['gi.tax_rate'], numeric: true },
-                gstr_tax: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
-                gstr2a_tax_total: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
-                gstr_igst: { cols: ['gi.igst'], numeric: true },
-                gstr_cgst: { cols: ['gi.cgst'], numeric: true },
-                gstr_sgst: { cols: ['gi.sgst'], numeric: true },
-                gstr_cess: { cols: ['gi.cess'], numeric: true },
-                // Books / Source A amounts
-                book_invoice_total: { cols: is2aVs2b ? ['sa.document_value'] : (is2a ? [] : ['pi.net_amount']), numeric: true },
-                book_taxable: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)`)], numeric: true },
-                purchase_tax_rate: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.tax_rate' : (is2a ? 'ps.tax_rate' : 'pi.tax_rate')}, 0)`)], numeric: true },
-                book_tax_rate: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.tax_rate' : (is2a ? 'ps.tax_rate' : 'pi.tax_rate')}, 0)`)], numeric: true },
-                book_tax: {
-                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` :
-                        `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`)], numeric: true
-                },
-                purchase_tax_total: {
-                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` :
-                        `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
-                          COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`)], numeric: true
-                },
-                book_igst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0)`)], numeric: true },
-                book_cgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0)`)], numeric: true },
-                book_sgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0)`)], numeric: true },
-                book_cess: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)`)], numeric: true },
-                purchase_igst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0)`)], numeric: true },
-                purchase_cgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0)`)], numeric: true },
-                purchase_sgst: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0)`)], numeric: true },
-                purchase_cess: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)`)], numeric: true },
-                tax_diff: { cols: ['rr.variance_amount'], numeric: true },
+                reconciliation_status: { cols: [knex.raw("COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
+                action: { cols: [knex.raw("COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, 'pending')")], exact: true },
+                diff: { cols: ['rr.variance_amount'], numeric: true },
                 difference: { cols: ['rr.variance_amount'], numeric: true },
+                tax_diff: { cols: ['rr.variance_amount'], numeric: true },
+                // GSTR amounts (gi / Source B)
+                gstrInvoiceAmt: { cols: [knex.raw('COALESCE(gi.document_value, gi.taxable_value + COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))')], numeric: true },
+                gstr_invoice_total: { cols: [knex.raw('COALESCE(gi.document_value, gi.taxable_value + COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))')], numeric: true },
+                gstrTaxableAmt: { cols: ['gi.taxable_value'], numeric: true },
+                gstr_taxable: { cols: ['gi.taxable_value'], numeric: true },
+                gstrTaxRate: { cols: [knex.raw('CASE WHEN gi.taxable_value > 0 THEN (COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value ELSE 0 END')], numeric: true },
+                gstr_tax_rate: { cols: [knex.raw('CASE WHEN gi.taxable_value > 0 THEN (COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value ELSE 0 END')], numeric: true },
+                gstrTaxAmt: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
+                gstr_tax: { cols: [knex.raw("COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))")], numeric: true },
+                gstrTaxPeriod: { cols: ['gi.return_period'] },
+                gstrInvoiceDate: { cols: ['gi.document_date'], dateCol: true },
+                // Books / Source A amounts
+                booksInvoiceAmt: { cols: is2aVs2b ? ['sa.document_value'] : ['pi.net_amount'], numeric: true },
+                book_invoice_total: { cols: is2aVs2b ? ['sa.document_value'] : ['pi.net_amount'], numeric: true },
+                booksTaxableAmt: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)`)], numeric: true },
+                book_taxable: { cols: [knex.raw(`COALESCE(${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}, 0)`)], numeric: true },
+                booksTaxRate: {
+                    cols: [knex.raw(`
+                    CASE 
+                        WHEN ${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')} > 0 
+                        THEN (COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0) + 
+                              COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0) + 
+                              COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0) + 
+                              COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)) / 
+                              ${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}
+                        ELSE 0 
+                    END`)], numeric: true
+                },
+                booksTaxAmt: {
+                    cols: [knex.raw(is2aVs2b ? `COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))` :
+                        `(COALESCE(${is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount'}, 0) + 
+                          COALESCE(${is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount'}, 0))`)], numeric: true
+                },
+                booksInvoiceDate: { cols: is2aVs2b ? ['sa.document_date'] : ['pi.supplier_invoice_date', 'pi.book_vchr_date'], dateCol: true },
+                tax: { cols: [knex.raw('COALESCE(gi.tax_rate, 0)')], numeric: true },
             };
 
             Object.entries(parsedColumnFilters).forEach(([key, value]) => {
-                const isEmpty = !value || (Array.isArray(value) && value.length === 0) || value === '';
-                if (isEmpty) return;
+                let op = 'cn';
+                let val = value;
+
+                // Handle new filter object format: { op: '...', val: '...' }
+                if (value && typeof value === 'object' && !Array.isArray(value)) {
+                    op = value.op || 'cn';
+                    val = value.val;
+                }
+
+                const isValueEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
+                if (isValueEmpty && !['nu', 'nn'].includes(op)) return;
 
                 const def = colMapping[key];
                 if (!def) return;
 
-                const valueList = Array.isArray(value) ? value.filter(Boolean) : [value];
-                if (valueList.length === 0) return;
+                const valueList = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined && v !== '') : [val];
+                if (valueList.length === 0 && !['nu', 'nn'].includes(op)) return;
 
                 if (def.dateCol) {
                     query.where(function () {
                         const self = this;
                         valueList.forEach((v, vi) => {
                             let dbDate = v;
-                            const parts = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                            const parts = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
                             if (parts) dbDate = `${parts[3]}-${parts[2]}-${parts[1]}`;
                             def.cols.forEach((col, ci) => {
-                                if (vi === 0 && ci === 0) self.where(knex.raw(`${col}::date = ?`, [dbDate]));
-                                else self.orWhere(knex.raw(`${col}::date = ?`, [dbDate]));
+                                const method = (vi === 0 && ci === 0) ? 'where' : 'orWhere';
+                                if (col && typeof col === 'object' && col.toSQL) {
+                                    self[`${method}Raw`](`(${col.toSQL().sql})::date = ?`, [dbDate]);
+                                } else {
+                                    self[method](knex.raw('??::date', [col]), dbDate);
+                                }
                             });
                         });
                     });
@@ -1276,35 +1296,69 @@ class ReconciliationModel {
                         const self = this;
                         valueList.forEach((v, vi) => {
                             const num = parseFloat(v);
-                            if (isNaN(num)) return;
+                            if (isNaN(num) && !['nu', 'nn'].includes(op)) return;
                             def.cols.forEach((col, ci) => {
-                                const colSql = (col && typeof col === 'object' && col.toSQL) ? col.toSQL().sql : col;
-                                if (vi === 0 && ci === 0) self.whereRaw(`ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
-                                else self.orWhereRaw(`ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2) = ?`, [Math.round(num * 100) / 100]);
+                                const isRaw = col && typeof col === 'object' && col.toSQL;
+                                const colSql = isRaw ? `(${col.toSQL().sql})` : `??`;
+                                const baseSql = `ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2)`;
+                                const method = (vi === 0 && ci === 0) ? 'where' : 'orWhere';
+                                const bindings = isRaw ? [num] : [col, num];
+
+                                switch (op) {
+                                    case 'eq': self[`${method}Raw`](`${baseSql} = ?`, bindings); break;
+                                    case 'ne': self[`${method}Raw`](`${baseSql} != ?`, bindings); break;
+                                    case 'lt': self[`${method}Raw`](`${baseSql} < ?`, bindings); break;
+                                    case 'le': self[`${method}Raw`](`${baseSql} <= ?`, bindings); break;
+                                    case 'gt': self[`${method}Raw`](`${baseSql} > ?`, bindings); break;
+                                    case 'ge': self[`${method}Raw`](`${baseSql} >= ?`, bindings); break;
+                                    case 'nu': self[`${method}Raw`](`(${colSql}) IS NULL`, isRaw ? [] : [col]); break;
+                                    case 'nn': self[`${method}Raw`](`(${colSql}) IS NOT NULL`, isRaw ? [] : [col]); break;
+                                    default: self[`${method}Raw`](`${baseSql} = ?`, bindings);
+                                }
                             });
-                        });
-                    });
-                } else if (def.exact) {
-                    query.where(function () {
-                        def.cols.forEach((col, idx) => {
-                            const isRaw = col && typeof col === 'object' && col.toSQL;
-                            if (isRaw) {
-                                const placeholders = valueList.map(() => '?').join(', ');
-                                const rawSql = col.toSQL ? col.toSQL().sql : String(col);
-                                if (idx === 0) this.whereRaw(`(${rawSql}) IN (${placeholders})`, valueList);
-                                else this.orWhereRaw(`(${rawSql}) IN (${placeholders})`, valueList);
-                            } else {
-                                if (idx === 0) this.whereIn(col, valueList);
-                                else this.orWhereIn(col, valueList);
-                            }
                         });
                     });
                 } else {
                     query.where(function () {
+                        const self = this;
                         def.cols.forEach((col, idx) => {
                             valueList.forEach((v, vi) => {
                                 const method = (idx === 0 && vi === 0) ? 'where' : 'orWhere';
-                                this[method](col, 'ilike', `%${v}%`);
+                                const searchText = String(v);
+                                const isRaw = col && typeof col === 'object' && col.toSQL;
+
+                                if (isRaw) {
+                                    const colSql = `(${col.toSQL().sql})`;
+                                    switch (op) {
+                                        case 'eq': self[`${method}Raw`](`${colSql} = ?`, [searchText]); break;
+                                        case 'ne': self[`${method}Raw`](`${colSql} != ?`, [searchText]); break;
+                                        case 'bw': self[`${method}Raw`](`${colSql} ILIKE ?`, [`${searchText}%`]); break;
+                                        case 'bn': self[`${method}Raw`](`${colSql} NOT ILIKE ?`, [`${searchText}%`]); break;
+                                        case 'ew': self[`${method}Raw`](`${colSql} ILIKE ?`, [`%${searchText}`]); break;
+                                        case 'en': self[`${method}Raw`](`${colSql} NOT ILIKE ?`, [`%${searchText}`]); break;
+                                        case 'cn': self[`${method}Raw`](`${colSql} ILIKE ?`, [`%${searchText}%`]); break;
+                                        case 'nc': self[`${method}Raw`](`${colSql} NOT ILIKE ?`, [`%${searchText}%`]); break;
+                                        case 'in': self[`${method}Raw`](`${colSql} IN (${valueList.map(()=>'?').join(',')})`, valueList); break;
+                                        case 'nu': self[`${method}Raw`](`${colSql} IS NULL`); break;
+                                        case 'nn': self[`${method}Raw`](`${colSql} IS NOT NULL`); break;
+                                        default: self[`${method}Raw`](`${colSql} ILIKE ?`, [`%${searchText}%`]);
+                                    }
+                                } else {
+                                    switch (op) {
+                                        case 'eq': self[method](col, searchText); break;
+                                        case 'ne': self[method](col, '<>', searchText); break;
+                                        case 'bw': self[method](col, 'ILIKE', `${searchText}%`); break;
+                                        case 'bn': self[method](col, 'NOT ILIKE', `${searchText}%`); break;
+                                        case 'ew': self[method](col, 'ILIKE', `%${searchText}`); break;
+                                        case 'en': self[method](col, 'NOT ILIKE', `%${searchText}`); break;
+                                        case 'cn': self[method](col, 'ILIKE', `%${searchText}%`); break;
+                                        case 'nc': self[method](col, 'NOT ILIKE', `%${searchText}%`); break;
+                                        case 'in': self[method + 'In'](col, valueList); break;
+                                        case 'nu': self[method + 'Null'](col); break;
+                                        case 'nn': self[method + 'NotNull'](col); break;
+                                        default: self[method](col, 'ILIKE', `%${searchText}%`);
+                                    }
+                                }
                             });
                         });
                     });
