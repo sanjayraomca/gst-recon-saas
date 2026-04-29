@@ -129,14 +129,21 @@ const getRunResults = async (req, res) => {
 
         if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
 
-        // Dispatcher: Determine which model to use based on run_type
-        let model = ReconciliationModel; // Default to 2B
+        let finalRunId = runId;
+        let model = ReconciliationModel;
 
-        if (runId !== 'all') {
+        if (runId === 'latest') {
+            const runType = req.query.run_type || 'PURCHASE_2B';
+            const latestRun = await ReconciliationModel.getLatestRun(workspaceId, runType);
+            if (!latestRun) return errorResponse(res, 'No runs found for this workspace', 404);
+            finalRunId = latestRun.id;
+            
+            const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(latestRun.run_type);
+            if (is2aRun) model = Reconciliation2AModel;
+        } else if (runId !== 'all') {
             const run = await ReconciliationModel.getRunById(workspaceId, runId);
             if (!run) return errorResponse(res, 'Run not found', 404);
 
-            // If it's a 2A or 2A vs 2B run, use the 2A model
             const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run.run_type);
             if (is2aRun) {
                 model = Reconciliation2AModel;
@@ -149,7 +156,7 @@ const getRunResults = async (req, res) => {
         const transactionName = hasFilters ? 'FilterReconResults' : 'FetchReconResults';
         const cleanup = attachSqlFileLogger(transactionName);
 
-        const result = await model.getRunResults(workspaceId, runId, req.query);
+        const result = await model.getRunResults(workspaceId, finalRunId, req.query);
 
         cleanup();
         if (!result) return errorResponse(res, 'Results not found', 404);

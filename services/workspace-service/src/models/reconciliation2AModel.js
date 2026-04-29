@@ -842,22 +842,20 @@ class Reconciliation2AModel {
             data: results,
             pagination: { total, page: parseInt(page), page_size: limit, total_pages: Math.ceil(total / limit) },
             summary: {
-                matched_count: parseInt(totalsResult.matched_count || 0),
-                mismatch_count: parseInt(totalsResult.mismatch_count || 0),
-                missing_in_portal_count: parseInt(totalsResult.missing_in_portal_count || 0),
-                missing_in_books_count: parseInt(totalsResult.missing_in_books_count || 0),
+                matched: parseInt(totalsResult.matched_count || 0),
+                mismatched: parseInt(totalsResult.mismatch_count || 0),
+                missing: parseInt(totalsResult.missing_in_portal_count || 0) + parseInt(totalsResult.missing_in_books_count || 0),
                 totals: {
                     purchase_taxable: parseFloat(totalsResult.book_taxable_total || 0),
-                    gstr_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
+                    gstr2b_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
                     purchase_tax: parseFloat(totalsResult.book_tax_total || 0),
-                    gstr_tax: parseFloat(totalsResult.gstr_tax_total || 0),
-                    gstr2a_tax: parseFloat(totalsResult.gstr_tax_total || 0),
+                    gstr2b_tax: parseFloat(totalsResult.gstr_tax_total || 0),
                     purchase_cgst: parseFloat(totalsResult.book_cgst_total || 0),
                     purchase_sgst: parseFloat(totalsResult.book_sgst_total || 0),
                     purchase_cess: parseFloat(totalsResult.book_cess_total || 0),
-                    gstr_cgst: parseFloat(totalsResult.gstr_cgst_total || 0),
-                    gstr_sgst: parseFloat(totalsResult.gstr_sgst_total || 0),
-                    gstr_cess: parseFloat(totalsResult.gstr_cess_total || 0)
+                    gstr2b_cgst: parseFloat(totalsResult.gstr_cgst_total || 0),
+                    gstr2b_sgst: parseFloat(totalsResult.gstr_sgst_total || 0),
+                    gstr2b_cess: parseFloat(totalsResult.gstr_cess_total || 0)
                 }
             }
         };

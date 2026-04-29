@@ -737,6 +737,13 @@ class ReconciliationModel {
             .first();
     }
 
+    static async getLatestRun(workspaceId, runType) {
+        return knex('reconciliation_runs')
+            .where({ workspace_id: workspaceId, run_type: runType })
+            .orderBy('created_at', 'desc')
+            .first();
+    }
+
     /**
      * Get run results with pagination and advanced filtering
      */
