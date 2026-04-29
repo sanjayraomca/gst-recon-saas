@@ -81,7 +81,7 @@ class ReconciliationModel {
             // Extract run_type and determine if it is a 2A or 2A_VS_2B run
             const run_type = runData?.run_type || 'PURCHASE_2B';
             const is2a = run_type === 'PURCHASE_2A';
-            const is2aVs2b = run_type === 'GSTR2A_VS_GSTR2B';
+            const is2aVs2b = run_type === 'GSTR2A_VS_GSTR2B' || run_type === 'PURCHASE_2A_VS_2B';
 
             // Fetch the tax period details (month/year) so we can filter invoice dates
             let taxPeriod = null;
@@ -286,8 +286,6 @@ class ReconciliationModel {
                     action_status: 'pending',
                     created_at: knex.fn.now(),
                     updated_at: knex.fn.now(),
-                    ai_confidence_score: null,
-                    ai_match_reason: null,
                     ...overrides
                 };
             };
@@ -600,7 +598,7 @@ class ReconciliationModel {
                         })
                         .whereIn('recon_run_id', function () {
                             this.select('id').from('reconciliation_runs')
-                                .where('run_type', 'PURCHASE_2B');
+                                .where('run_type', run_type);
                         });
 
                     const deletedCount = await deleteQuery.delete();
@@ -609,8 +607,12 @@ class ReconciliationModel {
                     }
                 }
 
-                // --- 2. Insert New Results ---
-                const insertedResults = await trx('reconciliation_results').insert(matchResults).returning('*');
+                // --- 2. Insert New Results (using batchInsert for stability with large datasets) ---
+                await trx.batchInsert('reconciliation_results', matchResults, 100);
+
+                // Fetch inserted results to use for status updates (since batchInsert doesn't return rows)
+                const insertedResults = await trx('reconciliation_results')
+                    .where({ recon_run_id: runId, workspace_id: workspaceId });
 
                 // ── 3. Auto-populate/Update reconciliation_status table ──────────────────────────
                 await progressEmitter.emitProgress(runId, 90, 'Updating reconciliation status...');
@@ -775,7 +777,7 @@ class ReconciliationModel {
         if (!run) return null;
 
         const is2a = run.run_type === 'PURCHASE_2A';
-        const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B';
+        const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B' || run.run_type === 'GSTR2A_VS_GSTR2B';
         const gstrTable = (is2a || is2aVs2b) ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
         const gstrIdCol = (is2a || is2aVs2b) ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
@@ -1284,7 +1286,8 @@ class ReconciliationModel {
                             def.cols.forEach((col, ci) => {
                                 const method = (vi === 0 && ci === 0) ? 'where' : 'orWhere';
                                 if (col && typeof col === 'object' && col.toSQL) {
-                                    self[`${method}Raw`](`(${col.toSQL().sql})::date = ?`, [dbDate]);
+                                    const sql = col.toSQL ? col.toSQL().sql : col;
+                                    self[`${method}Raw`](`(${sql})::date = ?`, [dbDate]);
                                 } else {
                                     self[method](knex.raw('??::date', [col]), dbDate);
                                 }
@@ -1479,6 +1482,7 @@ class ReconciliationModel {
             'rr.variance_amount',
             'rr.created_at',
             'rr.updated_at',
+            'rr.matched_by',
 
             // Row identification
             is2aVs2b ? 'sa.id as source_a_id' : 'pi.id as purchase_invoice_id',
@@ -1610,8 +1614,8 @@ class ReconciliationModel {
             'gstr_invoice_total': knex.raw('COALESCE(gi.document_value, gi.taxable_value + COALESCE(gi.igst,0) + COALESCE(gi.cgst,0) + COALESCE(gi.sgst,0) + COALESCE(gi.cess,0))'),
             'gstrTaxableAmt': 'gi.taxable_value',
             'gstr_taxable': 'gi.taxable_value',
-            'gstrTaxRate': knex.raw('CASE WHEN gi.taxable_value > 0 THEN (COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value ELSE 0 END'),
-            'gstr_tax_rate': knex.raw('CASE WHEN gi.taxable_value > 0 THEN (COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value ELSE 0 END'),
+            'gstrTaxRate': knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END'),
+            'gstr_tax_rate': knex.raw('CASE WHEN gi.taxable_value > 0 THEN ROUND(((COALESCE(gi.igst, 0) + COALESCE(gi.cgst, 0) + COALESCE(gi.sgst, 0) + COALESCE(gi.cess, 0)) / gi.taxable_value) * 100) ELSE 0 END'),
             'gstrTaxAmt': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
             'gstr_tax': knex.raw('COALESCE(gi.total_tax, COALESCE(gi.igst,0)+COALESCE(gi.cgst,0)+COALESCE(gi.sgst,0)+COALESCE(gi.cess,0))'),
             'gstrTaxPeriod': 'gi.return_period',
@@ -1624,11 +1628,11 @@ class ReconciliationModel {
             'booksTaxRate': knex.raw(`
                 CASE 
                     WHEN ${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')} > 0 
-                    THEN (COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0) + 
+                    THEN ROUND(((COALESCE(${is2aVs2b ? 'sa.igst' : (is2a ? 'ps.total_igst_amount' : 'pi.total_igst_amount')}, 0) + 
                           COALESCE(${is2aVs2b ? 'sa.cgst' : (is2a ? 'ps.total_cgst_amount' : 'pi.total_cgst_amount')}, 0) + 
                           COALESCE(${is2aVs2b ? 'sa.sgst' : (is2a ? 'ps.total_sgst_amount' : 'pi.total_sgst_amount')}, 0) + 
                           COALESCE(${is2aVs2b ? 'sa.cess' : (is2a ? 'ps.total_cess_amount' : 'pi.total_cess_amount')}, 0)) / 
-                          ${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}
+                          ${is2aVs2b ? 'sa.taxable_value' : (is2a ? 'ps.taxable_total' : 'pi.taxable_total')}) * 100)
                     ELSE 0 
                 END`),
             'booksTaxAmt': is2aVs2b ? knex.raw('COALESCE(sa.total_tax, COALESCE(sa.igst,0)+COALESCE(sa.cgst,0)+COALESCE(sa.sgst,0)+COALESCE(sa.cess,0))') : 'purchase_tax',
@@ -1650,7 +1654,7 @@ class ReconciliationModel {
         const safeAliases = new Set(['supplier_name', 'supplier_gstin', 'supplier_invoice_no', 'supplier_invoice_date',
             'gstr2b_invoice_total', 'gstr2b_taxable', 'gstr2b_tax', 'gstr2b_tax_rate',
             'purchase_invoice_total', 'purchase_taxable', 'purchase_tax', 'purchase_tax_rate',
-            'return_period', 'gst_type', 'reconciliation_status', 'rr.created_at', 'rr.match_status', 'rr.variance_amount',
+            'return_period', 'gst_type', 'reconciliation_status', 'rr.created_at', 'rr.match_status', 'rr.variance_amount', 'rr.matched_by',
             'gstin', 'name', 'tax', 'gstType', 'invoiceRef', 'gstrInvoiceDate', 'gstrInvoiceAmt', 'gstrTaxableAmt',
             'gstrTaxRate', 'gstrTaxAmt', 'gstrTaxPeriod', 'booksInvoiceDate', 'booksInvoiceAmt', 'booksTaxableAmt',
             'booksTaxRate', 'booksTaxAmt', 'booksVoucherNo', 'gstrType', 'taxPeriod', 'status', 'diff', 'action'
@@ -1880,7 +1884,7 @@ class ReconciliationModel {
         if (!run) return null;
 
         const is2a = run.run_type === 'PURCHASE_2A';
-        const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B';
+        const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B' || run.run_type === 'GSTR2A_VS_GSTR2B';
         const gstrTable = (is2a || is2aVs2b) ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
         const gstrIdCol = (is2a || is2aVs2b) ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
