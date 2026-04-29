@@ -587,6 +587,8 @@ class ReconciliationModel {
                 const gstr2aSourceIds = matchResults.map(r => r.gstr2a_source_id).filter(id => id);
 
                 // --- 1. Prevent Duplicates: Delete existing results for these invoices in this workspace ---
+                // NOTE: The unique constraint is on (workspace_id, purchase_invoice_id) table-wide,
+                // so we must delete across ALL run types, not just the current one.
                 if (purchaseIds.length > 0 || gstr2bIds.length > 0 || gstr2aIds.length > 0 || gstr2aSourceIds.length > 0) {
                     const deleteQuery = trx('reconciliation_results')
                         .where('workspace_id', workspaceId)
@@ -595,10 +597,6 @@ class ReconciliationModel {
                             if (gstr2bIds.length > 0) this.orWhereIn('gstr2b_invoice_id', gstr2bIds);
                             if (gstr2aIds.length > 0) this.orWhereIn('gstr2a_invoice_id', gstr2aIds);
                             if (gstr2aSourceIds.length > 0) this.orWhereIn('gstr2a_source_id', gstr2aSourceIds);
-                        })
-                        .whereIn('recon_run_id', function () {
-                            this.select('id').from('reconciliation_runs')
-                                .where('run_type', run_type);
                         });
 
                     const deletedCount = await deleteQuery.delete();
@@ -695,8 +693,12 @@ class ReconciliationModel {
             await progressEmitter.emitProgress(runId, 100, 'Reconciliation completed successfully');
         } catch (error) {
             if (trx) await trx.rollback();
-            console.error(`[Recon Task] Run ${runId} failed:`, error.message, error);
-            await progressEmitter.emitProgress(runId, 0, `Failed: ${error.message}`, true);
+            // Log full error for server-side debugging
+            console.error(`[Recon Task] Run ${runId} failed:`, error.message);
+            console.error(`[Recon Task] Error code: ${error.code}, detail: ${error.detail}, constraint: ${error.constraint}, column: ${error.column}`);
+            // Send a concise error to the UI (truncate SQL to avoid flooding)
+            const shortMsg = error.detail || error.constraint || error.code || (error.message ? error.message.substring(0, 200) : 'Unknown error');
+            await progressEmitter.emitProgress(runId, 0, `Failed: ${shortMsg}`, true);
         }
     }
 
@@ -778,24 +780,19 @@ class ReconciliationModel {
 
         const is2a = run.run_type === 'PURCHASE_2A';
         const is2aVs2b = run.run_type === 'PURCHASE_2A_VS_2B' || run.run_type === 'GSTR2A_VS_GSTR2B';
+        const resultsTable = (is2a || is2aVs2b) ? 'reconciliation_results_2a' : 'reconciliation_results';
+        const statusTable = (is2a || is2aVs2b) ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
         const gstrTable = (is2a || is2aVs2b) ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
         const gstrIdCol = (is2a || is2aVs2b) ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
-        let query = knex('reconciliation_results as rr')
+        let query = knex(`${resultsTable} as rr`)
             .leftJoin(`${gstrTable} as gi`, `rr.${gstrIdCol}`, 'gi.id');
 
         if (is2aVs2b) {
-            // For 2A vs 2B, join the "Source A" portal table (using gstr2a_source_id)
-            // Note: gstrTable above is for gi (Source B). For 2A vs 2B, Source B is 2B. 
-            // Wait, the logic I used in runMatchingTask was:
-            // Source A = validPurchaseInvoices (which are 2A if is2aVs2b)
-            // Source B = validGstrInvoices (which are 2B if is2aVs2b)
+            const sourceBTable = 'normalized_gstr2b_invoices';
+            const sourceBIdCol = 'gstr2b_invoice_id';
 
-            // Re-evaluating gstrTable for gi (Source B)
-            const sourceBTable = is2aVs2b ? 'normalized_gstr2b_invoices' : (is2a ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices');
-            const sourceBIdCol = is2aVs2b ? 'gstr2b_invoice_id' : (is2a ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id');
-
-            query = knex('reconciliation_results as rr')
+            query = knex(`${resultsTable} as rr`)
                 .leftJoin(`${sourceBTable} as gi`, `rr.${sourceBIdCol}`, 'gi.id')
                 .leftJoin('normalized_gstr2a_invoices as sa', 'rr.gstr2a_source_id', 'sa.id');
         } else if (is2a) {
@@ -838,21 +835,21 @@ class ReconciliationModel {
         // For 2A vs 2B, we use gstr2a_source_id and gstr2b_invoice_id for status tracking
         if (is2aVs2b) {
             query = query
-                .leftJoin('reconciliation_status as rs_pi', function () {
+                .leftJoin(`${statusTable} as rs_pi`, function () {
                     this.on('rr.gstr2a_source_id', '=', 'rs_pi.gstr_data_id')
                         .andOn('rs_pi.workspace_id', '=', 'rr.workspace_id');
                 })
-                .leftJoin('reconciliation_status as rs_gi', function () {
+                .leftJoin(`${statusTable} as rs_gi`, function () {
                     this.on('rr.gstr2b_invoice_id', '=', 'rs_gi.gstr_data_id')
                         .andOn('rs_gi.workspace_id', '=', 'rr.workspace_id');
                 });
         } else {
             query = query
-                .leftJoin('reconciliation_status as rs_pi', function () {
+                .leftJoin(`${statusTable} as rs_pi`, function () {
                     this.on('rr.purchase_invoice_id', '=', 'rs_pi.book_data_id')
                         .andOn('rs_pi.workspace_id', '=', 'rr.workspace_id');
                 })
-                .leftJoin('reconciliation_status as rs_gi', function () {
+                .leftJoin(`${statusTable} as rs_gi`, function () {
                     this.on(`rr.${gstrIdCol}`, '=', 'rs_gi.gstr_data_id')
                         .andOn('rs_gi.workspace_id', '=', 'rr.workspace_id');
                 });
@@ -1877,7 +1874,7 @@ class ReconciliationModel {
 
         let run;
         if (runId === 'all') {
-            run = { run_type: 'PURCHASE_2B' };
+            run = { run_type: filters.run_type || 'PURCHASE_2B' };
         } else {
             run = await this.getRunById(workspaceId, runId);
         }
@@ -1888,8 +1885,10 @@ class ReconciliationModel {
         const gstrTable = (is2a || is2aVs2b) ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
         const gstrIdCol = (is2a || is2aVs2b) ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
+        const resultsTable = (is2a || is2aVs2b) ? 'reconciliation_results_2a' : 'reconciliation_results';
+
         // ── Period-grouped aggregation ───────────────────────────────────────────
-        let aggQuery = knex('reconciliation_results as rr')
+        let aggQuery = knex(`${resultsTable} as rr`)
             .leftJoin(`${gstrTable} as gi`, `rr.${gstrIdCol}`, 'gi.id');
 
         if (is2a) {
@@ -1908,7 +1907,7 @@ class ReconciliationModel {
                 .leftJoin(purchaseSummary, 'pi.id', 'ps.purchase_id');
         } else if (is2aVs2b) {
             // Source A is GSTR-2A, Source B is GSTR-2B
-            aggQuery = knex('reconciliation_results as rr')
+            aggQuery = knex(`${resultsTable} as rr`)
                 .leftJoin('normalized_gstr2a_invoices as g2a', 'rr.gstr2a_source_id', 'g2a.id')
                 .leftJoin('normalized_gstr2b_invoices as g2b', 'rr.gstr2b_invoice_id', 'g2b.id');
         } else {
@@ -1924,7 +1923,7 @@ class ReconciliationModel {
                     q.where('rr.recon_run_id', runId);
                 } else {
                     q.join('reconciliation_runs as run_isolation', 'rr.recon_run_id', 'run_isolation.id')
-                        .where('run_isolation.run_type', 'PURCHASE_2B');
+                        .where('run_isolation.run_type', run.run_type);
                 }
 
                 let filterYear = null;

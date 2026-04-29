@@ -1761,6 +1761,47 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Separate results table for 2A vs Book isolation
+CREATE TABLE IF NOT EXISTS reconciliation_results_2a (
+    id SERIAL PRIMARY KEY,
+    recon_run_id UUID NOT NULL REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id),
+    purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
+    gstr2a_invoice_id UUID REFERENCES normalized_gstr2a_invoices(id),
+    gstr2a_source_id UUID REFERENCES normalized_gstr2a_invoices(id),
+    gstr2b_invoice_id UUID REFERENCES normalized_gstr2b_invoices(id),
+    
+    match_status VARCHAR(50) NOT NULL,
+    match_score DECIMAL(5,2),
+    match_confidence VARCHAR(20),
+    
+    books_value DECIMAL(15,2),
+    portal_value DECIMAL(15,2),
+    variance_amount DECIMAL(15,2),
+    
+    itc_decision VARCHAR(50),
+    decision_reason TEXT,
+    
+    action_required VARCHAR(50),
+    action_priority VARCHAR(20),
+    action_status VARCHAR(20),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    matched_by VARCHAR(20) DEFAULT 'RULE',
+    ai_confidence_score DECIMAL(5,2),
+    ai_match_reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_2a_purchase_inv 
+ON reconciliation_results_2a (workspace_id, purchase_invoice_id) 
+WHERE purchase_invoice_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_results_2a_gstr2a_inv 
+ON reconciliation_results_2a (workspace_id, gstr2a_invoice_id) 
+WHERE gstr2a_invoice_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS reconciliation_status (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL,

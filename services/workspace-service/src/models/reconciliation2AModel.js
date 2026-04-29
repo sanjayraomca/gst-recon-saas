@@ -325,7 +325,7 @@ class Reconciliation2AModel {
                 const pIds = finalResults.map(r => r.purchase_invoice_id).filter(Boolean);
                 const g2aIds = finalResults.map(r => r.gstr2a_invoice_id).filter(Boolean);
                 if (pIds.length > 0 || g2aIds.length > 0) {
-                    await trx('reconciliation_results')
+                    await trx('reconciliation_results_2a')
                         .where('workspace_id', workspaceId)
                         .where(function () {
                             if (pIds.length) this.orWhereIn('purchase_invoice_id', pIds);
@@ -335,10 +335,10 @@ class Reconciliation2AModel {
                 }
 
                 // 3. Batch Insert safely
-                await trx.batchInsert('reconciliation_results', finalResults, 100);
+                await trx.batchInsert('reconciliation_results_2a', finalResults, 100);
 
                 // Fetch inserted to use for status updates
-                const inserted = await trx('reconciliation_results')
+                const inserted = await trx('reconciliation_results_2a')
                     .where({ recon_run_id: runId, workspace_id: workspaceId });
 
                 // Update 2A specific status table
@@ -432,7 +432,7 @@ class Reconciliation2AModel {
             }
         }
 
-        const query = knex('reconciliation_results as rr')
+        const query = knex('reconciliation_results_2a as rr')
             .leftJoin('reconciliation_runs as run', 'rr.recon_run_id', 'run.id')
             .leftJoin('normalized_gstr2a_invoices as gi', 'rr.gstr2a_invoice_id', 'gi.id')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
@@ -874,7 +874,7 @@ class Reconciliation2AModel {
         }
         if (!run) return null;
 
-        const baseQuery = knex('reconciliation_results as rr')
+        const baseQuery = knex('reconciliation_results_2a as rr')
             .leftJoin('reconciliation_runs as r', 'rr.recon_run_id', 'r.id')
             .leftJoin('normalized_gstr2a_invoices as gi', 'rr.gstr2a_invoice_id', 'gi.id')
             .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')

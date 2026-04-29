@@ -41,7 +41,10 @@ const createRun = async (req, res) => {
             return errorResponse(res, 'period_id must be a valid UUID', 400);
         }
 
-        const runId = await ReconciliationModel.createRun(workspaceId, runData);
+        // Dispatch to the correct model based on run_type
+        const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(runData.run_type);
+        const model = is2aRun ? Reconciliation2AModel : ReconciliationModel;
+        const runId = await model.createRun(workspaceId, runData);
 
         await logActivity({
             userId: req.user?.db_id || req.user?.id,
@@ -107,7 +110,8 @@ const getReconBookData = async (req, res) => {
             quarter: req.query.quarter,
             search: req.query.search,
             page: parseInt(req.query.page) || 1,
-            page_size: parseInt(req.query.page_size) || 25
+            page_size: parseInt(req.query.page_size) || 25,
+            run_type: req.query.run_type || 'PURCHASE_2B'
         };
 
         const result = await BookDataModel.getReconBookData(workspaceId, filters);

@@ -908,8 +908,11 @@ class BookDataModel {
             });
         }
 
+        const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(filters.run_type);
+        const statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
+
         // Select fields aliased for frontend consistency
-        query = query.leftJoin('reconciliation_status as rs', 'pi.id', 'rs.book_data_id')
+        query = query.leftJoin(`${statusTable} as rs`, 'pi.id', 'rs.book_data_id')
             .select(
                 'pi.id',
                 'pi.supplier_gstin',

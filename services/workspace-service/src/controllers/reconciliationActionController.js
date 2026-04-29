@@ -62,9 +62,13 @@ const updateReconStatus = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
         const userId = req.user.db_id || req.user.sub || req.user.id;
-        const { recon_status } = req.body;
+        const { recon_status, run_type = 'PURCHASE_2B' } = req.body;
 
-        const VALID_STATUSES = ['pending', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim'];
+        const VALID_STATUSES = ['pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim'];
+        const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
+
+        const resultsTable = is2a ? 'reconciliation_results_2a' : 'reconciliation_results';
+        const statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
 
         if (!workspaceId) {
             await trx.rollback();
@@ -79,11 +83,11 @@ const updateReconStatus = async (req, res) => {
 
         if (!recon_status || !VALID_STATUSES.includes(recon_status)) {
             await trx.rollback();
-            return errorResponse(res, `Invalid or missing recon_status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
+            return errorResponse(res, `Invalid or missing recon_status.`, 400);
         }
 
         // 1. Fetch the reconciliation result to get invoice IDs and verify ownership
-        const reconResult = await trx('reconciliation_results')
+        const reconResult = await trx(resultsTable)
             .where({ id: resultIdInt, workspace_id: workspaceId })
             .first();
 
@@ -99,24 +103,25 @@ const updateReconStatus = async (req, res) => {
             tenantId = workspace?.tenant_id || workspaceId;
         }
 
-        const { purchase_invoice_id, gstr2b_invoice_id } = reconResult;
+        const { purchase_invoice_id, gstr2b_invoice_id, gstr2a_invoice_id } = reconResult;
+        const gstrId = is2a ? (gstr2a_invoice_id || reconResult.gstr2a_source_id) : gstr2b_invoice_id;
 
         // 3. Upsert logic for reconciliation_status
         let existing = null;
         if (purchase_invoice_id) {
-            existing = await trx('reconciliation_status')
-                .where({ workspace_id: workspaceId, book_data_id: purchase_invoice_id })
+            existing = await trx(statusTable)
+                .where({ workspace_id: workspaceId, [is2a ? 'book_data_id' : 'book_data_id']: purchase_invoice_id })
                 .first();
         }
-        if (!existing && gstr2b_invoice_id) {
-            existing = await trx('reconciliation_status')
-                .where({ workspace_id: workspaceId, gstr_data_id: gstr2b_invoice_id })
+        if (!existing && gstrId) {
+            existing = await trx(statusTable)
+                .where({ workspace_id: workspaceId, [is2a ? 'gstr_data_id' : 'gstr_data_id']: gstrId })
                 .first();
         }
 
         let statusRecord;
         if (existing) {
-            [statusRecord] = await trx('reconciliation_status')
+            [statusRecord] = await trx(statusTable)
                 .where({ id: existing.id })
                 .update({
                     recon_status,
@@ -125,27 +130,35 @@ const updateReconStatus = async (req, res) => {
                 })
                 .returning('*');
         } else {
-            [statusRecord] = await trx('reconciliation_status')
-                .insert({
-                    workspace_id: workspaceId,
-                    tenant_id: tenantId,
-                    book_data_id: purchase_invoice_id || null,
-                    book_data_type: purchase_invoice_id ? 'purchase_voucher' : null,
-                    gstr_data_id: gstr2b_invoice_id || null,
-                    gstr_type: gstr2b_invoice_id ? 'gstr2b' : null,
-                    recon_status,
-                    status: 'Active',
-                    added_by: userId || null,
-                    added_date: trx.fn.now(),
-                    updated_by: userId || null,
-                    updated_date: trx.fn.now(),
-                    extra_info: { recon_result_id: resultIdInt }
-                })
+            const insertData = {
+                workspace_id: workspaceId,
+                tenant_id: tenantId,
+                book_data_id: purchase_invoice_id || null,
+                book_data_type: purchase_invoice_id ? 'purchase_voucher' : null,
+                gstr_data_id: gstrId || null,
+                gstr_type: is2a ? 'gstr2a' : 'gstr2b',
+                recon_status,
+                status: 'Active',
+                updated_date: trx.fn.now()
+            };
+
+            if (is2a) {
+                insertData.added_date = trx.fn.now();
+                insertData.added_by = userId || null;
+            } else {
+                insertData.added_by = userId || null;
+                insertData.added_date = trx.fn.now();
+                insertData.updated_by = userId || null;
+                insertData.extra_info = { recon_result_id: resultIdInt };
+            }
+
+            [statusRecord] = await trx(statusTable)
+                .insert(insertData)
                 .returning('*');
         }
 
         // 4. Update reconciliation_results table directly for fast filtering/UI
-        await trx('reconciliation_results')
+        await trx(resultsTable)
             .where({ id: resultIdInt })
             .update({
                 action_status: recon_status,
