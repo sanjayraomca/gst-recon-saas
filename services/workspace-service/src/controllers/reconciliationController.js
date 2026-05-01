@@ -179,8 +179,17 @@ const getRunTaxSummary = async (req, res) => {
 
         // Dispatcher: Determine which model to use
         let model = ReconciliationModel;
-        if (runId !== 'all') {
-            const run = await ReconciliationModel.getRunById(workspaceId, runId);
+        let finalRunId = runId;
+
+        if (runId === 'latest') {
+            const runType = req.query.run_type || 'PURCHASE_2B';
+            const latestRun = await ReconciliationModel.getLatestRun(workspaceId, runType);
+            if (!latestRun) return errorResponse(res, 'No reconciliation runs found for this workspace', 404);
+            finalRunId = latestRun.id;
+        }
+
+        if (finalRunId !== 'all') {
+            const run = await ReconciliationModel.getRunById(workspaceId, finalRunId);
             const is2aRun = run && ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run.run_type);
             if (is2aRun) {
                 model = Reconciliation2AModel;
@@ -190,7 +199,7 @@ const getRunTaxSummary = async (req, res) => {
         }
 
         const cleanup = attachSqlFileLogger('TaxSummary');
-        const summary = await model.getRunTaxSummary(workspaceId, runId, req.query);
+        const summary = await model.getRunTaxSummary(workspaceId, finalRunId, req.query);
         cleanup();
 
         return successResponse(res, summary, 'Tax summary retrieved successfully');
