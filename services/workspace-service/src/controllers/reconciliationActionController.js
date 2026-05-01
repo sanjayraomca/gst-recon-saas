@@ -4,6 +4,8 @@ const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const knex = require('../../../shared/src/db/connection');
 const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
 const { publishMessage } = require('../../../shared/src/nats/client');
+const fs = require('fs');
+const path = require('path');
 
 const takeAction = async (req, res) => {
     try {
@@ -63,9 +65,22 @@ const updateReconStatus = async (req, res) => {
         const resultId = req.params.result_id;
         const userId = req.user.db_id || req.user.sub || req.user.id;
         const { recon_status, run_type = 'PURCHASE_2B' } = req.body;
-
-        const VALID_STATUSES = ['pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded', 'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim'];
         const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
+
+        if (is2a) {
+            // Drop the legacy check constraint that limits status values
+            try {
+                await trx.raw(`ALTER TABLE reconciliation_status_gst2a_vs_book DROP CONSTRAINT IF EXISTS chk_recon_status_2a`);
+            } catch (e) {
+                // Ignore if fails (e.g. permission issues or already dropped)
+                console.log('[updateReconStatus] Note: Could not drop constraint chk_recon_status_2a, continuing...');
+            }
+        }
+        const VALID_STATUSES = [
+            'pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded', 
+            'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim',
+            'claim', 'wrong entry portal', 'not to be claim', 'not eligible'
+        ];
 
         const resultsTable = is2a ? 'reconciliation_results_2a' : 'reconciliation_results';
         const statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
@@ -123,29 +138,32 @@ const updateReconStatus = async (req, res) => {
         if (existing) {
             [statusRecord] = await trx(statusTable)
                 .where({ id: existing.id })
-                .update({
-                    recon_status,
-                    updated_by: userId || null,
-                    updated_date: trx.fn.now()
-                })
+            const updateData = {
+                recon_status,
+                updated_date: trx.fn.now()
+            };
+            if (!is2a) updateData.updated_by = userId || null;
+
+            [statusRecord] = await trx(statusTable)
+                .where({ id: existing.id })
+                .update(updateData)
                 .returning('*');
         } else {
             const insertData = {
                 workspace_id: workspaceId,
                 tenant_id: tenantId,
                 book_data_id: purchase_invoice_id || null,
-                book_data_type: purchase_invoice_id ? 'purchase_voucher' : null,
                 gstr_data_id: gstrId || null,
-                gstr_type: is2a ? 'gstr2a' : 'gstr2b',
                 recon_status,
-                status: 'Active',
                 updated_date: trx.fn.now()
             };
 
             if (is2a) {
                 insertData.added_date = trx.fn.now();
-                insertData.added_by = userId || null;
             } else {
+                insertData.book_data_type = purchase_invoice_id ? 'purchase_voucher' : null;
+                insertData.gstr_type = is2a ? 'gstr2a' : 'gstr2b';
+                insertData.status = 'Active';
                 insertData.added_by = userId || null;
                 insertData.added_date = trx.fn.now();
                 insertData.updated_by = userId || null;
@@ -185,6 +203,11 @@ const updateReconStatus = async (req, res) => {
         cleanup();
         if (trx) await trx.rollback();
         console.error('[updateReconStatus] Critical Error:', error);
+        
+        // Temporary file logging for debugging
+        const logPath = path.join(__dirname, 'debug_error.log');
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] Error updating status for result ${req.params.result_id}: ${error.message}\n${error.stack}\n\n`);
+        
         return errorResponse(res, error.message, 500);
     }
 };
