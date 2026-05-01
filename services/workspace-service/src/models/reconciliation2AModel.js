@@ -412,8 +412,8 @@ class Reconciliation2AModel {
             page = 1, page_size = 50,
             match_status, workflow_status, search,
             sort_by = 'created_at', sort_order = 'desc',
-            supplier_gstin, date_from, date_to,
-            min_amount, max_amount, has_variance,
+            supplier_gstin, supplier_name, date_from, date_to,
+            min_amount, max_amount, min_net_amount, max_net_amount, supply_type, has_variance,
             fy, quarter, month, place_of_supply,
             column_filters: column_filters_raw,
         } = filters;
@@ -443,7 +443,8 @@ class Reconciliation2AModel {
                     .andOn(function () {
                         this.on('rr.purchase_invoice_id', '=', 'rs.book_data_id')
                             .orOn('rr.gstr2a_invoice_id', '=', 'rs.gstr_data_id')
-                            .orOn('rr.gstr2a_source_id', '=', 'rs.book_data_id');
+                            .orOn('rr.gstr2a_source_id', '=', 'rs.book_data_id')
+                            .orOn('rr.gstr2b_invoice_id', '=', 'rs.gstr_data_id');
                     });
             })
             .where('rr.workspace_id', workspaceId);
@@ -457,16 +458,20 @@ class Reconciliation2AModel {
         // ── Standard Filters ─────────────────────────────────────────────────
         if (match_status && match_status !== 'all') {
             const statusList = Array.isArray(match_status) ? match_status : match_status.split(',').map(s => s.trim());
-            // Normalize legacy aliases
-            const normalizedStatus = new Set(statusList);
-            if (normalizedStatus.has('missing_in_portal')) normalizedStatus.add('not_in_portal');
-            if (normalizedStatus.has('missing_in_books')) normalizedStatus.add('not_in_books');
-            query.whereIn('rr.match_status', Array.from(normalizedStatus));
+            if (statusList.length > 0) {
+                // Normalize legacy aliases
+                const normalizedStatus = new Set(statusList);
+                if (normalizedStatus.has('missing_in_portal')) normalizedStatus.add('not_in_portal');
+                if (normalizedStatus.has('missing_in_books')) normalizedStatus.add('not_in_books');
+                query.whereIn('rr.match_status', Array.from(normalizedStatus));
+            }
         }
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'pending') {
             const statusList = Array.isArray(workflow_status) ? workflow_status : workflow_status.split(',').map(s => s.trim());
-            query.whereIn(knex.raw("COALESCE(rs.recon_status, 'pending')"), statusList);
+            if (statusList.length > 0) {
+                query.whereIn(knex.raw("COALESCE(rs.recon_status, 'pending')"), statusList);
+            }
         }
 
         if (search) {
@@ -474,12 +479,15 @@ class Reconciliation2AModel {
                 this.where('pi.supplier_name', 'ilike', `%${search}%`)
                     .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
                     .orWhere('sa.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('gb.supplier_name', 'ilike', `%${search}%`)
                     .orWhere('pi.supplier_invoice_no', 'ilike', `%${search}%`)
                     .orWhere('gi.document_number_raw', 'ilike', `%${search}%`)
                     .orWhere('sa.document_number_raw', 'ilike', `%${search}%`)
+                    .orWhere('gb.document_number_raw', 'ilike', `%${search}%`)
                     .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
                     .orWhere('gi.supplier_gstin', 'ilike', `%${search}%`)
-                    .orWhere('sa.supplier_gstin', 'ilike', `%${search}%`);
+                    .orWhere('sa.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('gb.supplier_gstin', 'ilike', `%${search}%`);
             });
         }
 
@@ -489,7 +497,20 @@ class Reconciliation2AModel {
                 query.where(function () {
                     this.whereIn('pi.supplier_gstin', gstins)
                         .orWhereIn('gi.supplier_gstin', gstins)
-                        .orWhereIn('sa.supplier_gstin', gstins);
+                        .orWhereIn('sa.supplier_gstin', gstins)
+                        .orWhereIn('gb.supplier_gstin', gstins);
+                });
+            }
+        }
+
+        if (supplier_name) {
+            const names = (Array.isArray(supplier_name) ? supplier_name : supplier_name.split(',')).map(s => s.trim()).filter(Boolean);
+            if (names.length > 0) {
+                query.where(function () {
+                    this.whereIn('pi.supplier_name', names)
+                        .orWhereIn('gi.supplier_name', names)
+                        .orWhereIn('sa.supplier_name', names)
+                        .orWhereIn('gb.supplier_name', names);
                 });
             }
         }
@@ -498,7 +519,8 @@ class Reconciliation2AModel {
             query.where(function () {
                 this.where('pi.supplier_invoice_date', '>=', date_from)
                     .orWhere('gi.document_date', '>=', date_from)
-                    .orWhere('sa.document_date', '>=', date_from);
+                    .orWhere('sa.document_date', '>=', date_from)
+                    .orWhere('gb.document_date', '>=', date_from);
             });
         }
 
@@ -506,7 +528,8 @@ class Reconciliation2AModel {
             query.where(function () {
                 this.where('pi.supplier_invoice_date', '<=', date_to)
                     .orWhere('gi.document_date', '<=', date_to)
-                    .orWhere('sa.document_date', '<=', date_to);
+                    .orWhere('sa.document_date', '<=', date_to)
+                    .orWhere('gb.document_date', '<=', date_to);
             });
         }
 
@@ -514,31 +537,41 @@ class Reconciliation2AModel {
 
         if (isValidNumeric(min_amount)) {
             const min = parseFloat(min_amount);
-            query.where(function () {
-                this.where('pi.net_amount', '>=', min)
-                    .orWhere('gi.document_value', '>=', min)
-                    .orWhere(knex.raw('COALESCE(sa.taxable_value, 0) + COALESCE(sa.total_tax, 0) >= ?', [min]));
-            });
+            query.where(knex.raw("COALESCE(pi.taxable_total, gi.taxable_value, gb.taxable_value, sa.taxable_value, 0) >= ?", [min]));
         }
 
         if (isValidNumeric(max_amount)) {
             const max = parseFloat(max_amount);
-            query.where(function () {
-                this.where('pi.net_amount', '<=', max)
-                    .orWhere('gi.document_value', '<=', max)
-                    .orWhere(knex.raw('COALESCE(sa.taxable_value, 0) + COALESCE(sa.total_tax, 0) <= ?', [max]));
-            });
+            query.where(knex.raw("COALESCE(pi.taxable_total, gi.taxable_value, gb.taxable_value, sa.taxable_value, 0) <= ?", [max]));
         }
 
         if (place_of_supply) {
             const posList = (Array.isArray(place_of_supply) ? place_of_supply : place_of_supply.split(',')).map(s => s.trim()).filter(Boolean);
             if (posList.length > 0) {
                 query.where(function () {
-                    this.whereIn('pi.place_of_supply', posList)
-                        .orWhereIn('gi.place_of_supply', posList)
-                        .orWhereIn('sa.place_of_supply', posList);
+                    this.whereIn(knex.raw('SUBSTRING(pi.place_of_supply, 1, 2)'), posList)
+                        .orWhereIn(knex.raw('SUBSTRING(gi.place_of_supply, 1, 2)'), posList)
+                        .orWhereIn(knex.raw('SUBSTRING(sa.place_of_supply, 1, 2)'), posList)
+                        .orWhereIn(knex.raw('SUBSTRING(gb.place_of_supply, 1, 2)'), posList);
                 });
             }
+        }
+
+        if (isValidNumeric(min_net_amount)) {
+            const min = parseFloat(min_net_amount);
+            query.where(knex.raw("COALESCE(pi.net_amount, gi.document_value, gb.document_value, COALESCE(sa.taxable_value, 0) + COALESCE(sa.total_tax, 0), 0) >= ?", [min]));
+        }
+
+        if (isValidNumeric(max_net_amount)) {
+            const max = parseFloat(max_net_amount);
+            query.where(knex.raw("COALESCE(pi.net_amount, gi.document_value, gb.document_value, COALESCE(sa.taxable_value, 0) + COALESCE(sa.total_tax, 0), 0) <= ?", [max]));
+        }
+
+        if (supply_type && supply_type !== 'ALL') {
+            query.where(function () {
+                const comparison = supply_type === 'INTRASTATE' ? '=' : '!=';
+                this.whereRaw(`SUBSTRING(COALESCE(pi.supplier_gstin, gi.supplier_gstin, sa.supplier_gstin, gb.supplier_gstin, ''), 1, 2) ${comparison} SUBSTRING(COALESCE(pi.place_of_supply, gi.place_of_supply, sa.place_of_supply, gb.place_of_supply, ''), 1, 2)`);
+            });
         }
 
         if (has_variance === 'true') {
@@ -554,8 +587,10 @@ class Reconciliation2AModel {
                         `(EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) >= 4)
                         OR (EXTRACT(YEAR FROM pi.supplier_invoice_date) = ? AND EXTRACT(MONTH FROM pi.supplier_invoice_date) <= 3)
                         OR (EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4)
-                        OR (EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)`,
-                        [fyYear, fyYear + 1, fyYear, fyYear + 1]
+                        OR (EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)
+                        OR (EXTRACT(YEAR FROM gb.document_date) = ? AND EXTRACT(MONTH FROM gb.document_date) >= 4)
+                        OR (EXTRACT(YEAR FROM gb.document_date) = ? AND EXTRACT(MONTH FROM gb.document_date) <= 3)`,
+                        [fyYear, fyYear + 1, fyYear, fyYear + 1, fyYear, fyYear + 1]
                     );
                 });
             }
@@ -566,6 +601,7 @@ class Reconciliation2AModel {
             query.where(function () {
                 this.whereRaw('EXTRACT(MONTH FROM pi.supplier_invoice_date) = ?', [m])
                     .orWhereRaw('EXTRACT(MONTH FROM gi.document_date) = ?', [m])
+                    .orWhereRaw('EXTRACT(MONTH FROM gb.document_date) = ?', [m])
                     .orWhereRaw('EXTRACT(MONTH FROM sa.document_date) = ?', [m]);
             });
         }
@@ -770,6 +806,7 @@ class Reconciliation2AModel {
             knex.raw('pi.book_vchr_no as book_vchr_no'),
             knex.raw('pi.book_vchr_date as book_vchr_date'),
             knex.raw('COALESCE(pi.gstr_category, pi.source_section, sa.source_section, gi.source_section, gb.source_section) as gstr_category'),
+            knex.raw('COALESCE(pi.source_section, gi.source_section, gb.source_section, sa.source_section) as gst_type'),
             knex.raw('COALESCE(gi.itc_available, sa.itc_available) as gstr2a_itc_available'),
             knex.raw('COALESCE(gi.itc_eligibility, sa.itc_eligibility) as gstr2a_itc_eligibility'),
             knex.raw('COALESCE(gi.itc_reason, sa.itc_reason) as gstr2a_itc_reason'),
@@ -847,7 +884,8 @@ class Reconciliation2AModel {
                 missing: parseInt(totalsResult.missing_in_portal_count || 0) + parseInt(totalsResult.missing_in_books_count || 0),
                 totals: {
                     purchase_taxable: parseFloat(totalsResult.book_taxable_total || 0),
-                    gstr2b_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
+                    gstr_taxable: parseFloat(totalsResult.gstr_taxable_total || 0),
+                    gstr2b_taxable: parseFloat(totalsResult.gstr_taxable_total || 0), // maintain legacy key for compat
                     purchase_tax: parseFloat(totalsResult.book_tax_total || 0),
                     gstr2b_tax: parseFloat(totalsResult.gstr_tax_total || 0),
                     purchase_cgst: parseFloat(totalsResult.book_cgst_total || 0),
@@ -856,21 +894,35 @@ class Reconciliation2AModel {
                     gstr2b_cgst: parseFloat(totalsResult.gstr_cgst_total || 0),
                     gstr2b_sgst: parseFloat(totalsResult.gstr_sgst_total || 0),
                     gstr2b_cess: parseFloat(totalsResult.gstr_cess_total || 0)
-                }
+                },
+                available_gstins: [...new Set(results.map(r => r.supplier_gstin).filter(Boolean))],
+                available_names: [...new Set(results.map(r => r.supplier_name).filter(Boolean))]
             }
         };
     }
 
     static async getRunTaxSummary(workspaceId, runId, filters = {}) {
-        const { fy, quarter, month } = filters;
+        const {
+            fy, quarter, month,
+            match_status, workflow_status, search,
+            supplier_gstin, supplier_name, date_from, date_to,
+            min_amount, max_amount, min_net_amount, max_net_amount, supply_type, has_variance,
+            place_of_supply
+        } = filters;
 
         let run;
-        if (runId === 'all') {
-            run = { run_type: 'PURCHASE_2A' }; // Default to 2A vs Books
+        if (runId === 'all' || runId === 'latest') {
+            run = await knex('reconciliation_runs')
+                .where({ workspace_id: workspaceId })
+                .whereIn('run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'])
+                .orderBy('created_at', 'desc')
+                .first();
         } else {
             run = await knex('reconciliation_runs').where({ id: runId, workspace_id: workspaceId }).first();
         }
-        if (!run) return null;
+        if (!run) return { periods: [], grand: { books: { count: 0, tax: 0 }, gstr2a: { count: 0, tax: 0 } } };
+
+        const actualRunId = run.id;
 
         const baseQuery = knex('reconciliation_results_2a as rr')
             .leftJoin('reconciliation_runs as r', 'rr.recon_run_id', 'r.id')
@@ -879,12 +931,108 @@ class Reconciliation2AModel {
             .leftJoin('normalized_gstr2a_invoices as sa', 'rr.gstr2a_source_id', 'sa.id')
             .leftJoin('normalized_gstr2b_invoices as gb', 'rr.gstr2b_invoice_id', 'gb.id')
             .leftJoin('tax_periods as tp', 'pi.tax_period_id', 'tp.id')
-            .where('rr.workspace_id', workspaceId);
+            .leftJoin('reconciliation_status_gst2a_vs_book as rs', function () {
+                this.on('rr.workspace_id', '=', 'rs.workspace_id')
+                    .andOn(function () {
+                        this.on('rr.purchase_invoice_id', '=', 'rs.book_data_id')
+                            .orOn('rr.gstr2a_invoice_id', '=', 'rs.gstr_data_id')
+                            .orOn('rr.gstr2a_source_id', '=', 'rs.book_data_id')
+                            .orOn('rr.gstr2b_invoice_id', '=', 'rs.gstr_data_id');
+                    });
+            })
+            .where('rr.workspace_id', workspaceId)
+            .where('rr.recon_run_id', actualRunId);
 
-        if (runId !== 'all') {
-            baseQuery.where('rr.recon_run_id', runId);
-        } else {
-            baseQuery.whereIn('r.run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B']);
+        // ── Standard Filters ─────────────────────────────────────────────────
+        if (match_status && match_status !== 'all') {
+            const statusList = Array.isArray(match_status) ? match_status : match_status.split(',').map(s => s.trim());
+            if (statusList.length > 0) {
+                const normalizedStatus = new Set(statusList);
+                if (normalizedStatus.has('missing_in_portal')) normalizedStatus.add('not_in_portal');
+                if (normalizedStatus.has('missing_in_books')) normalizedStatus.add('not_in_books');
+                baseQuery.whereIn('rr.match_status', Array.from(normalizedStatus));
+            }
+        }
+
+        if (workflow_status && workflow_status !== 'all' && workflow_status !== 'pending') {
+            const statusList = Array.isArray(workflow_status) ? workflow_status : workflow_status.split(',').map(s => s.trim());
+            if (statusList.length > 0) {
+                baseQuery.whereIn(knex.raw("COALESCE(rs.recon_status, 'pending')"), statusList);
+            }
+        }
+
+        if (search) {
+            baseQuery.where(function () {
+                this.where('pi.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('gi.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('sa.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('gb.supplier_name', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_invoice_no', 'ilike', `%${search}%`)
+                    .orWhere('gi.document_number_raw', 'ilike', `%${search}%`)
+                    .orWhere('sa.document_number_raw', 'ilike', `%${search}%`)
+                    .orWhere('gb.document_number_raw', 'ilike', `%${search}%`)
+                    .orWhere('pi.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('gi.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('sa.supplier_gstin', 'ilike', `%${search}%`)
+                    .orWhere('gb.supplier_gstin', 'ilike', `%${search}%`);
+            });
+        }
+
+        if (supplier_gstin) {
+            const gstins = (Array.isArray(supplier_gstin) ? supplier_gstin : supplier_gstin.split(',')).map(s => s.trim()).filter(Boolean);
+            if (gstins.length > 0) {
+                baseQuery.where(function () {
+                    this.whereIn('pi.supplier_gstin', gstins)
+                        .orWhereIn('gi.supplier_gstin', gstins)
+                        .orWhereIn('sa.supplier_gstin', gstins)
+                        .orWhereIn('gb.supplier_gstin', gstins);
+                });
+            }
+        }
+
+        if (supplier_name) {
+            const names = (Array.isArray(supplier_name) ? supplier_name : supplier_name.split(',')).map(s => s.trim()).filter(Boolean);
+            if (names.length > 0) {
+                baseQuery.where(function () {
+                    this.whereIn('pi.supplier_name', names)
+                        .orWhereIn('gi.supplier_name', names)
+                        .orWhereIn('sa.supplier_name', names)
+                        .orWhereIn('gb.supplier_name', names);
+                });
+            }
+        }
+
+        if (date_from) baseQuery.whereRaw('COALESCE(pi.supplier_invoice_date, gi.document_date, sa.document_date, gb.document_date) >= ?', [date_from]);
+        if (date_to) baseQuery.whereRaw('COALESCE(pi.supplier_invoice_date, gi.document_date, sa.document_date, gb.document_date) <= ?', [date_to]);
+
+        if (min_amount) baseQuery.whereRaw('COALESCE(pi.taxable_total, gi.taxable_value, sa.taxable_value, gb.taxable_value, 0) >= ?', [min_amount]);
+        if (max_amount) baseQuery.whereRaw('COALESCE(pi.taxable_total, gi.taxable_value, sa.taxable_value, gb.taxable_value, 0) <= ?', [max_amount]);
+        if (min_net_amount) baseQuery.whereRaw('COALESCE(pi.net_amount, gi.total_invoice_value, sa.total_invoice_value, gb.total_invoice_value, 0) >= ?', [min_net_amount]);
+        if (max_net_amount) baseQuery.whereRaw('COALESCE(pi.net_amount, gi.total_invoice_value, sa.total_invoice_value, gb.total_invoice_value, 0) <= ?', [max_net_amount]);
+
+        if (supply_type && supply_type !== 'ALL') {
+            baseQuery.where(function () {
+                this.where('pi.source_section', supply_type)
+                    .orWhere('gi.source_section', supply_type)
+                    .orWhere('sa.source_section', supply_type)
+                    .orWhere('gb.source_section', supply_type);
+            });
+        }
+
+        if (place_of_supply) {
+            const posList = Array.isArray(place_of_supply) ? place_of_supply : place_of_supply.split(',').map(s => s.trim()).filter(Boolean);
+            if (posList.length > 0) {
+                baseQuery.where(function () {
+                    this.whereIn('pi.place_of_supply', posList)
+                        .orWhereIn('gi.place_of_supply', posList)
+                        .orWhereIn('sa.place_of_supply', posList)
+                        .orWhereIn('gb.place_of_supply', posList);
+                });
+            }
+        }
+
+        if (has_variance === 'true' || has_variance === true) {
+            baseQuery.whereRaw('ABS(COALESCE(pi.taxable_total, sa.taxable_value, 0) - COALESCE(gi.taxable_value, gb.taxable_value, 0)) > 1');
         }
 
         // Apply same period filters as getRunResults
@@ -898,8 +1046,10 @@ class Reconciliation2AModel {
                         OR (EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) >= 4)
                         OR (EXTRACT(YEAR FROM gi.document_date) = ? AND EXTRACT(MONTH FROM gi.document_date) <= 3)
                         OR (EXTRACT(YEAR FROM sa.document_date) = ? AND EXTRACT(MONTH FROM sa.document_date) >= 4)
-                        OR (EXTRACT(YEAR FROM sa.document_date) = ? AND EXTRACT(MONTH FROM sa.document_date) <= 3)`,
-                        [fyYear, fyYear + 1, fyYear, fyYear + 1, fyYear, fyYear + 1]
+                        OR (EXTRACT(YEAR FROM sa.document_date) = ? AND EXTRACT(MONTH FROM sa.document_date) <= 3)
+                        OR (EXTRACT(YEAR FROM gb.document_date) = ? AND EXTRACT(MONTH FROM gb.document_date) >= 4)
+                        OR (EXTRACT(YEAR FROM gb.document_date) = ? AND EXTRACT(MONTH FROM gb.document_date) <= 3)`,
+                        [fyYear, fyYear + 1, fyYear, fyYear + 1, fyYear, fyYear + 1, fyYear, fyYear + 1]
                     );
                 });
             }
@@ -925,30 +1075,53 @@ class Reconciliation2AModel {
         }
 
         const [agg, rows] = await Promise.all([
-            baseQuery.clone()
-                .select(
-                    knex.raw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000') as period"),
-                    knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, sa.source_section, gb.source_section, 'OTHER')) as category"),
-                    // Books / Source A
-                    knex.raw("COUNT(DISTINCT pi.id) + COUNT(DISTINCT sa.id) as books_count"),
-                    knex.raw("SUM(COALESCE(pi.total_igst_amount,0) + COALESCE(sa.igst, 0)) as books_igst"),
-                    knex.raw("SUM(COALESCE(pi.total_cgst_amount,0) + COALESCE(sa.cgst, 0)) as books_cgst"),
-                    knex.raw("SUM(COALESCE(pi.total_sgst_amount,0) + COALESCE(sa.sgst, 0)) as books_sgst"),
-                    knex.raw("SUM(COALESCE(pi.total_cess_amount,0) + COALESCE(sa.cess, 0)) as books_cess"),
-                    knex.raw("SUM(COALESCE(pi.total_igst_amount,0) + COALESCE(pi.total_cgst_amount,0) + COALESCE(pi.total_sgst_amount,0) + COALESCE(pi.total_cess_amount,0) + COALESCE(sa.total_tax, 0)) as books_tax"),
-                    // GSTR / Source B
-                    knex.raw("COUNT(DISTINCT COALESCE(gi.id, gb.id)) as gstr_count"),
-                    knex.raw("SUM(COALESCE(gi.igst, gb.igst, 0)) as gstr_igst"),
-                    knex.raw("SUM(COALESCE(gi.cgst, gb.cgst, 0)) as gstr_cgst"),
-                    knex.raw("SUM(COALESCE(gi.sgst, gb.sgst, 0)) as gstr_sgst"),
-                    knex.raw("SUM(COALESCE(gi.cess, gb.cess, 0)) as gstr_cess"),
-                    knex.raw("SUM(COALESCE(gi.total_tax, gb.total_tax, 0)) as gstr_tax"),
-                    // Match Status totals (for summary overview)
-                    knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match', 'exact_match') THEN COALESCE(gi.total_tax, gb.total_tax, 0) ELSE 0 END) as matched_tax"),
-                    knex.raw("SUM(CASE WHEN rr.match_status IN ('partial_match', 'mismatch', 'probability_match') THEN COALESCE(gi.total_tax, gb.total_tax, 0) ELSE 0 END) as partial_tax"),
-                    knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_books', 'not_in_books') THEN COALESCE(gi.total_tax, gb.total_tax, 0) ELSE 0 END) as mismatch_tax")
-                )
-                .groupByRaw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, sa.source_section, gb.source_section, 'OTHER'))"),
+            knex.from(
+                baseQuery.clone()
+                    .select(
+                        knex.raw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000') as period"),
+                        knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, sa.source_section, gb.source_section, 'OTHER')) as category"),
+                        'pi.id as pi_id', 'sa.id as sa_id', 'gi.id as gi_id', 'gb.id as gb_id',
+                        'rr.match_status',
+                        knex.raw("COALESCE(pi.total_igst_amount, 0) as pi_igst"),
+                        knex.raw("COALESCE(pi.total_cgst_amount, 0) as pi_cgst"),
+                        knex.raw("COALESCE(pi.total_sgst_amount, 0) as pi_sgst"),
+                        knex.raw("COALESCE(pi.total_cess_amount, 0) as pi_cess"),
+                        knex.raw("(COALESCE(pi.total_igst_amount,0) + COALESCE(pi.total_cgst_amount,0) + COALESCE(pi.total_sgst_amount,0) + COALESCE(pi.total_cess_amount,0)) as pi_tax"),
+                        knex.raw("COALESCE(sa.igst, 0) as sa_igst"),
+                        knex.raw("COALESCE(sa.cgst, 0) as sa_cgst"),
+                        knex.raw("COALESCE(sa.sgst, 0) as sa_sgst"),
+                        knex.raw("COALESCE(sa.cess, 0) as sa_cess"),
+                        knex.raw("COALESCE(sa.total_tax, 0) as sa_tax"),
+                        knex.raw("COALESCE(gi.igst, gb.igst, 0) as g_igst"),
+                        knex.raw("COALESCE(gi.cgst, gb.cgst, 0) as g_cgst"),
+                        knex.raw("COALESCE(gi.sgst, gb.sgst, 0) as g_sgst"),
+                        knex.raw("COALESCE(gi.cess, gb.cess, 0) as g_cess"),
+                        knex.raw("COALESCE(gi.total_tax, gb.total_tax, 0) as g_tax"),
+                        knex.raw("ROW_NUMBER() OVER(PARTITION BY pi.id) as pi_rn"),
+                        knex.raw("ROW_NUMBER() OVER(PARTITION BY sa.id) as sa_rn"),
+                        knex.raw("ROW_NUMBER() OVER(PARTITION BY COALESCE(gi.id, gb.id)) as g_rn")
+                    )
+                    .as('t')
+            )
+            .select(
+                'period', 'category',
+                knex.raw("COUNT(DISTINCT pi_id) + COUNT(DISTINCT sa_id) as books_count"),
+                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_igst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_igst ELSE 0 END) as books_igst"),
+                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cgst ELSE 0 END) as books_cgst"),
+                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_sgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_sgst ELSE 0 END) as books_sgst"),
+                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cess ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cess ELSE 0 END) as books_cess"),
+                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_tax ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_tax ELSE 0 END) as books_tax"),
+                knex.raw("COUNT(DISTINCT gi_id) + COUNT(DISTINCT gb_id) as gstr_count"),
+                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_igst ELSE 0 END) as gstr_igst"),
+                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cgst ELSE 0 END) as gstr_cgst"),
+                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_sgst ELSE 0 END) as gstr_sgst"),
+                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cess ELSE 0 END) as gstr_cess"),
+                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_tax ELSE 0 END) as gstr_tax"),
+                knex.raw("SUM(CASE WHEN match_status IN ('matched', 'tolerance_match', 'exact_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as matched_tax"),
+                knex.raw("SUM(CASE WHEN match_status IN ('partial_match', 'mismatch', 'probability_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as partial_tax"),
+                knex.raw("SUM(CASE WHEN match_status IN ('missing_in_books', 'not_in_books') AND g_rn = 1 THEN g_tax ELSE 0 END) as mismatch_tax")
+            )
+            .groupBy('period', 'category'),
             baseQuery.clone()
                 .select(
                     knex.raw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000') as period"),
