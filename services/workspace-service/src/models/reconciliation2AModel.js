@@ -620,17 +620,26 @@ class Reconciliation2AModel {
         // Maps frontend columnFilters keys → SQL column expressions
         const colMapping = {
             // Identity
-            gstin: { cols: ['pi.supplier_gstin', 'gi.supplier_gstin', 'sa.supplier_gstin', 'gb.supplier_gstin'] },
+            gstin: { cols: ['pi.supplier_gstin', 'gi.supplier_gstin', 'sa.supplier_gstin', 'gb.supplier_gstin'], exact: true },
+            supplier_gstin: { cols: ['pi.supplier_gstin', 'gi.supplier_gstin', 'sa.supplier_gstin', 'gb.supplier_gstin'], exact: true },
             name: { cols: ['pi.supplier_name', 'sa.supplier_name', 'gi.supplier_name', 'gb.supplier_name'] },
+            supplier_name: { cols: ['pi.supplier_name', 'sa.supplier_name', 'gi.supplier_name', 'gb.supplier_name'] },
             gst_type: { cols: ['pi.source_section', 'gi.source_section', 'gb.source_section'] },
             invoice_no: { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean', 'sa.document_number_raw', 'gb.document_number_raw'] },
+            gstr_invoice_number: { cols: ['pi.supplier_invoice_no', 'gi.document_number_clean', 'sa.document_number_raw', 'gb.document_number_raw'] },
             invoice_date: { cols: ['pi.supplier_invoice_date', 'gi.document_date', 'sa.document_date', 'gb.document_date'], dateCol: true },
+            gstr_invoice_date: { cols: ['pi.supplier_invoice_date', 'gi.document_date', 'sa.document_date', 'gb.document_date'], dateCol: true },
             voucher_no: { cols: ['pi.book_vchr_no'] },
+            purchase_invoice_number: { cols: ['pi.supplier_invoice_no'] },
             gst_cat: { cols: ['pi.gstr_category', 'pi.source_section', 'sa.source_section', 'gi.source_section', 'gb.source_section'] },
             voucher_date: { cols: ['pi.book_vchr_date'], dateCol: true },
+            purchase_invoice_date: { cols: ['pi.supplier_invoice_date'], dateCol: true },
+            return_period: { cols: ['gi.return_period', 'gb.return_period', 'sa.return_period'] },
             // Status
             status: { cols: ['rr.match_status'], exact: true },
+            match_status: { cols: ['rr.match_status'], exact: true },
             action_status: { cols: [knex.raw("COALESCE(rs.recon_status, 'pending')")], exact: true },
+            recon_status: { cols: [knex.raw("COALESCE(rs.recon_status, 'pending')")], exact: true },
             // GSTR-2A Portal columns (Source A in 2A vs 2B)
             gstr_invoice_total: { cols: [knex.raw('COALESCE(gi.document_value, sa.total_tax + sa.taxable_value)')], numeric: true },
             gstr_taxable: { cols: [knex.raw('COALESCE(gi.taxable_value, sa.taxable_value)')], numeric: true },
@@ -644,11 +653,13 @@ class Reconciliation2AModel {
             gstr_cess: { cols: [knex.raw('COALESCE(gi.cess, sa.cess, 0)')], numeric: true },
             // Books / 2B columns (Source B in 2A vs 2B)
             book_invoice_total: { cols: [knex.raw('COALESCE(pi.net_amount, gb.total_tax + gb.taxable_value)')], numeric: true },
+            purchase_invoice_total: { cols: [knex.raw('COALESCE(pi.net_amount, gb.total_tax + gb.taxable_value)')], numeric: true },
             purchase_taxable: { cols: [knex.raw('COALESCE(pi.taxable_total, gb.taxable_value)')], numeric: true },
             book_taxable: { cols: [knex.raw('COALESCE(pi.taxable_total, gb.taxable_value)')], numeric: true },
             purchase_tax_rate: { cols: ['pi.tax_rate', 'gb.tax_rate'], numeric: true },
             book_tax_rate: { cols: ['pi.tax_rate', 'gb.tax_rate'], numeric: true },
             purchase_tax_total: { cols: [knex.raw('COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(gb.total_tax, 0)')], numeric: true },
+            purchase_tax: { cols: [knex.raw('COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(gb.total_tax, 0)')], numeric: true },
             book_tax: { cols: [knex.raw('COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(gb.total_tax, 0)')], numeric: true },
             purchase_igst: { cols: [knex.raw('COALESCE(pi.total_igst_amount, gb.igst, 0)')], numeric: true },
             book_igst: { cols: [knex.raw('COALESCE(pi.total_igst_amount, gb.igst, 0)')], numeric: true },
@@ -656,25 +667,51 @@ class Reconciliation2AModel {
             book_cgst: { cols: [knex.raw('COALESCE(pi.total_cgst_amount, gb.cgst, 0)')], numeric: true },
             purchase_sgst: { cols: [knex.raw('COALESCE(pi.total_sgst_amount, gb.sgst, 0)')], numeric: true },
             book_sgst: { cols: [knex.raw('COALESCE(pi.total_sgst_amount, gb.sgst, 0)')], numeric: true },
-            purchase_cess: { cols: [knex.raw('COALESCE(pi.total_cess_amount, gb.cess, 0)')], numeric: true },
-            book_cess: { cols: [knex.raw('COALESCE(pi.total_cess_amount, gb.cess, 0)')], numeric: true },
             purchase_cess: { cols: [knex.raw('COALESCE(pi.total_cess_amount, sa.cess, gb.cess, 0)')], numeric: true },
             book_cess: { cols: [knex.raw('COALESCE(pi.total_cess_amount, sa.cess, gb.cess, 0)')], numeric: true },
             tax_diff: { cols: ['rr.variance_amount'], numeric: true },
             difference: { cols: ['rr.variance_amount'], numeric: true },
+            variance_amount: { cols: ['rr.variance_amount'], numeric: true },
             place_of_supply: { cols: ['pi.place_of_supply', 'gi.place_of_supply', 'sa.place_of_supply', 'gb.place_of_supply'] },
         };
 
         // Apply each column filter
         Object.entries(parsedColumnFilters).forEach(([key, value]) => {
-            const isEmpty = !value || (Array.isArray(value) && value.length === 0) || value === '';
-            if (isEmpty) return;
+            let op = 'cn';
+            let val = value;
+
+            // Handle AG Grid Filter Model format
+            if (value && typeof value === 'object' && value.filterType) {
+                const typeMapping = {
+                    'equals': 'eq',
+                    'notEqual': 'ne',
+                    'lessThan': 'lt',
+                    'lessThanOrEqual': 'le',
+                    'greaterThan': 'gt',
+                    'greaterThanOrEqual': 'ge',
+                    'contains': 'cn',
+                    'notContains': 'nc',
+                    'startsWith': 'bw',
+                    'endsWith': 'ew',
+                    'blank': 'nu',
+                    'notBlank': 'nn'
+                };
+                op = typeMapping[value.type] || 'cn';
+                val = value.filter;
+            } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                // Handle new filter object format: { op: '...', val: '...' }
+                op = value.op || 'cn';
+                val = value.val;
+            }
+
+            const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
+            if (isEmpty && !['nu', 'nn'].includes(op)) return;
 
             const def = colMapping[key];
             if (!def) return;
 
-            const valueList = Array.isArray(value) ? value.filter(Boolean) : [value];
-            if (valueList.length === 0) return;
+            const valueList = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined) : [val];
+            if (valueList.length === 0 && !['nu', 'nn'].includes(op)) return;
 
             if (def.dateCol) {
                 // Parse date strings in dd/MM/yyyy or yyyy-MM-dd format
@@ -683,24 +720,39 @@ class Reconciliation2AModel {
                     def.cols.forEach((col, ci) => {
                         valueList.forEach((v, vi) => {
                             let dbDate = v;
-                            const parts = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-                            if (parts) dbDate = `${parts[3]}-${parts[2]}-${parts[1]}`;
+                            if (typeof v === 'string') {
+                                const parts = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                                if (parts) dbDate = `${parts[3]}-${parts[2]}-${parts[1]}`;
+                            }
                             const method = (ci === 0 && vi === 0) ? 'whereRaw' : 'orWhereRaw';
                             self[method](`DATE(${typeof col === 'string' ? col : col.toSQL().sql}) = ?`, [dbDate]);
                         });
                     });
                 });
             } else if (def.numeric) {
-                // Numeric range: each value can be "50" or ">=50" or "<=50"
                 query.where(function () {
                     const self = this;
-                    def.cols.forEach((col, ci) => {
-                        valueList.forEach((v, vi) => {
-                            const num = parseFloat(v);
-                            if (isNaN(num)) return;
-                            const method = (ci === 0 && vi === 0) ? 'whereRaw' : 'orWhereRaw';
-                            const colExpr = typeof col === 'string' ? col : col.toSQL().sql;
-                            self[method](`CAST(${colExpr} AS DECIMAL) = ?`, [num]);
+                    valueList.forEach((v, vi) => {
+                        const num = parseFloat(v);
+                        if (isNaN(num) && !['nu', 'nn'].includes(op)) return;
+                        def.cols.forEach((col, ci) => {
+                            const isRaw = col && typeof col === 'object' && col.toSQL;
+                            const colSql = isRaw ? `(${col.toSQL().sql})` : `??`;
+                            const baseSql = `ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2)`;
+                            const method = (vi === 0 && ci === 0) ? 'where' : 'orWhere';
+                            const bindings = isRaw ? [num] : [col, num];
+
+                            switch (op) {
+                                case 'eq': self[`${method}Raw`](`${baseSql} = ?`, bindings); break;
+                                case 'ne': self[`${method}Raw`](`${baseSql} != ?`, bindings); break;
+                                case 'lt': self[`${method}Raw`](`${baseSql} < ?`, bindings); break;
+                                case 'le': self[`${method}Raw`](`${baseSql} <= ?`, bindings); break;
+                                case 'gt': self[`${method}Raw`](`${baseSql} > ?`, bindings); break;
+                                case 'ge': self[`${method}Raw`](`${baseSql} >= ?`, bindings); break;
+                                case 'nu': self[`${method}Raw`](`(${colSql}) IS NULL`, isRaw ? [] : [col]); break;
+                                case 'nn': self[`${method}Raw`](`(${colSql}) IS NOT NULL`, isRaw ? [] : [col]); break;
+                                default: self[`${method}Raw`](`${baseSql} = ?`, bindings);
+                            }
                         });
                     });
                 });
