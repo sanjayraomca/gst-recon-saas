@@ -2163,3 +2163,62 @@ CREATE TABLE IF NOT EXISTS reconciliation_configs (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ============================================
+-- DOMAIN 20: 2A VS 2B RECONCILIATION
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS reconciliation_status_2a_vs_2b (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    gstr2a_invoice_id uuid,
+    gstr2b_invoice_id uuid,
+    recon_status character varying(50) DEFAULT 'pending',
+    status character varying(20) DEFAULT 'Active',
+    added_by uuid,
+    added_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_by uuid,
+    updated_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    extra_info jsonb,
+    CONSTRAINT reconciliation_status_2a_vs_2b_pkey PRIMARY KEY (id),
+    CONSTRAINT fk_2a_vs_2b_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    CONSTRAINT fk_2a_vs_2b_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_status_2a_vs_2b_gstr2a ON reconciliation_status_2a_vs_2b (workspace_id, gstr2a_invoice_id) WHERE gstr2a_invoice_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_status_2a_vs_2b_gstr2b ON reconciliation_status_2a_vs_2b (workspace_id, gstr2b_invoice_id) WHERE gstr2b_invoice_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_recon_status_2a_vs_2b_ws ON reconciliation_status_2a_vs_2b (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_recon_status_2a_vs_2b_status ON reconciliation_status_2a_vs_2b (recon_status);
+-- Create reconciliation_status_gst2a_vs_book table
+CREATE TABLE IF NOT EXISTS reconciliation_status_gst2a_vs_book (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    gstr_data_id UUID, -- This will be normalized_gstr2a_invoices.id
+    gstr_type VARCHAR(20) DEFAULT 'gstr2a',
+    book_data_type VARCHAR(20) DEFAULT 'purchase_voucher',
+    book_data_id UUID, -- This will be purchase_vouchers.id
+    book_line_item_id UUID,
+    recon_status VARCHAR(50) DEFAULT 'pending',
+    status VARCHAR(20) DEFAULT 'Active',
+    added_by UUID,
+    added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by UUID,
+    updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    extra_info JSONB,
+    
+    -- Constraints and Indexes
+    CONSTRAINT chk_recon_status_2a CHECK (recon_status IN ('pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded')),
+    CONSTRAINT fk_gst2a_vs_book_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gst2a_vs_book_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+-- Unique index to prevent duplicate status records for the same invoice
+-- This ensures each book invoice or GSTR-2A invoice has only one status in this context
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_status_2a_book ON reconciliation_status_gst2a_vs_book (workspace_id, book_data_id) WHERE book_data_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_status_2a_gstr ON reconciliation_status_gst2a_vs_book (workspace_id, gstr_data_id) WHERE gstr_data_id IS NOT NULL;
+
+-- Standard indexes for performance
+CREATE INDEX IF NOT EXISTS idx_recon_status_2a_ws ON reconciliation_status_gst2a_vs_book (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_recon_status_2a_recon ON reconciliation_status_gst2a_vs_book (recon_status);

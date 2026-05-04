@@ -83,7 +83,11 @@ const updateReconStatus = async (req, res) => {
         ];
 
         const resultsTable = is2a ? 'reconciliation_results_2a' : 'reconciliation_results';
-        const statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
+        let statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
+        
+        if (run_type === 'GSTR2A_VS_GSTR2B') {
+            statusTable = 'reconciliation_status_2a_vs_2b';
+        }
 
         if (!workspaceId) {
             await trx.rollback();
@@ -123,49 +127,54 @@ const updateReconStatus = async (req, res) => {
 
         // 3. Upsert logic for reconciliation_status
         let existing = null;
-        if (purchase_invoice_id) {
-            existing = await trx(statusTable)
-                .where({ workspace_id: workspaceId, [is2a ? 'book_data_id' : 'book_data_id']: purchase_invoice_id })
-                .first();
-        }
-        if (!existing && gstrId) {
-            existing = await trx(statusTable)
-                .where({ workspace_id: workspaceId, [is2a ? 'gstr_data_id' : 'gstr_data_id']: gstrId })
-                .first();
+        if (run_type === 'GSTR2A_VS_GSTR2B') {
+            if (gstr2a_invoice_id) {
+                existing = await trx(statusTable)
+                    .where({ workspace_id: workspaceId, gstr2a_invoice_id })
+                    .first();
+            }
+            if (!existing && gstr2b_invoice_id) {
+                existing = await trx(statusTable)
+                    .where({ workspace_id: workspaceId, gstr2b_invoice_id })
+                    .first();
+            }
+        } else {
+            if (purchase_invoice_id) {
+                existing = await trx(statusTable)
+                    .where({ workspace_id: workspaceId, book_data_id: purchase_invoice_id })
+                    .first();
+            }
+            if (!existing && gstrId) {
+                existing = await trx(statusTable)
+                    .where({ workspace_id: workspaceId, gstr_data_id: gstrId })
+                    .first();
+            }
         }
 
         let statusRecord;
         if (existing) {
             [statusRecord] = await trx(statusTable)
                 .where({ id: existing.id })
-            const updateData = {
-                recon_status,
-                updated_date: trx.fn.now()
-            };
-            if (!is2a) updateData.updated_by = userId || null;
-
-            [statusRecord] = await trx(statusTable)
-                .where({ id: existing.id })
-                .update(updateData)
+                .update({
+                    recon_status,
+                    updated_date: knex.fn.now()
+                })
                 .returning('*');
         } else {
             const insertData = {
                 workspace_id: workspaceId,
-                tenant_id: tenantId,
-                book_data_id: purchase_invoice_id || null,
-                gstr_data_id: gstrId || null,
+                tenant_id,
                 recon_status,
-                updated_date: trx.fn.now()
+                added_date: knex.fn.now(),
+                updated_date: knex.fn.now()
             };
 
-            if (is2a) {
-                insertData.added_date = trx.fn.now();
+            if (run_type === 'GSTR2A_VS_GSTR2B') {
+                insertData.gstr2a_invoice_id = gstr2a_invoice_id;
+                insertData.gstr2b_invoice_id = gstr2b_invoice_id;
             } else {
-                insertData.book_data_type = purchase_invoice_id ? 'purchase_voucher' : null;
-                insertData.gstr_type = is2a ? 'gstr2a' : 'gstr2b';
-                insertData.status = 'Active';
-                insertData.added_by = userId || null;
-                insertData.added_date = trx.fn.now();
+                insertData.gstr_data_id = gstrId;
+                insertData.book_data_id = purchase_invoice_id;
                 insertData.updated_by = userId || null;
                 insertData.extra_info = { recon_result_id: resultIdInt };
             }
