@@ -50,7 +50,7 @@ const getBookData = async (req, res) => {
 
         const pagination = (export_mode === 'true' || req.query.all === 'true')
             ? { page: 1, page_size: 50000 }
-            : { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 200) };
+            : { page: parseInt(page) || 1, page_size: Math.min(parseInt(page_size) || 50, 50000) };
 
         // Parse multi-select arrays if they come as strings
         const parseArr = (val) => {

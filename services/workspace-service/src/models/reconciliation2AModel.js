@@ -1209,7 +1209,7 @@ class Reconciliation2AModel {
                     knex.raw("COALESCE(gi.sgst, 0) as gstr2a_sgst"),
                     knex.raw("COALESCE(gi.cess, 0) as gstr2a_cess")
                 )
-                .limit(2000)
+                .limit(50000) // Support high-density analytical sets
         ]);
 
         // Hierarchy construction

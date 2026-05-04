@@ -381,7 +381,7 @@ class NormalizedGstr2bModel {
 
         if (!workspaceId) throw new Error('workspaceId is required for listInvoices');
 
-        const PAGE_SIZE = Math.min(Math.max(parseInt(pageSize) || 50, 1), 500);
+        const PAGE_SIZE = Math.min(Math.max(parseInt(pageSize) || 50, 1), 50000);
         const PAGE = Math.max(parseInt(page) || 1, 1);
         const OFFSET = (PAGE - 1) * PAGE_SIZE;
 
