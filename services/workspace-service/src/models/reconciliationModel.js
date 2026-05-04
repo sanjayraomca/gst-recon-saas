@@ -1460,6 +1460,8 @@ class ReconciliationModel {
                 knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.total_tax' :
                     (is2a ? '(COALESCE(ps.total_igst_amount, 0) + COALESCE(ps.total_cgst_amount, 0) + COALESCE(ps.total_sgst_amount, 0) + COALESCE(ps.total_cess_amount, 0))' :
                         '(COALESCE(pi.total_igst_amount, 0) + COALESCE(pi.total_cgst_amount, 0) + COALESCE(pi.total_sgst_amount, 0) + COALESCE(pi.total_cess_amount, 0))')}, 0)) as purchase_tax_total`),
+                knex.raw(`SUM(COALESCE(NULLIF(gi.document_value, 0), gi.taxable_value + COALESCE(gi.igst,0) + COALESCE(gi.cgst,0) + COALESCE(gi.sgst,0) + COALESCE(gi.cess,0))) as gstr2b_total_total`),
+                knex.raw(`SUM(COALESCE(${is2aVs2b ? 'sa.document_value' : (is2a ? 'ps.net_amount' : 'pi.net_amount')}, 0)) as purchase_total_total`),
                 knex.raw('SUM(gi.cgst) as gstr2b_cgst_total'),
                 knex.raw('SUM(gi.sgst) as gstr2b_sgst_total'),
                 knex.raw('SUM(gi.cess) as gstr2b_cess_total'),
@@ -1476,6 +1478,8 @@ class ReconciliationModel {
             gstr2b_cgst_total: 0,
             gstr2b_sgst_total: 0,
             gstr2b_cess_total: 0,
+            gstr2b_total_total: 0,
+            purchase_total_total: 0,
             purchase_cgst_total: 0,
             purchase_sgst_total: 0,
             purchase_cess_total: 0,
@@ -1500,6 +1504,8 @@ class ReconciliationModel {
                 purchase_taxable: parseFloat(totalsResult.purchase_taxable_total || 0),
                 gstr2b_tax: parseFloat(totalsResult.gstr2b_tax_total || 0),
                 purchase_tax: parseFloat(totalsResult.purchase_tax_total || 0),
+                gstr2b_total: parseFloat(totalsResult.gstr2b_total_total || 0),
+                purchase_total: parseFloat(totalsResult.purchase_total_total || 0),
                 gstr2b_cgst: parseFloat(totalsResult.gstr2b_cgst_total || 0),
                 gstr2b_sgst: parseFloat(totalsResult.gstr2b_sgst_total || 0),
                 gstr2b_cess: parseFloat(totalsResult.gstr2b_cess_total || 0),

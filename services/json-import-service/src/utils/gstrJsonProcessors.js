@@ -18,6 +18,48 @@ const parsePortalDate = (dt) => {
 };
 
 /**
+ * Normalize items from any GSTR JSON format into a standard itm_det structure.
+ * Handles 3 formats:
+ *   1. itms[] (GSTR-2A style) → { itm_det: { txval, iamt, camt, samt, csamt, rt } }
+ *   2. items[] (R2B monthly)  → { sgst, cgst, igst, cess, txval, rt }
+ *   3. Flat fields on record  (R2BQ quarterly) → record.txval, record.igst, etc.
+ */
+const normalizeItems = (record) => {
+    // Format 1: Standard GSTR-2A style with itms[] containing itm_det
+    if (record.itms && Array.isArray(record.itms) && record.itms.length > 0) {
+        return record.itms;
+    }
+
+    // Format 2: R2B monthly style with items[] using direct field names
+    if (record.items && Array.isArray(record.items) && record.items.length > 0) {
+        return record.items.map(item => ({
+            itm_det: {
+                txval: item.txval,
+                iamt: item.igst || 0,
+                camt: item.cgst || 0,
+                samt: item.sgst || 0,
+                csamt: item.cess || 0,
+                rt: item.rt || null
+            }
+        }));
+    }
+
+    // Format 3: Flat fields directly on the record (R2BQ quarterly)
+    return [
+        {
+            itm_det: {
+                txval: record.txval,
+                iamt: record.igst || 0,
+                camt: record.cgst || 0,
+                samt: record.sgst || 0,
+                csamt: record.cess || 0,
+                rt: record.rt || null
+            }
+        }
+    ];
+};
+
+/**
  * Flatten GSTR-2B / 2A JSON into table-ready records
  */
 const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
@@ -58,25 +100,14 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
         for (const section of processedJson.b2b) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
-            
+
             if (section.inv) {
                 for (const inv of section.inv) {
                     const invNum = normalizeInvoiceNumber(inv.inum);
                     const invDate = parsePortalDate(inv.idt || inv.dt); // Fallback to 'dt'
-                    
-                    // Fallback for flattened items (no 'itms' array)
-                    const itms = inv.itms || [
-                        {
-                            itm_det: {
-                                txval: inv.txval,
-                                iamt: inv.igst,
-                                camt: inv.cgst,
-                                samt: inv.sgst,
-                                csamt: inv.cess,
-                                rt: inv.rt || (inv.taxable_value > 0 ? Math.round(((cleanAmount(inv.igst) || 0) + (cleanAmount(inv.cgst) || 0) + (cleanAmount(inv.sgst) || 0)) / cleanAmount(inv.txval) * 100) : null)
-                            }
-                        }
-                    ];
+
+                    // Normalize items from any format (itms[], items[], or flat fields)
+                    const itms = normalizeItems(inv);
 
                     for (const itm of itms) {
                         const det = itm.itm_det || {};
@@ -117,26 +148,15 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
         for (const section of processedJson.b2ba) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
-            
+
             if (section.inv) {
                 for (const inv of section.inv) {
                     const invNum = normalizeInvoiceNumber(inv.inum);
                     const invDate = parsePortalDate(inv.idt || inv.dt);
                     const oinvNum = normalizeInvoiceNumber(inv.oinum);
                     const oinvDate = parsePortalDate(inv.oidt);
-                    
-                    const itms = inv.itms || [
-                        {
-                            itm_det: {
-                                txval: inv.txval,
-                                iamt: inv.igst,
-                                camt: inv.cgst,
-                                samt: inv.sgst,
-                                csamt: inv.cess,
-                                rt: inv.rt
-                            }
-                        }
-                    ];
+
+                    const itms = normalizeItems(inv);
 
                     for (const itm of itms) {
                         const det = itm.itm_det || {};
@@ -176,26 +196,15 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
         for (const section of cdnData) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
-            
+
             if (section.nt) {
                 for (const nt of section.nt) {
                     const noteNum = normalizeInvoiceNumber(nt.nt_num || nt.ntnum);
                     const noteDate = parsePortalDate(nt.nt_dt || nt.dt);
                     const oinvNum = normalizeInvoiceNumber(nt.inum);
                     const oinvDate = parsePortalDate(nt.idt);
-                    
-                    const itms = nt.itms || [
-                        {
-                            itm_det: {
-                                txval: nt.txval,
-                                iamt: nt.igst,
-                                camt: nt.cgst,
-                                samt: nt.sgst,
-                                csamt: nt.cess,
-                                rt: nt.rt
-                            }
-                        }
-                    ];
+
+                    const itms = normalizeItems(nt);
 
                     for (const itm of itms) {
                         const det = itm.itm_det || {};
@@ -234,7 +243,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
         for (const section of cdnaData) {
             const gstin = section.ctin;
             const tradeName = section.trdnm;
-            
+
             if (section.nt) {
                 for (const nt of section.nt) {
                     const noteNum = normalizeInvoiceNumber(nt.nt_num || nt.ntnum);
@@ -243,19 +252,8 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
                     const onoteDate = parsePortalDate(nt.ont_dt);
                     const oinvNum = normalizeInvoiceNumber(nt.inum);
                     const oinvDate = parsePortalDate(nt.idt);
-                    
-                    const itms = nt.itms || [
-                        {
-                            itm_det: {
-                                txval: nt.txval,
-                                iamt: nt.igst,
-                                camt: nt.cgst,
-                                samt: nt.sgst,
-                                csamt: nt.csamt,
-                                rt: nt.rt
-                            }
-                        }
-                    ];
+
+                    const itms = normalizeItems(nt);
 
                     for (const itm of itms) {
                         const det = itm.itm_det || {};
@@ -315,7 +313,7 @@ const processGstrJson = (rawJson, gstrType = 'GSTR2B') => {
         for (const section of isdData) {
             const gstinIsd = section.ctin;
             const isdName = section.trdnm;
-            
+
             if (section.doclist) {
                 for (const doc of section.doclist) {
                     results.push({
