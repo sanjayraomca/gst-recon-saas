@@ -341,46 +341,64 @@ class Reconciliation2AModel {
                 const inserted = await trx('reconciliation_results_2a')
                     .where({ recon_run_id: runId, workspace_id: workspaceId });
 
-                // Update 2A specific status table
+                // Update specific status table
                 await progressEmitter.emitProgress(runId, 95, 'Updating status tracking...');
                 const tenantId = workspace?.tenant_id || workspaceId;
+                const statusTable = is2aVs2b ? 'reconciliation_status_2a_vs_2b' : 'reconciliation_status_gst2a_vs_book';
+                
                 const statusRows = inserted.map(r => ({
                     workspace_id: workspaceId,
                     tenant_id: tenantId,
-                    gstr_data_id: r.gstr2a_invoice_id || null,
-                    book_data_id: r.purchase_invoice_id || null,
+                    ...(is2aVs2b ? {
+                        gstr2a_invoice_id: r.gstr2a_invoice_id || null,
+                        gstr2b_invoice_id: r.gstr2b_invoice_id || null,
+                    } : {
+                        gstr_data_id: r.gstr2a_invoice_id || null,
+                        book_data_id: r.purchase_invoice_id || null,
+                    }),
                     recon_status: r.match_status === 'matched' ? 'matched' : (r.match_status === 'not_in_portal' ? 'not_in_portal' : 'not_in_books'),
                 }));
 
-                // 1. Deduplicate summary status (Key by Book ID or GSTR ID)
+                // 1. Deduplicate summary status
                 const dedupedStatus = new Map();
                 for (const row of statusRows) {
-                    const key = row.book_data_id || row.gstr_data_id;
+                    const key = is2aVs2b 
+                        ? (row.gstr2a_invoice_id || row.gstr2b_invoice_id)
+                        : (row.book_data_id || row.gstr_data_id);
                     if (!key) continue;
                     dedupedStatus.set(key, row);
                 }
 
                 for (const row of dedupedStatus.values()) {
-                    // Check by BOTH IDs to prevent unique constraint violations
-                    const existing = await trx('reconciliation_status_gst2a_vs_book')
+                    const existing = await trx(statusTable)
                         .where('workspace_id', workspaceId)
                         .where(function () {
-                            if (row.book_data_id) this.orWhere('book_data_id', row.book_data_id);
-                            if (row.gstr_data_id) this.orWhere('gstr_data_id', row.gstr_data_id);
+                            if (is2aVs2b) {
+                                if (row.gstr2a_invoice_id) this.orWhere('gstr2a_invoice_id', row.gstr2a_invoice_id);
+                                if (row.gstr2b_invoice_id) this.orWhere('gstr2b_invoice_id', row.gstr2b_invoice_id);
+                            } else {
+                                if (row.book_data_id) this.orWhere('book_data_id', row.book_data_id);
+                                if (row.gstr_data_id) this.orWhere('gstr_data_id', row.gstr_data_id);
+                            }
                         })
                         .first();
 
                     if (existing) {
-                        await trx('reconciliation_status_gst2a_vs_book')
+                        await trx(statusTable)
                             .where({ id: existing.id })
                             .update({
-                                gstr_data_id: row.gstr_data_id || existing.gstr_data_id,
-                                book_data_id: row.book_data_id || existing.book_data_id,
+                                ...(is2aVs2b ? {
+                                    gstr2a_invoice_id: row.gstr2a_invoice_id || existing.gstr2a_invoice_id,
+                                    gstr2b_invoice_id: row.gstr2b_invoice_id || existing.gstr2b_invoice_id,
+                                } : {
+                                    gstr_data_id: row.gstr_data_id || existing.gstr_data_id,
+                                    book_data_id: row.book_data_id || existing.book_data_id,
+                                }),
                                 recon_status: row.recon_status,
                                 updated_date: knex.fn.now()
                             });
                     } else {
-                        await trx('reconciliation_status_gst2a_vs_book').insert({
+                        await trx(statusTable).insert({
                             ...row,
                             added_date: knex.fn.now(),
                             updated_date: knex.fn.now()
@@ -844,6 +862,7 @@ class Reconciliation2AModel {
             knex.raw('COALESCE(gi.document_number_clean, sa.document_number_clean) as gstr_invoice_number'),
             knex.raw('COALESCE(gi.document_number_raw, sa.document_number_raw) as gstr_invoice_number_raw'),
             knex.raw('COALESCE(gi.document_date, sa.document_date) as gstr_invoice_date'),
+            knex.raw('COALESCE(gi.document_value, sa.document_value, sa.taxable_value + COALESCE(sa.total_tax, 0)) as gstr_invoice_total'),
             knex.raw('COALESCE(pi.supplier_gstin, sa.supplier_gstin, gi.supplier_gstin, gb.supplier_gstin) as supplier_gstin'),
             knex.raw('COALESCE(pi.supplier_name, sa.supplier_name, gi.supplier_name, gb.supplier_name) as supplier_name'),
             knex.raw('COALESCE(gi.taxable_value, sa.taxable_value) as gstr_taxable'),
@@ -852,12 +871,14 @@ class Reconciliation2AModel {
             knex.raw('COALESCE(gi.cgst, sa.cgst) as gstr_cgst'),
             knex.raw('COALESCE(gi.sgst, sa.sgst) as gstr_sgst'),
             knex.raw('COALESCE(gi.cess, sa.cess) as gstr_cess'),
+            knex.raw('COALESCE(gi.return_period, sa.return_period) as gstr_return_period'),
             knex.raw('COALESCE(pi.taxable_total, gb.taxable_value) as purchase_taxable'),
             knex.raw('COALESCE(pi.total_igst_amount,0)+COALESCE(pi.total_cgst_amount,0)+COALESCE(pi.total_sgst_amount,0)+COALESCE(gb.total_tax,0) as purchase_tax'),
             knex.raw('COALESCE(pi.total_igst_amount, gb.igst, 0) as purchase_igst'),
             knex.raw('COALESCE(pi.total_cgst_amount, gb.cgst, 0) as purchase_cgst'),
             knex.raw('COALESCE(pi.total_sgst_amount, gb.sgst, 0) as purchase_sgst'),
             knex.raw('COALESCE(pi.total_cess_amount, gb.cess, 0) as purchase_cess'),
+            knex.raw('COALESCE(gb.return_period) as purchase_return_period'),
             knex.raw('COALESCE(pi.net_amount, gb.taxable_value + COALESCE(gb.total_tax, 0), sa.taxable_value + sa.total_tax) as purchase_invoice_total'),
             knex.raw('pi.book_vchr_no as book_vchr_no'),
             knex.raw('pi.book_vchr_date as book_vchr_date'),
