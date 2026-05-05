@@ -267,6 +267,108 @@ class DashboardModel {
             reconciliation.accuracy = reconciliation.summary.total > 0 ? (reconciliation.summary.matched / reconciliation.summary.total) * 100 : 0;
         }
 
+        // 6. Transaction Categories Breakdown
+        const resultsTable = is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results';
+        const gstrTable = is2aVs2b ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+        const gstrIdCol = is2aVs2b ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
+
+        const categoryStats = await knex(resultsTable)
+            .join(gstrTable, `${resultsTable}.${gstrIdCol}`, `${gstrTable}.id`)
+            .where(`${resultsTable}.recon_run_id`, latestRun?.id || '')
+            .select(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`)
+            .count('* as count')
+            .groupBy(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`);
+
+        const catMap = {
+            'B2B': 'B2B',
+            'B2BA': 'B2BA',
+            'CREDIT_NOTE': 'Credit Note',
+            'DEBIT_NOTE': 'Debit Note'
+        };
+
+        const categories = {
+            'B2B': { total: 0, matched: 0 },
+            'B2BA': { total: 0, matched: 0 },
+            'Credit Note': { total: 0, matched: 0 },
+            'Debit Note': { total: 0, matched: 0 }
+        };
+
+        categoryStats.forEach(s => {
+            let label = null;
+            if (s.source_section === 'B2B') label = 'B2B';
+            else if (s.source_section === 'B2BA') label = 'B2BA';
+            else if (s.document_category === 'CREDIT_NOTE') label = 'Credit Note';
+            else if (s.document_category === 'DEBIT_NOTE') label = 'Debit Note';
+
+            if (label && categories[label]) {
+                const count = parseInt(s.count);
+                categories[label].total += count;
+                if (s.match_status?.toLowerCase() === 'matched') {
+                    categories[label].matched += count;
+                }
+            }
+        });
+
+        const transactionCategories = Object.entries(categories).map(([name, stats]) => ({
+            name,
+            total: stats.total,
+            matched: stats.matched,
+            percentage: stats.total > 0 ? Math.round((stats.matched / stats.total) * 100) : 0
+        }));
+
+        // 7. Data Availability (Quarterly)
+        const currentFyStartYear = parseInt(fyStartDate.substring(0, 4));
+        const quarters = [
+            { name: 'Q4', months: ['01', '02', '03'], year: currentFyStartYear + 1 },
+            { name: 'Q3', months: ['10', '11', '12'], year: currentFyStartYear },
+            { name: 'Q2', months: ['07', '08', '09'], year: currentFyStartYear },
+            { name: 'Q1', months: ['04', '05', '06'], year: currentFyStartYear }
+        ];
+
+        const dataAvailability = await Promise.all(quarters.map(async (q) => {
+            const periods = q.months.map(m => `${m}${q.year}`);
+            const lastImport = await knex('gstr_import_master')
+                .where({ workspace_id: workspaceId, status: 'Completed' })
+                .whereIn('return_period', periods)
+                .orderBy('completed_at', 'desc')
+                .first();
+
+            return {
+                quarter: q.name,
+                year: q.year,
+                status: lastImport ? 'available' : 'pending',
+                downloadedDate: lastImport ? lastImport.completed_at || lastImport.upload_timestamp : null,
+                count: lastImport ? lastImport.total_record : 0
+            };
+        }));
+
+        // 8. Recent Updates
+        const lastBookImport = await knex('gstr_import_master')
+            .where({ workspace_id: workspaceId, import_type: 'PURCHASE_REGISTER', status: 'Completed' })
+            .orderBy('upload_timestamp', 'desc')
+            .first();
+
+        const lastGstrImport = await knex('gstr_import_master')
+            .where({ workspace_id: workspaceId, status: 'Completed' })
+            .whereIn('import_type', ['GSTR2A', 'GSTR2B'])
+            .orderBy('upload_timestamp', 'desc')
+            .first();
+
+        const recentUpdates = {
+            books: lastBookImport ? {
+                date: lastBookImport.upload_timestamp,
+                filename: lastBookImport.original_filename,
+                count: lastBookImport.total_record
+            } : null,
+            gstr: lastGstrImport ? {
+                date: lastGstrImport.upload_timestamp,
+                filename: lastGstrImport.original_filename,
+                count: lastGstrImport.total_record,
+                type: lastGstrImport.import_type
+            } : null
+        };
+
+
         // 6. Top Suppliers by Variance (Filtered by Selected Year)
         let suppliersQuery = knex(is2aVs2b ? 'normalized_gstr2a_invoices' : 'purchase_vouchers')
             .join(is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results', function() {
@@ -301,6 +403,9 @@ class DashboardModel {
             yearToDate,
             monthlyTrend,
             reconciliation,
+            transactionCategories,
+            dataAvailability,
+            recentUpdates,
             taxBreakdown,
             topSuppliers,
             recentActivities: activities,
