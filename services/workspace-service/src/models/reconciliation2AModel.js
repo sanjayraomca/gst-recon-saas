@@ -127,7 +127,10 @@ class Reconciliation2AModel {
             const sourceBInvoices = await trx(gstrTable)
                 .where({ workspace_id: workspaceId })
                 .where('source_table', 'like', sourceBPrefix)
-                .whereNot('document_number_raw', 'like', '%-Total')
+                .where(function () {
+                    this.whereNot('document_number_raw', 'like', '%-Total')
+                        .orWhereNull('document_number_raw');
+                })
                 .modify(q => {
                     if (taxPeriod) {
                         q.whereRaw(`EXTRACT(MONTH FROM document_date) = ?`, [taxPeriod.month])
@@ -181,7 +184,7 @@ class Reconciliation2AModel {
                 const pNormalizedInv = Reconciliation2AModel.normalizeInvoiceNumber(rawInvNo);
                 const pGstin = invA.supplier_gstin;
                 const pDateObj = new Date(is2aVs2b ? invA.document_date : invA.supplier_invoice_date);
-                const pCategory = mapCategory(is2aVs2b ? 'INVOICE' : invA.voucher_type); // 2A source is always portal-like
+                const pCategory = mapCategory(is2aVs2b ? (invA.document_type || invA.source_section) : invA.voucher_type); 
 
                 const taxA = is2aVs2b ? (parseFloat(invA.total_tax) || 0) :
                     ((parseFloat(invA.total_igst_amount) || 0) + (parseFloat(invA.total_cgst_amount) || 0) +
@@ -194,7 +197,7 @@ class Reconciliation2AModel {
                     if (b.supplier_gstin !== pGstin) return false;
 
                     // 2. Category Match
-                    const bCategory = mapCategory('INVOICE'); // Source B is always GSTR (2A or 2B)
+                    const bCategory = mapCategory(b.document_type || b.source_section); // Source B is always GSTR (2A or 2B)
                     if (!Reconciliation2AModel.areCategoriesCompatible(pCategory, bCategory)) return false;
 
                     // 3. Invoice Number Match
