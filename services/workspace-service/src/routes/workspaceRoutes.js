@@ -6,6 +6,7 @@ const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
 // Base path: /workspaces (mounted in index.js)
 
+router.get('/financial-years', verifyToken, workspaceController.getFinancialYears);
 router.post('/', verifyToken, workspaceController.createWorkspace);
 router.get('/', verifyToken, workspaceController.listWorkspaces);
 router.get('/:id', verifyToken, authorizeWorkspace, workspaceController.getWorkspace);

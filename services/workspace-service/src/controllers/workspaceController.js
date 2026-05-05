@@ -658,7 +658,8 @@ const inviteUser = async (req, res) => {
 const getDashboardMetrics = async (req, res) => {
     try {
         const { id } = req.params; // workspace ID
-        const metrics = await DashboardModel.getMetrics(id);
+        const { year } = req.query; // optional financial year
+        const metrics = await DashboardModel.getMetrics(id, year);
         return successResponse(res, metrics, 'Dashboard metrics fetched successfully');
     } catch (error) {
         console.error('getDashboardMetrics Error:', error);
@@ -684,6 +685,16 @@ const getSidebarCounts = async (req, res) => {
         return successResponse(res, counts, 'Sidebar counts fetched successfully');
     } catch (error) {
         console.error('getSidebarCounts Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getFinancialYears = async (req, res) => {
+    try {
+        const years = await DashboardModel.getFinancialYears();
+        return successResponse(res, years, 'Financial years fetched successfully');
+    } catch (error) {
+        console.error('getFinancialYears Error:', error);
         return errorResponse(res, error.message, 500);
     }
 };
@@ -831,6 +842,7 @@ module.exports = {
     getDashboardMetrics,
     getLatestPeriod,
     getSidebarCounts,
+    getFinancialYears,
     getTaxPeriods,
     getDataDateRange,
     updateWorkspace
