@@ -17,7 +17,7 @@ class DashboardModel {
             // or default to March 31 of the next year if it's a past FY.
             const endYear = startYear + 1;
             const absoluteMaxFyDate = new Date(endYear, 2, 31); // March 31
-            
+
             const latestInFy = await knex('purchase_vouchers')
                 .where({ workspace_id: workspaceId })
                 .where('book_vchr_date', '>=', fyStartDate)
@@ -89,10 +89,10 @@ class DashboardModel {
 
         const purchaseData = await purchaseQuery.groupByRaw(`to_char(book_vchr_date, 'YYYY-MM')`);
 
-        // 2. GSTR-2B Portal Data
+        // 2. GSTR-2B Portal Data (Aggregated by Invoice Date)
         let portalQuery = knex('normalized_gstr2b_invoices')
             .select(
-                knex.raw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) as month`),
+                knex.raw(`to_char(document_date, 'YYYY-MM') as month`),
                 knex.raw('SUM(COALESCE(taxable_value, 0)) as taxable'),
                 knex.raw('COUNT(*) as count'),
                 knex.raw('SUM(COALESCE(igst, 0) + COALESCE(cgst, 0) + COALESCE(sgst, 0) + COALESCE(cess, 0)) as tax'),
@@ -101,14 +101,14 @@ class DashboardModel {
             .where({ workspace_id: workspaceId });
 
         if (financialYear && financialYear !== 'all') {
-            portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
+            portalQuery = portalQuery.where('document_date', '>=', fyStartDate);
             const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
-            portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) <= ?`, [`${endYear}-03`]);
+            portalQuery = portalQuery.where('document_date', '<=', `${endYear}-03-31`);
         } else if (!financialYear || financialYear === 'all') {
-            if (financialYear !== 'all') portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
+            if (financialYear !== 'all') portalQuery = portalQuery.where('document_date', '>=', fyStartDate);
         }
 
-        const portalData = await portalQuery.groupByRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2)`);
+        const portalData = await portalQuery.groupByRaw(`to_char(document_date, 'YYYY-MM')`);
 
         // Process YTD metrics
         let ytdBooksPurchases = 0, ytdPortalPurchases = 0, ytdBooksTax = 0, ytdPortalTax = 0;
@@ -136,7 +136,7 @@ class DashboardModel {
 
         const currentBooksTaxable = Number(currentBooksMonth?.taxable || 0);
         const prevBooksTaxable = Number(prevBooksMonth?.taxable || 0);
-        
+
         let purchaseGrowth = 0;
         if (prevBooksTaxable > 0) {
             purchaseGrowth = ((currentBooksTaxable - prevBooksTaxable) / prevBooksTaxable) * 100;
@@ -160,7 +160,7 @@ class DashboardModel {
             currentMonthLabel: currentMonthLabel,
             netPayableDueDate: netPayableDueDate,
             transactionCount: purchaseData.reduce((s, r) => s + Number(r.count), 0),
-            avgInvoiceValue: 0 
+            avgInvoiceValue: 0
         };
 
         currentMonth.avgInvoiceValue = currentMonth.transactionCount > 0 ? (currentMonth.booksPurchases / currentMonth.transactionCount) : 0;
@@ -198,16 +198,16 @@ class DashboardModel {
         let booksTaxQuery = knex('purchase_vouchers').where({ workspace_id: workspaceId });
 
         if (financialYear && financialYear !== 'all') {
-            portalTaxQuery = portalTaxQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
+            portalTaxQuery = portalTaxQuery.where('document_date', '>=', fyStartDate);
             const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
-            portalTaxQuery = portalTaxQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) <= ?`, [`${endYear}-03`]);
-            
+            portalTaxQuery = portalTaxQuery.where('document_date', '<=', `${endYear}-03-31`);
+
             booksTaxQuery = booksTaxQuery.where('book_vchr_date', '>=', fyStartDate).where('book_vchr_date', '<=', `${endYear}-03-31`);
         } else if (!financialYear) {
-            // Default: Latest Month
-            portalTaxQuery = portalTaxQuery.where('return_period', latestDataMonth.substring(5, 7) + latestDataMonth.substring(0, 4));
+            // Default: Latest Month (based on invoice date now)
+            portalTaxQuery = portalTaxQuery.whereRaw(`to_char(document_date, 'YYYY-MM') = ?`, [latestDataMonth]);
             booksTaxQuery = booksTaxQuery.whereRaw(`to_char(book_vchr_date, 'YYYY-MM') = ?`, [latestDataMonth]);
-        } 
+        }
         // Note: If financialYear === 'all', we don't add date filters, getting the cumulative breakdown.
 
         const portalTaxResult = await portalTaxQuery.select(
@@ -281,7 +281,7 @@ class DashboardModel {
                 else if (status === 'mismatched' || status === 'partial_match') reconciliation.summary.mismatched += parseInt(s.count);
                 else if (status.includes('portal')) reconciliation.summary.missing_in_portal = parseInt(s.count);
                 else if (status.includes('books')) reconciliation.summary.missing_in_books = parseInt(s.count);
-                
+
                 reconciliation.summary.total += parseInt(s.count);
                 reconciliation.variance += parseFloat(s.variance || 0);
             });
@@ -337,7 +337,27 @@ class DashboardModel {
             percentage: stats.total > 0 ? Math.round((stats.matched / stats.total) * 100) : 0
         }));
 
-        // 7. Data Availability (Quarterly)
+        // 7. Purchase Categories Breakdown (Pie Chart Data)
+        let purchaseCatQuery = knex('purchase_vouchers')
+            .select(
+                knex.raw("COALESCE(voucher_type, 'Others') as type"),
+                knex.raw('COUNT(*) as count'),
+                knex.raw('SUM(COALESCE(taxable_total, 0)) as total')
+            )
+            .where({ workspace_id: workspaceId });
+
+        if (financialYear && financialYear !== 'all') {
+            purchaseCatQuery = purchaseCatQuery.where('book_vchr_date', '>=', fyStartDate);
+            const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
+            purchaseCatQuery = purchaseCatQuery.where('book_vchr_date', '<=', `${endYear}-03-31`);
+        } else if (!financialYear) {
+            // Default: Latest Month
+            purchaseCatQuery = purchaseCatQuery.whereRaw(`to_char(book_vchr_date, 'YYYY-MM') = ?`, [latestDataMonth]);
+        }
+
+        const purchaseCategories = await purchaseCatQuery.groupByRaw("COALESCE(voucher_type, 'Others')");
+
+        // 8. Data Availability (Quarterly)
         const currentFyStartYear = parseInt(fyStartDate.substring(0, 4));
         const quarters = [
             { name: 'Q4', months: ['01', '02', '03'], year: currentFyStartYear + 1 },
@@ -346,35 +366,23 @@ class DashboardModel {
             { name: 'Q1', months: ['04', '05', '06'], year: currentFyStartYear }
         ];
 
-        const dataAvailability = await Promise.all(quarters.map(async (q) => {
-            const periods = q.months.map(m => `${m}${q.year}`);
-            
-            const gstrImport = await knex('gstr_import_master')
-                .where({ workspace_id: workspaceId, status: 'Completed' })
-                .whereIn('import_type', ['GSTR2A', 'GSTR2B'])
-                .whereIn('return_period', periods)
-                .orderBy('upload_timestamp', 'desc')
-                .first();
+        // 8. Data Availability (Quarterly) - Based on Actual Data
+        const dataAvailability = quarters.map(q => {
+            const qMonths = q.months.map(m => `${q.year}-${m}`);
 
-            const booksImport = await knex('gstr_import_master')
-                .where({ workspace_id: workspaceId, status: 'Completed' })
-                .where('import_type', 'PURCHASE_REGISTER')
-                .whereIn('return_period', periods)
-                .orderBy('upload_timestamp', 'desc')
-                .first();
+            const hasBooks = purchaseData.some(row => qMonths.includes(row.month));
+            const hasPortal = portalData.some(row => qMonths.includes(row.month));
 
             return {
                 quarter: q.name,
                 year: q.year,
-                portalAvailable: !!gstrImport,
-                booksAvailable: !!booksImport,
-                portalDate: gstrImport ? gstrImport.completed_at || gstrImport.upload_timestamp : null,
-                booksDate: booksImport ? booksImport.completed_at || booksImport.upload_timestamp : null,
-                status: (gstrImport && booksImport) ? 'available' : (gstrImport || booksImport ? 'partial' : 'pending')
+                portalAvailable: hasPortal,
+                booksAvailable: hasBooks,
+                status: (hasPortal && hasBooks) ? 'available' : (hasPortal || hasBooks ? 'partial' : 'pending')
             };
-        }));
+        });
 
-        // 8. Recent Updates
+        // 9. Recent Updates
         const lastBookImport = await knex('gstr_import_master')
             .where({ workspace_id: workspaceId, import_type: 'PURCHASE_REGISTER', status: 'Completed' })
             .orderBy('upload_timestamp', 'desc')
@@ -400,10 +408,9 @@ class DashboardModel {
             } : null
         };
 
-
-        // 6. Top Suppliers by Variance (Filtered by Selected Year)
+        // 10. Top Suppliers by Variance
         let suppliersQuery = knex(is2aVs2b ? 'normalized_gstr2a_invoices' : 'purchase_vouchers')
-            .join(is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results', function() {
+            .join(is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results', function () {
                 if (is2aVs2b) {
                     this.on('normalized_gstr2a_invoices.id', '=', 'reconciliation_results_2a.gstr2a_source_id');
                 } else {
@@ -412,7 +419,7 @@ class DashboardModel {
             })
             .where((is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results') + '.workspace_id', workspaceId);
 
-        if (isYearView) {
+        if (financialYear && financialYear !== 'all') {
             const startYear = parseInt(financialYear.split('-')[0], 10);
             const dateCol = is2aVs2b ? 'document_date' : 'book_vchr_date';
             suppliersQuery = suppliersQuery
@@ -422,11 +429,11 @@ class DashboardModel {
 
         const topSuppliers = await suppliersQuery
             .select(
-                'supplier_name',
+                knex.raw(is2aVs2b ? 'MAX(supplier_name) as supplier_name' : 'supplier_name'),
                 knex.raw('SUM(ABS(variance_amount)) as total_variance'),
                 knex.raw('COUNT(*) as invoice_count')
             )
-            .groupBy('supplier_name')
+            .groupBy(is2aVs2b ? 'supplier_gstin' : 'supplier_name')
             .orderBy('total_variance', 'desc')
             .limit(5);
 
@@ -436,6 +443,7 @@ class DashboardModel {
             monthlyTrend,
             reconciliation,
             transactionCategories,
+            purchaseCategories,
             dataAvailability,
             recentUpdates,
             taxBreakdown,

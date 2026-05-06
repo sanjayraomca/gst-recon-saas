@@ -4,7 +4,7 @@ async function checkData() {
     try {
         const row = await knex('reconciliation_results').first();
         console.log('Sample Row:', row);
-        
+
         const statusCount = await knex('reconciliation_status').count('id as count').first();
         console.log('Status Count:', statusCount);
 
