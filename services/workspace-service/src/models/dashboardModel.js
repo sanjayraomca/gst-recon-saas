@@ -53,43 +53,62 @@ class DashboardModel {
             fyStartDate = `${fyStartYear}-04-01`;
         }
 
-        // Calculate 5 months leading up to referenceDate
-        const months = Array.from({ length: 5 }, (_, i) => {
-            const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
-            d.setMonth(d.getMonth() - i);
+        // Calculate all 12 months of the Financial Year (April to March)
+        const fyStartYear = new Date(fyStartDate).getFullYear();
+        const months = Array.from({ length: 12 }, (_, i) => {
+            const d = new Date(fyStartYear, 3 + i, 1); // Start from April (Month 3 in JS)
             return {
                 label: d.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
                 yearMonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
             };
-        }).reverse();
+        });
 
         const latestDataMonth = months[months.length - 1].yearMonth;
 
         // 1. Purchase Book Data (Register)
-        const purchaseData = await knex('purchase_vouchers')
+        let purchaseQuery = knex('purchase_vouchers')
             .select(
                 knex.raw(`to_char(book_vchr_date, 'YYYY-MM') as month`),
-                knex.raw('SUM(taxable_total) as taxable'),
+                knex.raw('SUM(COALESCE(taxable_total, 0)) as taxable'),
                 knex.raw('COUNT(*) as count'),
-                knex.raw('SUM(total_igst_amount + total_cgst_amount + total_sgst_amount + total_cess_amount) as tax'),
-                knex.raw('SUM(net_amount) as invoice_value')
+                knex.raw('SUM(COALESCE(total_igst_amount, 0) + COALESCE(total_cgst_amount, 0) + COALESCE(total_sgst_amount, 0) + COALESCE(total_cess_amount, 0)) as tax'),
+                knex.raw('SUM(COALESCE(net_amount, 0)) as invoice_value')
             )
-            .where({ workspace_id: workspaceId })
-            .where('book_vchr_date', '>=', fyStartDate)
-            .groupByRaw(`to_char(book_vchr_date, 'YYYY-MM')`);
+            .where({ workspace_id: workspaceId });
 
-        // 2. GSTR-2B Portal Data (Aggregated by return_period string MMYYYY -> YYYY-MM)
-        const portalData = await knex('normalized_gstr2b_invoices')
+        if (financialYear && financialYear !== 'all') {
+            purchaseQuery = purchaseQuery.where('book_vchr_date', '>=', fyStartDate);
+            const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
+            purchaseQuery = purchaseQuery.where('book_vchr_date', '<=', `${endYear}-03-31`);
+        } else if (!financialYear || financialYear === 'all') {
+            // Default to filtering from current FY if no year selected, 
+            // BUT if 'all' is explicitly requested, we might want to skip it.
+            // Let's keep a loose filter for performance or skip if 'all'
+            if (financialYear !== 'all') purchaseQuery = purchaseQuery.where('book_vchr_date', '>=', fyStartDate);
+        }
+
+        const purchaseData = await purchaseQuery.groupByRaw(`to_char(book_vchr_date, 'YYYY-MM')`);
+
+        // 2. GSTR-2B Portal Data
+        let portalQuery = knex('normalized_gstr2b_invoices')
             .select(
                 knex.raw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) as month`),
-                knex.raw('SUM(taxable_value) as taxable'),
+                knex.raw('SUM(COALESCE(taxable_value, 0)) as taxable'),
                 knex.raw('COUNT(*) as count'),
-                knex.raw('SUM(igst + cgst + sgst + cess) as tax'),
-                knex.raw('SUM(document_value) as invoice_value')
+                knex.raw('SUM(COALESCE(igst, 0) + COALESCE(cgst, 0) + COALESCE(sgst, 0) + COALESCE(cess, 0)) as tax'),
+                knex.raw('SUM(COALESCE(document_value, 0)) as invoice_value')
             )
-            .where({ workspace_id: workspaceId })
-            .whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)])
-            .groupByRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2)`);
+            .where({ workspace_id: workspaceId });
+
+        if (financialYear && financialYear !== 'all') {
+            portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
+            const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
+            portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) <= ?`, [`${endYear}-03`]);
+        } else if (!financialYear || financialYear === 'all') {
+            if (financialYear !== 'all') portalQuery = portalQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
+        }
+
+        const portalData = await portalQuery.groupByRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2)`);
 
         // Process YTD metrics
         let ytdBooksPurchases = 0, ytdPortalPurchases = 0, ytdBooksTax = 0, ytdPortalTax = 0;
@@ -174,20 +193,22 @@ class DashboardModel {
             cess: { portal: 0, books: 0 }
         };
 
-        // For tax breakdown, if in year view, we aggregate for the whole year
+        // For tax breakdown
         let portalTaxQuery = knex('normalized_gstr2b_invoices').where({ workspace_id: workspaceId });
         let booksTaxQuery = knex('purchase_vouchers').where({ workspace_id: workspaceId });
 
-        if (isYearView) {
+        if (financialYear && financialYear !== 'all') {
             portalTaxQuery = portalTaxQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) >= ?`, [fyStartDate.substring(0, 7)]);
             const endYear = parseInt(financialYear.split('-')[0], 10) + 1;
             portalTaxQuery = portalTaxQuery.whereRaw(`SUBSTRING(return_period, 3, 4) || '-' || SUBSTRING(return_period, 1, 2) <= ?`, [`${endYear}-03`]);
             
             booksTaxQuery = booksTaxQuery.where('book_vchr_date', '>=', fyStartDate).where('book_vchr_date', '<=', `${endYear}-03-31`);
-        } else {
+        } else if (!financialYear) {
+            // Default: Latest Month
             portalTaxQuery = portalTaxQuery.where('return_period', latestDataMonth.substring(5, 7) + latestDataMonth.substring(0, 4));
             booksTaxQuery = booksTaxQuery.whereRaw(`to_char(book_vchr_date, 'YYYY-MM') = ?`, [latestDataMonth]);
-        }
+        } 
+        // Note: If financialYear === 'all', we don't add date filters, getting the cumulative breakdown.
 
         const portalTaxResult = await portalTaxQuery.select(
             knex.raw('SUM(COALESCE(igst, 0)) as igst'),
@@ -327,18 +348,29 @@ class DashboardModel {
 
         const dataAvailability = await Promise.all(quarters.map(async (q) => {
             const periods = q.months.map(m => `${m}${q.year}`);
-            const lastImport = await knex('gstr_import_master')
+            
+            const gstrImport = await knex('gstr_import_master')
                 .where({ workspace_id: workspaceId, status: 'Completed' })
+                .whereIn('import_type', ['GSTR2A', 'GSTR2B'])
                 .whereIn('return_period', periods)
-                .orderBy('completed_at', 'desc')
+                .orderBy('upload_timestamp', 'desc')
+                .first();
+
+            const booksImport = await knex('gstr_import_master')
+                .where({ workspace_id: workspaceId, status: 'Completed' })
+                .where('import_type', 'PURCHASE_REGISTER')
+                .whereIn('return_period', periods)
+                .orderBy('upload_timestamp', 'desc')
                 .first();
 
             return {
                 quarter: q.name,
                 year: q.year,
-                status: lastImport ? 'available' : 'pending',
-                downloadedDate: lastImport ? lastImport.completed_at || lastImport.upload_timestamp : null,
-                count: lastImport ? lastImport.total_record : 0
+                portalAvailable: !!gstrImport,
+                booksAvailable: !!booksImport,
+                portalDate: gstrImport ? gstrImport.completed_at || gstrImport.upload_timestamp : null,
+                booksDate: booksImport ? booksImport.completed_at || booksImport.upload_timestamp : null,
+                status: (gstrImport && booksImport) ? 'available' : (gstrImport || booksImport ? 'partial' : 'pending')
             };
         }));
 
