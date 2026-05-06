@@ -74,7 +74,8 @@ class DashboardModel {
                 knex.raw('SUM(COALESCE(total_igst_amount, 0) + COALESCE(total_cgst_amount, 0) + COALESCE(total_sgst_amount, 0) + COALESCE(total_cess_amount, 0)) as tax'),
                 knex.raw('SUM(COALESCE(net_amount, 0)) as invoice_value')
             )
-            .where({ workspace_id: workspaceId });
+            .where({ workspace_id: workspaceId })
+            .whereNotIn('gstr_category', ['RDB2C', 'NONGST', 'RDB2CL']);
 
         if (financialYear && financialYear !== 'all') {
             purchaseQuery = purchaseQuery.where('book_vchr_date', '>=', fyStartDate);
@@ -195,7 +196,9 @@ class DashboardModel {
 
         // For tax breakdown
         let portalTaxQuery = knex('normalized_gstr2b_invoices').where({ workspace_id: workspaceId });
-        let booksTaxQuery = knex('purchase_vouchers').where({ workspace_id: workspaceId });
+        let booksTaxQuery = knex('purchase_vouchers')
+            .where({ workspace_id: workspaceId })
+            .whereNotIn('gstr_category', ['RDB2C', 'NONGST', 'RDB2CL']);
 
         if (financialYear && financialYear !== 'all') {
             portalTaxQuery = portalTaxQuery.where('document_date', '>=', fyStartDate);
@@ -344,7 +347,8 @@ class DashboardModel {
                 knex.raw('COUNT(*) as count'),
                 knex.raw('SUM(COALESCE(taxable_total, 0)) as total')
             )
-            .where({ workspace_id: workspaceId });
+            .where({ workspace_id: workspaceId })
+            .whereNotIn('gstr_category', ['RDB2C', 'NONGST', 'RDB2CL']);
 
         if (financialYear && financialYear !== 'all') {
             purchaseCatQuery = purchaseCatQuery.where('book_vchr_date', '>=', fyStartDate);
