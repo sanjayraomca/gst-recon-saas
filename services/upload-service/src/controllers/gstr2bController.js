@@ -105,7 +105,7 @@ class GSTR2BController {
 
             await logActivity({
                 userId: req.user ? req.user.id : null,
-                tenantId: req.user ? req.user.tenant_id : null,
+                tenantId: req.headers['x-tenant-id'] || (req.user ? req.user.tenant_id : null),
                 workspaceId,
                 actionType: 'GSTR2B_IMPORT',
                 entityType: 'GSTR_Data',

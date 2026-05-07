@@ -62,7 +62,14 @@ class BookImportController {
             if (!userQuery.rows.length) throw new Error('User not found');
 
             let userId = userQuery.rows[0].id;
-            let tenantUuid = userQuery.rows[0].tenant_id;
+            let tenantUuid = req.headers['x-tenant-id'] || userQuery.rows[0].tenant_id;
+
+            if (!tenantUuid && activeWorkspaceId) {
+                const wq = await db.raw('SELECT tenant_id FROM workspaces WHERE id = ?', [activeWorkspaceId]);
+                if (wq.rows && wq.rows.length > 0) {
+                    tenantUuid = wq.rows[0].tenant_id;
+                }
+            }
 
             if (!tenantUuid) {
                 const tq = await db.raw('SELECT id FROM tenants WHERE owner_user_id = ? LIMIT 1', [userId]);

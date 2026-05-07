@@ -79,7 +79,7 @@ class GSTRImportController {
                 const userQuery = await db.raw('SELECT id, tenant_id FROM users WHERE email = ?', [userEmail]);
                 if (userQuery.rows && userQuery.rows.length > 0) {
                     userId = userQuery.rows[0].id;
-                    tenantUuid = userQuery.rows[0].tenant_id;
+                    tenantUuid = req.headers['x-tenant-id'] || userQuery.rows[0].tenant_id;
 
                     // Fallback: if tenant_id is NULL, look up via tenants.owner_user_id
                     if (!tenantUuid) {
@@ -852,21 +852,30 @@ class GSTRImportController {
                 return errorResponse(res, { message: 'User not found' }, 404);
             }
 
-            const tenantUuid = userQuery.rows[0].tenant_id ||
-                await (async () => {
-                    const tq = await db.raw('SELECT id FROM tenants WHERE owner_user_id = ? LIMIT 1', [userQuery.rows[0].id]);
-                    if (tq.rows && tq.rows.length > 0) {
-                        await db.raw('UPDATE users SET tenant_id = ? WHERE id = ?', [tq.rows[0].id, userQuery.rows[0].id]);
-                        return tq.rows[0].id;
-                    }
-                    return null;
-                })();
+            let tenantUuid = req.headers['x-tenant-id'] || userQuery.rows[0].tenant_id;
+            const { gstin, import_type, status, limit = 50, workspace_id } = req.query;
+
+            // Fallbacks if tenantId is missing
+            if (!tenantUuid && workspace_id) {
+                const wq = await db.raw('SELECT tenant_id FROM workspaces WHERE id = ?', [workspace_id]);
+                if (wq.rows && wq.rows.length > 0) {
+                    tenantUuid = wq.rows[0].tenant_id;
+                }
+            }
+
+            if (!tenantUuid) {
+                const tq = await db.raw('SELECT id FROM tenants WHERE owner_user_id = ? LIMIT 1', [userQuery.rows[0].id]);
+                if (tq.rows && tq.rows.length > 0) {
+                    await db.raw('UPDATE users SET tenant_id = ? WHERE id = ?', [tq.rows[0].id, userQuery.rows[0].id]);
+                    tenantUuid = tq.rows[0].id;
+                }
+            }
 
             if (!tenantUuid) {
                 return errorResponse(res, { message: 'User not associated with any tenant' }, 403);
             }
 
-            const { gstin, import_type, status, limit = 50, workspace_id } = req.query;
+
 
             const filters = {};
             if (gstin) filters.gstinRecipient = gstin;

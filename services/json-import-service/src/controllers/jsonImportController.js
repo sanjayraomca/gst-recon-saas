@@ -14,7 +14,7 @@ class JsonImportController {
     static async uploadSalesBook(req, res) {
         try {
             const { data, gstinId, returnPeriod, orgGstin } = req.body;
-            const { tenant_id } = req.user;
+            const tenant_id = req.headers['x-tenant-id'] || req.user.tenant_id;
 
             if (!data || !Array.isArray(data)) {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
@@ -65,7 +65,7 @@ class JsonImportController {
     static async uploadPurchaseBook(req, res) {
         try {
             const { data, gstinId, returnPeriod, orgGstin } = req.body;
-            const { tenant_id } = req.user;
+            const tenant_id = req.headers['x-tenant-id'] || req.user.tenant_id;
 
             if (!data || !Array.isArray(data)) {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
