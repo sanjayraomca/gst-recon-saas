@@ -956,7 +956,6 @@ const resendInvite = async (req, res) => {
             .join("workspaces", "workspace_users.workspace_id", "workspaces.id")
             .where("workspace_users.user_id", user.id)
             .where("workspaces.tenant_id", id)
-            .where("workspace_users.invitation_status", "INVITED")
             .select("workspaces.name", "workspaces.id");
 
         if (workspaces.length === 0) return errorResponse(res, "No pending invitations", 400);
