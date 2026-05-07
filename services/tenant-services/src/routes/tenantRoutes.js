@@ -20,6 +20,7 @@ router.post('/:id/users', tenantController.provisionUser);
 router.get('/:id/users', tenantController.listTenantUsers);
 router.post('/:id/users/:userId/resend', tenantController.resendInvite);
 router.put('/:id/users/:userId/role', tenantController.updateUserRole);
+router.put('/:id/users/:userId', tenantController.updateUser);
 router.delete('/:id/users/:userId', tenantController.deleteUserRole);
 
 // Activity Logs Route

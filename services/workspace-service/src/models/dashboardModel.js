@@ -292,53 +292,49 @@ class DashboardModel {
         }
 
         // 6. Transaction Categories Breakdown
-        const resultsTable = is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results';
-        const gstrTable = is2aVs2b ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
-        const gstrIdCol = is2aVs2b ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
+        let transactionCategories = [];
+        if (latestRun) {
+            const resultsTable = is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results';
+            const gstrTable = is2aVs2b ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+            const gstrIdCol = is2aVs2b ? 'gstr2a_invoice_id' : 'gstr2b_invoice_id';
 
-        const categoryStats = await knex(resultsTable)
-            .join(gstrTable, `${resultsTable}.${gstrIdCol}`, `${gstrTable}.id`)
-            .where(`${resultsTable}.recon_run_id`, latestRun?.id || '')
-            .select(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`)
-            .count('* as count')
-            .groupBy(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`);
+            const categoryStats = await knex(resultsTable)
+                .join(gstrTable, `${resultsTable}.${gstrIdCol}`, `${gstrTable}.id`)
+                .where(`${resultsTable}.recon_run_id`, latestRun.id)
+                .select(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`)
+                .count('* as count')
+                .groupBy(`${gstrTable}.document_category`, `${gstrTable}.source_section`, `${resultsTable}.match_status`);
 
-        const catMap = {
-            'B2B': 'B2B',
-            'B2BA': 'B2BA',
-            'CREDIT_NOTE': 'Credit Note',
-            'DEBIT_NOTE': 'Debit Note'
-        };
+            const categories = {
+                'B2B': { total: 0, matched: 0 },
+                'B2BA': { total: 0, matched: 0 },
+                'Credit Note': { total: 0, matched: 0 },
+                'Debit Note': { total: 0, matched: 0 }
+            };
 
-        const categories = {
-            'B2B': { total: 0, matched: 0 },
-            'B2BA': { total: 0, matched: 0 },
-            'Credit Note': { total: 0, matched: 0 },
-            'Debit Note': { total: 0, matched: 0 }
-        };
+            categoryStats.forEach(s => {
+                let label = null;
+                if (s.source_section === 'B2B') label = 'B2B';
+                else if (s.source_section === 'B2BA') label = 'B2BA';
+                else if (s.document_category === 'CREDIT_NOTE') label = 'Credit Note';
+                else if (s.document_category === 'DEBIT_NOTE') label = 'Debit Note';
 
-        categoryStats.forEach(s => {
-            let label = null;
-            if (s.source_section === 'B2B') label = 'B2B';
-            else if (s.source_section === 'B2BA') label = 'B2BA';
-            else if (s.document_category === 'CREDIT_NOTE') label = 'Credit Note';
-            else if (s.document_category === 'DEBIT_NOTE') label = 'Debit Note';
-
-            if (label && categories[label]) {
-                const count = parseInt(s.count);
-                categories[label].total += count;
-                if (s.match_status?.toLowerCase() === 'matched') {
-                    categories[label].matched += count;
+                if (label && categories[label]) {
+                    const count = parseInt(s.count);
+                    categories[label].total += count;
+                    if (s.match_status?.toLowerCase() === 'matched') {
+                        categories[label].matched += count;
+                    }
                 }
-            }
-        });
+            });
 
-        const transactionCategories = Object.entries(categories).map(([name, stats]) => ({
-            name,
-            total: stats.total,
-            matched: stats.matched,
-            percentage: stats.total > 0 ? Math.round((stats.matched / stats.total) * 100) : 0
-        }));
+            transactionCategories = Object.entries(categories).map(([name, stats]) => ({
+                name,
+                total: stats.total,
+                matched: stats.matched,
+                percentage: stats.total > 0 ? Math.round((stats.matched / stats.total) * 100) : 0
+            }));
+        }
 
         // 7. Purchase Categories Breakdown (Pie Chart Data)
         let purchaseCatQuery = knex('purchase_vouchers')

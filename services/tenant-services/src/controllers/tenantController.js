@@ -704,7 +704,8 @@ const listTenantUsers = async (req, res) => {
                     'users.last_login_at',
                     'workspace_users.invitation_status as invitation_status',
                     knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
-                    knex.raw('MAX(workspace_users.role) as role')
+                    knex.raw('MAX(workspace_users.role) as role'),
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL), \'{}\') as organization_ids')
                 )
                 .join('workspace_users', 'users.id', 'workspace_users.user_id')
                 .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
@@ -725,7 +726,8 @@ const listTenantUsers = async (req, res) => {
                     // Aggregate status: Active if ALREADY accepted ANY invite in this tenant, else Pending
                     knex.raw("CASE WHEN bool_or(workspace_users.invitation_status = 'ACTIVE') THEN 'ACTIVE' ELSE 'INVITED' END as invitation_status"),
                     knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
-                    knex.raw('MAX(workspace_users.role) as role')
+                    knex.raw('MAX(workspace_users.role) as role'),
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL AND workspaces.tenant_id = ?), \'{}\') as organization_ids', [tenantId])
                 )
                 .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
                 .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
@@ -1102,6 +1104,74 @@ const deleteUserRole = async (req, res) => {
     } catch (error) { return errorResponse(res, error); }
 };
 
+const updateUser = async (req, res) => {
+    try {
+        const { id: tenantId, userId } = req.params;
+        const { full_name, phone_number, role, organization_ids } = req.body;
+        const knex = require("../../../shared/src/db/connection");
+
+        // 1. Update User Profile
+        await User.update(userId, {
+            full_name,
+            phone: phone_number,
+            designation: role,
+            updated_at: new Date()
+        });
+
+        // 2. Update Workspace Access
+        if (organization_ids && Array.isArray(organization_ids)) {
+            let workspaceRole = "VIEWER";
+            switch (role) {
+                case "Super Admin": workspaceRole = "SUPER_ADMIN"; break;
+                case "Tenant Admin": workspaceRole = "TENANT_ADMIN"; break;
+                case "Organization Admin": workspaceRole = "WORKSPACE_ADMIN"; break;
+                case "Accountant": workspaceRole = "ACCOUNTANT"; break;
+                case "Viewer": workspaceRole = "VIEWER"; break;
+                case "Auditor": workspaceRole = "AUDITOR"; break;
+                case "GST Practitioner": workspaceRole = "GST_PRACTITIONER"; break;
+                default: workspaceRole = "VIEWER";
+            }
+
+            // Step A: Get current organization access for this user in this tenant
+            const currentOrgs = await knex("workspace_users")
+                .join("workspaces", "workspace_users.workspace_id", "workspaces.id")
+                .where({ "workspace_users.user_id": userId, "workspaces.tenant_id": tenantId })
+                .select("workspace_users.workspace_id");
+
+            const currentOrgIds = currentOrgs.map(o => o.workspace_id);
+
+            // Step B: Organizations to remove
+            const orgsToRemove = currentOrgIds.filter(oid => !organization_ids.includes(oid));
+            if (orgsToRemove.length > 0) {
+                await knex("workspace_users")
+                    .where({ user_id: userId })
+                    .whereIn("workspace_id", orgsToRemove)
+                    .delete();
+            }
+
+            // Step C: Organizations to add or update
+            if (organization_ids.length > 0) {
+                const workspaceUsers = organization_ids.map(orgId => ({
+                    id: crypto.randomUUID(),
+                    workspace_id: orgId,
+                    user_id: userId,
+                    role: workspaceRole,
+                    joined_at: new Date()
+                }));
+
+                await knex("workspace_users")
+                    .insert(workspaceUsers)
+                    .onConflict(['workspace_id', 'user_id'])
+                    .merge(['role']);
+            }
+        }
+
+        return successResponse(res, null, "User updated successfully");
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -1115,5 +1185,6 @@ module.exports = {
     getTenantStats,
     resendInvite,
     updateUserRole,
+    updateUser,
     deleteUserRole
 };
