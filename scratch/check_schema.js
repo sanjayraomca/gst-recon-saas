@@ -1,19 +1,18 @@
-require('dotenv').config();
 const knex = require('../services/shared/src/db/connection');
 
-async function check() {
+async function checkSchema() {
     try {
-        const workspaceCols = await knex('workspaces').columnInfo();
-        console.log('workspaces columns:', Object.keys(workspaceCols));
+        const usersColumns = await knex('users').columnInfo();
+        console.log('Users columns:', Object.keys(usersColumns));
         
-        const workspaceUsersCols = await knex('workspace_users').columnInfo();
-        console.log('workspace_users columns:', Object.keys(workspaceUsersCols));
-
+        const tenantsColumns = await knex('tenants').columnInfo();
+        console.log('Tenants columns:', Object.keys(tenantsColumns));
+        
         process.exit(0);
-    } catch (e) {
-        console.error(e);
+    } catch (error) {
+        console.error(error);
         process.exit(1);
     }
 }
 
-check();
+checkSchema();

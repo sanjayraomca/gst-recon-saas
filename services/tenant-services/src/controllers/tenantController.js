@@ -171,7 +171,7 @@ const listTenants = async (req, res) => {
             .select(
                 't.*',
                 knex.raw('(SELECT COUNT(*) FROM workspaces w WHERE w.tenant_id = t.id AND w.deleted_at IS NULL) as organization_count'),
-                knex.raw('(SELECT COUNT(DISTINCT wu.user_id) FROM workspace_users wu JOIN workspaces w ON wu.workspace_id = w.id WHERE w.tenant_id = t.id AND w.deleted_at IS NULL) as user_count')
+                knex.raw('CAST((SELECT COUNT(DISTINCT user_id) FROM (SELECT wu.user_id FROM workspace_users wu JOIN workspaces w ON wu.workspace_id = w.id WHERE w.tenant_id = t.id AND w.deleted_at IS NULL UNION SELECT owner_user_id FROM tenants WHERE id = t.id UNION SELECT id FROM users WHERE tenant_id = t.id) as all_users) AS INTEGER) as user_count')
             )
             .whereNull('t.deleted_at');
 
