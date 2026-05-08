@@ -29,5 +29,9 @@ router.get('/:tenantId/activities', tenantController.getTenantActivities);
 // Stats Route
 router.get('/:id/stats', tenantController.getTenantStats);
 
+// Permissions Sync Routes
+router.put('/:id/role-permissions', tenantController.updateRolePermissions);
+router.get('/:id/role-permissions', tenantController.getRolePermissions);
+
 module.exports = router;
 

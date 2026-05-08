@@ -45,10 +45,10 @@ const login = async (req, res) => {
                 'tenants.id',
                 'tenants.tenant_code',
                 'tenants.legal_name',
-                'workspace_users.role'
+                'workspace_users.role',
+                'workspace_users.permissions'
             )
-            .where('workspace_users.user_id', user.id)
-            .distinct('tenants.id');
+            .where('workspace_users.user_id', user.id);
 
         // Also check if user OWNS any tenant (even if it has zero workspaces)
         const ownedTenants = await knex('tenants')
@@ -95,7 +95,11 @@ const login = async (req, res) => {
                 email: user.email,
                 designation: user.designation,
                 is_tenant_owner: isTenantOwner,
-                roles: userTenants.map(t => ({ tenant_id: t.id, role: t.role }))
+                roles: userTenants.map(t => ({ 
+                    tenant_id: t.id, 
+                    role: t.role,
+                    permissions: typeof t.permissions === 'string' ? JSON.parse(t.permissions) : t.permissions
+                }))
             }
         };
 

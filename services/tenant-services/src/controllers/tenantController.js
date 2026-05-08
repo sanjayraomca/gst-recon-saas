@@ -5,6 +5,7 @@ const User = require('../models/userModel');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { publishMessage } = require('../../../shared/src/nats/client');
+const knex = require('../../../shared/src/db/connection');
 
 const createTenant = async (req, res) => {
     try {
@@ -1172,6 +1173,72 @@ const updateUser = async (req, res) => {
     }
 };
 
+const updateRolePermissions = async (req, res) => {
+    try {
+        const { id } = req.params; // tenantId
+        const { matrix } = req.body; // { ROLE: { perm: true, ... }, ... }
+
+        if (!matrix) {
+            return errorResponse(res, 'Permissions matrix is required', 400);
+        }
+
+        // Find all workspaces for this tenant
+        const workspaces = await knex('workspaces').where({ tenant_id: id }).select('id');
+        const workspaceIds = workspaces.map(w => w.id);
+
+        if (workspaceIds.length === 0) {
+             return successResponse(res, null, 'Role permissions saved (no active workspaces found to update).');
+        }
+
+        // Perform updates for each role in the matrix
+        for (const [role, permissions] of Object.entries(matrix)) {
+            await knex('workspace_users')
+                .whereIn('workspace_id', workspaceIds)
+                .andWhere({ role: role })
+                .update({
+                    permissions: JSON.stringify(permissions)
+                });
+        }
+
+        return successResponse(res, null, 'Role permissions synchronized across all workspace users for this tenant.');
+    } catch (error) {
+        console.error('Update Role Permissions Error:', error);
+        return errorResponse(res, error);
+    }
+};
+
+const getRolePermissions = async (req, res) => {
+    try {
+        const { id } = req.params; // tenantId
+
+        // Find all workspaces for this tenant
+        const workspaces = await knex('workspaces').where({ tenant_id: id }).select('id');
+        const workspaceIds = workspaces.map(w => w.id);
+
+        if (workspaceIds.length === 0) {
+             return successResponse(res, {}, 'No workspaces found');
+        }
+
+        // Get one representative record per role to see current permissions
+        // Using PostgreSQL DISTINCT ON to get one row per role
+        const records = await knex('workspace_users')
+            .whereIn('workspace_id', workspaceIds)
+            .whereNotNull('permissions')
+            .select('role', 'permissions')
+            .distinctOn('role');
+
+        const matrix = {};
+        records.forEach(r => {
+            matrix[r.role] = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
+        });
+
+        return successResponse(res, matrix);
+    } catch (error) {
+        console.error('Get Role Permissions Error:', error);
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -1186,5 +1253,7 @@ module.exports = {
     resendInvite,
     updateUserRole,
     updateUser,
-    deleteUserRole
+    deleteUserRole,
+    updateRolePermissions,
+    getRolePermissions
 };

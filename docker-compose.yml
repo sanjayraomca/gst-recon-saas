@@ -258,6 +258,10 @@ services:
       - JWT_SECRET=change-this-secret-in-production
       # - RECAPTCHA_SECRET_KEY=... (disabled for e2e tests)
       - FRONTEND_URL=http://localhost:3000
+    command: npm run dev
+    volumes:
+      - ./services/tenant-services/src:/app/services/tenant-services/src
+      - ./services/shared:/app/services/shared
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tenant-service.rule=PathPrefix(`/auth`) || PathPrefix(`/tenants`)"
