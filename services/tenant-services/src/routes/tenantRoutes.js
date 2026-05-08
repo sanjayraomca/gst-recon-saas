@@ -10,8 +10,10 @@ router.post('/signup', tenantController.registerTenant);
 router.use(verifyToken);
 
 router.post('/', tenantController.createTenant);
+router.get('/stats/global', tenantController.getGlobalStats);
 router.get('/', tenantController.listTenants);
 router.get('/:id', tenantController.getTenant);
+router.get('/:id/workspaces', tenantController.listTenantWorkspaces);
 router.put('/:id', tenantController.updateTenant);
 router.delete('/:id', tenantController.deleteTenant);
 

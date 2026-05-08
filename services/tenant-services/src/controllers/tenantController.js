@@ -166,10 +166,42 @@ const listTenants = async (req, res) => {
             limit: req.query.limit || 20
         };
 
-        const result = await Tenant.findAll(filters, pagination);
+        // Enriched query with counts
+        let query = knex('tenants as t')
+            .select(
+                't.*',
+                knex.raw('(SELECT COUNT(*) FROM workspaces w WHERE w.tenant_id = t.id AND w.deleted_at IS NULL) as organization_count'),
+                knex.raw('(SELECT COUNT(DISTINCT wu.user_id) FROM workspace_users wu JOIN workspaces w ON wu.workspace_id = w.id WHERE w.tenant_id = t.id AND w.deleted_at IS NULL) as user_count')
+            )
+            .whereNull('t.deleted_at');
 
-        return successResponse(res, result, 'Tenants retrieved successfully');
+        // Apply filters (matching TenantModel logic but adding counts)
+        if (filters.subscription_status) {
+            query = query.where('t.subscription_status', filters.subscription_status);
+        }
+        if (filters.subscription_plan) {
+            query = query.where('t.subscription_plan', filters.subscription_plan);
+        }
+        if (filters.search) {
+            query = query.where(function () {
+                this.where('t.legal_name', 'ilike', `%${filters.search}%`)
+                    .orWhere('t.trading_name', 'ilike', `%${filters.search}%`)
+                    .orWhere('t.tenant_code', 'ilike', `%${filters.search}%`);
+            });
+        }
+
+        const page = parseInt(pagination.page) || 1;
+        const limit = parseInt(pagination.limit) || 100; // Increased default for admin list
+        const offset = (page - 1) * limit;
+
+        const tenants = await query
+            .orderBy('t.created_at', 'desc')
+            .limit(limit)
+            .offset(offset);
+
+        return successResponse(res, tenants);
     } catch (error) {
+        console.error('List Tenants Error:', error);
         return errorResponse(res, error);
     }
 };
@@ -703,16 +735,18 @@ const listTenantUsers = async (req, res) => {
                     knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
                     'users.is_active',
                     'users.last_login_at',
+                    'users.created_at',
                     'workspace_users.invitation_status as invitation_status',
                     knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
                     knex.raw('MAX(workspace_users.role) as role'),
-                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL), \'{}\') as organization_ids')
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL), \'{}\') as organization_ids'),
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.name) FILTER (WHERE workspaces.name IS NOT NULL), \'{}\') as organization_names')
                 )
                 .join('workspace_users', 'users.id', 'workspace_users.user_id')
                 .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
                 .where('workspaces.id', workspaceId)
                 .whereNot('users.email', 'superadmin.dev@gmail.com')
-                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'workspace_users.invitation_status');
+                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'users.created_at', 'workspace_users.invitation_status');
         } else {
             // 2. ALL-TENANT LIST (Anyone linked to any workspace in this tenant, plus the owner)
             rawQuery = knex('users')
@@ -724,11 +758,13 @@ const listTenantUsers = async (req, res) => {
                     knex.raw('CASE WHEN users.id = ? THEN users.designation ELSE NULL END as designation', [tenant.owner_user_id]),
                     'users.is_active',
                     'users.last_login_at',
+                    'users.created_at',
                     // Aggregate status: Active if ALREADY accepted ANY invite in this tenant, else Pending
                     knex.raw("CASE WHEN bool_or(workspace_users.invitation_status = 'ACTIVE') THEN 'ACTIVE' ELSE 'INVITED' END as invitation_status"),
                     knex.raw('CAST(COUNT(DISTINCT CASE WHEN workspaces.tenant_id = ? THEN workspaces.id END) AS INTEGER) as organization_count', [tenantId]),
                     knex.raw('MAX(workspace_users.role) as role'),
-                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL AND workspaces.tenant_id = ?), \'{}\') as organization_ids', [tenantId])
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.id) FILTER (WHERE workspaces.id IS NOT NULL AND workspaces.tenant_id = ?), \'{}\') as organization_ids', [tenantId]),
+                    knex.raw('COALESCE(array_agg(DISTINCT workspaces.name) FILTER (WHERE workspaces.name IS NOT NULL AND workspaces.tenant_id = ?), \'{}\') as organization_names', [tenantId])
                 )
                 .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
                 .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
@@ -737,7 +773,7 @@ const listTenantUsers = async (req, res) => {
                     this.where('workspaces.tenant_id', tenantId)
                         .orWhere('users.id', tenant.owner_user_id);
                 })
-                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at');
+                .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'users.created_at');
         }
 
         users = await rawQuery;
@@ -1187,7 +1223,7 @@ const updateRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length === 0) {
-             return successResponse(res, null, 'Role permissions saved (no active workspaces found to update).');
+            return successResponse(res, null, 'Role permissions saved (no active workspaces found to update).');
         }
 
         // Perform updates for each role in the matrix
@@ -1216,7 +1252,7 @@ const getRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length === 0) {
-             return successResponse(res, {}, 'No workspaces found');
+            return successResponse(res, {}, 'No workspaces found');
         }
 
         // Get one representative record per role to see current permissions
@@ -1239,6 +1275,44 @@ const getRolePermissions = async (req, res) => {
     }
 };
 
+const listTenantWorkspaces = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const workspaces = await knex('workspaces')
+            .select(
+                'workspaces.*',
+                knex.raw('CAST(COUNT(DISTINCT workspace_users.user_id) AS INTEGER) as user_count')
+            )
+            .leftJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+            .where('workspaces.tenant_id', id)
+            .whereNull('workspaces.deleted_at')
+            .groupBy('workspaces.id')
+            .orderBy('workspaces.created_at', 'desc');
+
+        return successResponse(res, workspaces);
+    } catch (error) {
+        console.error('List Tenant Workspaces Error:', error);
+        return errorResponse(res, error);
+    }
+};
+
+const getGlobalStats = async (req, res) => {
+    try {
+        const totalTenantsResult = await knex('tenants').count('id as count').first();
+        const totalWorkspacesResult = await knex('workspaces').count('id as count').first();
+        const totalUsersResult = await knex('users').count('id as count').first();
+
+        return successResponse(res, {
+            totalTenants: parseInt(totalTenantsResult.count) || 0,
+            totalWorkspaces: parseInt(totalWorkspacesResult.count) || 0,
+            totalUsers: parseInt(totalUsersResult.count) || 0
+        });
+    } catch (error) {
+        console.error('Get Global Stats Error:', error);
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -1255,5 +1329,7 @@ module.exports = {
     updateUser,
     deleteUserRole,
     updateRolePermissions,
-    getRolePermissions
+    getRolePermissions,
+    getGlobalStats,
+    listTenantWorkspaces
 };

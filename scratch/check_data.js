@@ -1,19 +1,26 @@
-require('dotenv').config();
-process.env.DB_HOST = 'localhost';
-process.env.DB_USER = process.env.POSTGRES_MAIN_USER || 'gstadmin';
-process.env.DB_PASSWORD = process.env.POSTGRES_MAIN_PASSWORD || 'GstAdmin123';
-process.env.DB_NAME = process.env.POSTGRES_MAIN_DB || 'gst_recon';
-process.env.DB_PORT = 5435;
-
-const knex = require('../services/shared/src/db/connection');
+const knex = require('knex')({
+    client: 'postgresql',
+    connection: {
+        host: 'localhost',
+        user: 'postgres',
+        password: 'password',
+        database: 'gst_recon_saas'
+    }
+});
 
 async function checkData() {
     try {
-        const data = await knex('workspace_users').select('id', 'user_id', 'workspace_id', 'role', 'permissions').limit(5);
-        console.log('workspace_users data:', JSON.stringify(data, null, 2));
+        const workspace = await knex('workspaces').first();
+        console.log('--- Workspace Sample ---');
+        console.log(JSON.stringify(workspace, null, 2));
+
+        const user = await knex('users').first();
+        console.log('\n--- User Sample ---');
+        console.log(JSON.stringify(user, null, 2));
+
         process.exit(0);
-    } catch (err) {
-        console.error(err);
+    } catch (error) {
+        console.error(error);
         process.exit(1);
     }
 }
