@@ -29,8 +29,16 @@ const logActivity = async ({
         if (req) {
             ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
             userAgent = req.headers['user-agent'];
+
+            // Automatically extract IDs from request context if not provided
+            if (req.user) {
+                if (!userId) userId = req.user.db_id || req.user.id || req.user.sub;
+                if (!tenantId) tenantId = req.user.tenantId || req.user.tenant_id;
+                if (!workspaceId) workspaceId = req.user.workspaceId || req.user.workspace_id || req.headers['x-workspace-id'];
+            }
         }
 
+        // 1. Resolve valid User UUID
         let validUserId = null;
         if (userId) {
             if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) {
@@ -47,13 +55,30 @@ const logActivity = async ({
             }
         }
 
+        // 2. Resolve missing Tenant ID from Workspace ID if possible
+        if (!tenantId && workspaceId && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(workspaceId)) {
+            try {
+                const workspace = await knex('workspaces').where({ id: workspaceId }).select('tenant_id').first();
+                if (workspace) {
+                    tenantId = workspace.tenant_id;
+                }
+            } catch (e) {
+                console.error('Failed to resolve tenantId from workspaceId:', e.message);
+            }
+        }
+
+        // 3. Validation Warnings
+        if (!validUserId) console.warn(`[ActivityLogger] Missing mandatory USER_ID for action: ${actionType}`);
+        if (!tenantId) console.warn(`[ActivityLogger] Missing mandatory TENANT_ID for action: ${actionType}`);
+        if (!workspaceId) console.warn(`[ActivityLogger] Missing mandatory WORKSPACE_ID for action: ${actionType}`);
+
         await knex('activity_logs').insert({
             user_id: validUserId,
             tenant_id: tenantId || null,
             workspace_id: workspaceId || null,
             action_type: actionType,
             entity_type: entityType,
-            entity_id: entityId || null,
+            entity_id: entityId || workspaceId || null,
             details: details ? JSON.stringify(details) : null,
             ip_address: ipAddress,
             user_agent: userAgent,

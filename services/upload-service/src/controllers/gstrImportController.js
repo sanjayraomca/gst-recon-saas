@@ -61,53 +61,18 @@ class GSTRImportController {
                 await progressEmitter.emitProgress(upload_id, 5, 'Starting validation...');
             }
 
-            // Get user info from JWT token (set by auth middleware)
-            const userEmail = req.user?.email;
+            // Use user and tenant info from request context (set by auth middleware)
+            const userId = req.user?.db_id || req.user?.id;
+            let tenantUuid = req.user?.tenantId || req.user?.tenant_id || req.headers['x-tenant-id'];
 
-            if (!userEmail) {
-                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
-                    fs.unlinkSync(uploadedFilePath);
-                }
-                return errorResponse(res, { message: 'User email not found in token', isCustom: true }, 401);
+            if (!userId) {
+                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                return errorResponse(res, { message: 'User identity not found in request', isCustom: true }, 401);
             }
 
-            // Fetch user details including tenant_id from database
-            const db = require('../../../shared/src/db/connection');
-            let userId, tenantUuid;
-
-            try {
-                const userQuery = await db.raw('SELECT id, tenant_id FROM users WHERE email = ?', [userEmail]);
-                if (userQuery.rows && userQuery.rows.length > 0) {
-                    userId = userQuery.rows[0].id;
-                    tenantUuid = req.headers['x-tenant-id'] || userQuery.rows[0].tenant_id;
-
-                    // Fallback: if tenant_id is NULL, look up via tenants.owner_user_id
-                    if (!tenantUuid) {
-                        const tenantQuery = await db.raw('SELECT id FROM tenants WHERE owner_user_id = ? LIMIT 1', [userId]);
-                        if (tenantQuery.rows && tenantQuery.rows.length > 0) {
-                            tenantUuid = tenantQuery.rows[0].id;
-                            await db.raw('UPDATE users SET tenant_id = ? WHERE id = ?', [tenantUuid, userId]);
-                        }
-                    }
-                } else {
-                    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
-                        fs.unlinkSync(uploadedFilePath);
-                    }
-                    return errorResponse(res, { message: 'User not found in database', isCustom: true }, 404);
-                }
-
-                if (!tenantUuid) {
-                    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
-                        fs.unlinkSync(uploadedFilePath);
-                    }
-                    return errorResponse(res, { message: 'User is not associated with any tenant', isCustom: true }, 403);
-                }
-            } catch (dbError) {
-                console.error('Error fetching user details:', dbError);
-                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
-                    fs.unlinkSync(uploadedFilePath);
-                }
-                return errorResponse(res, { message: 'Failed to fetch user details from database' }, 500);
+            if (!tenantUuid) {
+                if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+                return errorResponse(res, { message: 'Tenant context missing from request', isCustom: true }, 403);
             }
 
             // Validate required fields

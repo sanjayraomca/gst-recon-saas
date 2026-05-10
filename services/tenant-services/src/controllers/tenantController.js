@@ -1313,6 +1313,36 @@ const getGlobalStats = async (req, res) => {
     }
 };
 
+const logUserActivity = async (req, res) => {
+    try {
+        const {
+            userId,
+            tenantId,
+            workspaceId,
+            actionType,
+            entityType,
+            entityId,
+            details
+        } = req.body;
+
+        await logActivity({
+            userId: userId || (req.user ? (req.user.db_id || req.user.id) : null),
+            tenantId: tenantId || (req.user ? req.user.tenantId : null),
+            workspaceId: workspaceId || (req.user ? req.user.workspaceId : null),
+            actionType,
+            entityType,
+            entityId,
+            details,
+            req
+        });
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Error in logUserActivity controller:', error);
+        res.status(500).json({ success: false, error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -1326,10 +1356,11 @@ module.exports = {
     getTenantStats,
     resendInvite,
     updateUserRole,
-    updateUser,
     deleteUserRole,
+    updateUser,
     updateRolePermissions,
     getRolePermissions,
+    listTenantWorkspaces,
     getGlobalStats,
-    listTenantWorkspaces
+    logUserActivity
 };

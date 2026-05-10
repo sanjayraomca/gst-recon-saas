@@ -2,6 +2,7 @@ const db = require('../../../shared/src/db/connection');
 const BookModel = require('../models/bookModel');
 const { processSalesJson, processPurchaseJson } = require('../utils/jsonProcessors');
 const { publishEvent } = require('../nats/natsClient');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * Controller for JSON Data Import
@@ -14,13 +15,11 @@ class JsonImportController {
     static async uploadSalesBook(req, res) {
         try {
             const { data, gstinId, returnPeriod, orgGstin } = req.body;
-            const tenant_id = req.headers['x-tenant-id'] || req.user.tenant_id;
+            const tenant_id = req.user?.tenantId || req.user?.tenant_id || req.headers['x-tenant-id'];
 
             if (!data || !Array.isArray(data)) {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
             }
-
-            // console.log(`[JsonImport] Processing ${data.length} sales records for tenant ${tenant_id}`);
 
             // Process data into internal format
             const processedInvoices = processSalesJson(data, tenant_id, gstinId, null, returnPeriod, orgGstin);
@@ -52,8 +51,19 @@ class JsonImportController {
                 data: result
             });
 
+            // Log successful import
+            await logActivity({
+                userId: req.user?.db_id,
+                tenantId: tenant_id,
+                workspaceId: gstinId,
+                actionType: 'SALES_IMPORT',
+                entityType: 'BookData',
+                entityId: gstinId,
+                details: { records: result.inserted, period: returnPeriod, orgGstin, source: 'JSON' },
+                req
+            });
+
         } catch (error) {
-            // console.error('[JsonImport] Sales Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
@@ -65,13 +75,11 @@ class JsonImportController {
     static async uploadPurchaseBook(req, res) {
         try {
             const { data, gstinId, returnPeriod, orgGstin } = req.body;
-            const tenant_id = req.headers['x-tenant-id'] || req.user.tenant_id;
+            const tenant_id = req.user?.tenantId || req.user?.tenant_id || req.headers['x-tenant-id'];
 
             if (!data || !Array.isArray(data)) {
                 return res.status(400).json({ success: false, error: 'Invalid data format. Expected an array of objects.' });
             }
-
-            // console.log(`[JsonImport] Processing ${data.length} purchase records for tenant ${tenant_id}`);
 
             // Process data into internal format
             const processedVouchers = processPurchaseJson(data, tenant_id, gstinId, null, returnPeriod, orgGstin);
@@ -103,8 +111,19 @@ class JsonImportController {
                 data: result
             });
 
+            // Log successful import
+            await logActivity({
+                userId: req.user?.db_id,
+                tenantId: tenant_id,
+                workspaceId: gstinId,
+                actionType: 'PURCHASE_IMPORT',
+                entityType: 'BookData',
+                entityId: gstinId,
+                details: { records: result.inserted, period: returnPeriod, orgGstin, source: 'JSON' },
+                req
+            });
+
         } catch (error) {
-            // console.error('[JsonImport] Purchase Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }

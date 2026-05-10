@@ -27,6 +27,7 @@ router.delete('/:id/users/:userId', tenantController.deleteUserRole);
 
 // Activity Logs Route
 router.get('/:tenantId/activities', tenantController.getTenantActivities);
+router.post('/activities', tenantController.logUserActivity);
 
 // Stats Route
 router.get('/:id/stats', tenantController.getTenantStats);

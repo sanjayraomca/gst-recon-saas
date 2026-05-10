@@ -8,6 +8,7 @@ const { publishEvent } = require('../nats/natsClient');
 const crypto = require('crypto');
 const db = require('../../../shared/src/db/connection');
 const minioClient = require('../utils/minioClient');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * Controller for GSTR JSON Data Import
@@ -367,6 +368,23 @@ class GstrJsonImportController {
                     duplicate_invoices: allDuplicateInvoices,
                     section_counters: sectionCounters
                 }
+            });
+
+            // Log activity after successful response
+            await logActivity({
+                userId: finalUserId,
+                tenantId: finalTenantId,
+                workspaceId: workspaceId,
+                actionType: 'GSTR_IMPORT',
+                entityType: 'GSTR_Data',
+                details: { 
+                    fileName: minioMetadata.originalFilename, 
+                    type: gstrType.toUpperCase(), 
+                    recordsInserted: totalInserted, 
+                    period: returnPeriod,
+                    source: 'JSON'
+                },
+                req
             });
 
         } catch (error) {
