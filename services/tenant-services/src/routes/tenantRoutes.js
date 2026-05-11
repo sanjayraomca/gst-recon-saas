@@ -11,6 +11,7 @@ router.use(verifyToken);
 
 router.post('/', tenantController.createTenant);
 router.get('/stats/global', tenantController.getGlobalStats);
+router.get('/audit-logs', tenantController.getAuditLogs);
 router.get('/', tenantController.listTenants);
 router.get('/:id', tenantController.getTenant);
 router.get('/:id/workspaces', tenantController.listTenantWorkspaces);

@@ -227,7 +227,6 @@ const updateReconStatus = async (req, res) => {
                 if (purchase_invoice_id) this.orWhere('purchase_invoice_id', purchase_invoice_id);
                 if (gstr2b_invoice_id) this.orWhere('gstr2b_invoice_id', gstr2b_invoice_id);
                 if (run_type === 'GSTR2A_VS_GSTR2B' && gstr2a_invoice_id) {
-                    // In 2A2B runs, the 'gstr2b_invoice_id' is the primary link in the results table
                     this.orWhere('gstr2b_invoice_id', gstr2a_invoice_id);
                 }
             })
@@ -239,10 +238,30 @@ const updateReconStatus = async (req, res) => {
             .where(function () {
                 if (purchase_invoice_id) this.orWhere('purchase_invoice_id', purchase_invoice_id);
                 if (gstr2a_invoice_id) this.orWhere('gstr2a_invoice_id', gstr2a_invoice_id);
-                if (gstr2b_invoice_id) this.orWhere('gstr2a_invoice_id', gstr2b_invoice_id); // Case where 2B is treated as source
+                if (gstr2b_invoice_id) this.orWhere('gstr2a_invoice_id', gstr2b_invoice_id); 
             })
             .andWhere('workspace_id', workspaceId)
             .update(broadcastUpdate);
+
+        // 4.1 Update Source Tables for direct visibility in listings
+        if (gstr2b_invoice_id) {
+            await trx('normalized_gstr2b_invoices')
+                .where({ id: gstr2b_invoice_id })
+                .update({ reconciliation_status: recon_status, updated_at: trx.fn.now() });
+        }
+        if (gstr2a_invoice_id) {
+            await trx('normalized_gstr2a_invoices')
+                .where({ id: gstr2a_invoice_id })
+                .update({ reconciliation_status: recon_status, updated_at: trx.fn.now() });
+        }
+        if (purchase_invoice_id) {
+            await trx('purchase_vouchers')
+                .where({ id: purchase_invoice_id })
+                .update({ 
+                    itc_claimed: ['claimed', 'claim'].includes(recon_status),
+                    updated_at: trx.fn.now() 
+                });
+        }
 
         // 4.5. Log to data-level audit_log table
         await logAudit({

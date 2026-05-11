@@ -1755,7 +1755,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     
     action_required VARCHAR(50),
     action_priority VARCHAR(20),
-    action_status VARCHAR(20),
+    action_status VARCHAR(50),
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1784,7 +1784,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_results_2a (
     
     action_required VARCHAR(50),
     action_priority VARCHAR(20),
-    action_status VARCHAR(20),
+    action_status VARCHAR(50),
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

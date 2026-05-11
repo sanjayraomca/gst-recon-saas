@@ -1381,5 +1381,47 @@ module.exports = {
     getRolePermissions,
     listTenantWorkspaces,
     getGlobalStats,
-    logUserActivity
+    logUserActivity,
+    getAuditLogs: async (req, res) => {
+        try {
+            const { limit = 50, offset = 0, search } = req.query;
+            const database = require('../../../shared/src/db/connection');
+
+            let query = database('audit_log')
+                .leftJoin('users', function() {
+                    this.on(database.raw('audit_log.modified_by::uuid'), '=', 'users.id')
+                })
+                .select(
+                    'audit_log.*',
+                    'users.full_name as operator_name',
+                    'users.email as operator_email'
+                )
+                .orderBy('modified_at', 'desc');
+
+            if (search) {
+                query = query.where(function() {
+                    this.where('audit_log.table_name', 'ilike', `%${search}%`)
+                        .orWhere('audit_log.action', 'ilike', `%${search}%`)
+                        .orWhere('audit_log.modified_by', 'ilike', `%${search}%`)
+                        .orWhere('users.full_name', 'ilike', `%${search}%`)
+                        .orWhere('users.email', 'ilike', `%${search}%`);
+                });
+            }
+
+            const logs = await query
+                .limit(parseInt(limit))
+                .offset(parseInt(offset));
+
+            // Get total count for pagination if needed
+            const totalCount = await database('audit_log').count('id as count').first();
+
+            return successResponse(res, {
+                logs,
+                total: parseInt(totalCount.count)
+            }, 'Audit logs fetched successfully');
+        } catch (error) {
+            console.error('Error fetching audit logs:', error);
+            return errorResponse(res, error);
+        }
+    }
 };
