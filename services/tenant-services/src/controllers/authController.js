@@ -475,18 +475,29 @@ const acceptInvite = async (req, res) => {
                 tokenData = await keycloakService.login(user.email, password);
             }
 
-            // Fetch Tenants for this user
-            const userTenants = await knex('tenants')
-                .join('workspaces', 'tenants.id', 'workspaces.tenant_id')
-                .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
-                .where('workspace_users.user_id', user.id)
-                .distinct('tenants.id', 'tenants.legal_name', 'tenants.tenant_code');
+            // Resolve Primary Tenant
+            let primaryTenantId = user.tenant_id;
+            let primaryTenantName = null;
 
-            // Prioritize tenant matching user name (using the logic we added earlier)
-            let primaryTenant = null;
-            if (userTenants.length > 0) {
-                const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
-                primaryTenant = nameMatch || userTenants[0];
+            if (primaryTenantId) {
+                const tenantRecord = await knex('tenants').where('id', primaryTenantId).first();
+                if (tenantRecord) {
+                    primaryTenantName = tenantRecord.legal_name;
+                }
+            } else {
+                // Fallback: Fetch Tenants for this user via workspace memberships
+                const userTenants = await knex('tenants')
+                    .join('workspaces', 'tenants.id', 'workspaces.tenant_id')
+                    .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                    .where('workspace_users.user_id', user.id)
+                    .distinct('tenants.id', 'tenants.legal_name', 'tenants.tenant_code');
+                
+                if (userTenants.length > 0) {
+                    const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
+                    const matchedTenant = nameMatch || userTenants[0];
+                    primaryTenantId = matchedTenant.id;
+                    primaryTenantName = matchedTenant.legal_name;
+                }
             }
 
             const responsePayload = {
@@ -495,9 +506,10 @@ const acceptInvite = async (req, res) => {
                     id: user.id,
                     email: user.email,
                     full_name: full_name || user.full_name,
-                    tenant_id: primaryTenant ? primaryTenant.id : null,
-                    tenant_name: primaryTenant ? primaryTenant.legal_name : null
-                }
+                    tenant_id: primaryTenantId,
+                    tenant_name: primaryTenantName
+                },
+                tenant_id: primaryTenantId // Explicit tenant_id at top level for frontend
             };
 
             return successResponse(res, responsePayload, 'Invitation accepted successfully');
