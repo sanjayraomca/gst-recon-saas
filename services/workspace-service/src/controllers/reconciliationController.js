@@ -161,6 +161,22 @@ const getRunResults = async (req, res) => {
         cleanup();
         if (!result) return errorResponse(res, 'Results not found', 404);
 
+        // Log Activity
+        await logActivity({
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'VIEW_RECONCILIATION_RESULTS',
+            entityType: 'RECONCILIATION',
+            entityId: finalRunId !== 'all' && finalRunId !== 'latest' ? finalRunId : null,
+            details: { 
+                page_name: 'Reconciliation Results',
+                runId: finalRunId, 
+                filters: req.query 
+            },
+            req
+        });
+
         return successResponse(res, result.data, 'Run results retrieved successfully', 200, {
             pagination: result.pagination,
             summary: result.summary

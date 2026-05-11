@@ -372,12 +372,13 @@ class GstrJsonImportController {
 
             // Log activity after successful response
             await logActivity({
-                userId: finalUserId,
+                userId: finalUserId || req.user?.db_id || req.user?.id || req.user?.sub,
                 tenantId: finalTenantId,
                 workspaceId: workspaceId,
-                actionType: 'GSTR_IMPORT',
+                actionType: 'IMPORT_GSTR_DATA',
                 entityType: 'GSTR_Data',
                 details: { 
+                    page_name: `${gstrType.toUpperCase()} Import`,
                     fileName: minioMetadata.originalFilename, 
                     type: gstrType.toUpperCase(), 
                     recordsInserted: totalInserted, 

@@ -78,12 +78,21 @@ const getBookData = async (req, res) => {
 
         // --- ACTIVITY LOG ---
         await logActivity({
-            userId: req.user?.id || req.user?.sub,
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
             tenantId: tenantId,
             workspaceId: workspaceId,
-            actionType: 'VIEW',
+            actionType: `VIEW_ALL_${(type || 'BOOK').toUpperCase()}_INVOICES`,
             entityType: 'BOOK_DATA',
-            details: { type, page: pagination.page, filterCount: Object.keys(column_filters || {}).length },
+            details: { 
+                page_name: `${(type || 'Book').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} Register`,
+                filters: { 
+                    search, status, period, gstin, date_from, date_to, 
+                    amt_min, amt_max, minNetAmt, maxNetAmt, place_of_supply,
+                    gstins, parties, supply_type, roundoff_only, column_filters
+                },
+                pagination,
+                isExport: export_mode === 'true'
+            },
             req
         });
 

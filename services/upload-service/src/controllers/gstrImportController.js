@@ -714,9 +714,15 @@ class GSTRImportController {
                 userId,
                 tenantId: tenantUuid,
                 workspaceId: workspaceId || null,
-                actionType: 'GSTR_IMPORT',
+                actionType: 'IMPORT_GSTR_DATA',
                 entityType: 'GSTR_Data',
-                details: { fileName: req.file.originalname, type: gstr_type.toUpperCase(), recordsInserted: totalInserted, period: return_period },
+                details: { 
+                    fileName: req.file.originalname, 
+                    type: gstr_type.toUpperCase(), 
+                    recordsInserted: totalInserted, 
+                    period: return_period,
+                    source: 'EXCEL'
+                },
                 req
             });
 
@@ -962,13 +968,25 @@ class GSTRImportController {
                 pageSize: page_size,
             });
 
-            // Log Activity (Blueprint Rule 5)
+            // --- ACTIVITY LOG ---
+            const tenantId = req.user?.tenant_id || req.user?.tenantId || req.headers['x-tenant-id'];
+            const displayType = (import_type?.toUpperCase() === 'GSTR2A') ? 'GSTR-2A' : 'GSTR-2B';
+            
             await logActivity({
-                userId: req.user?.id || req.user?.sub,
-                workspaceId,
-                actionType: 'VIEW_MODULE',
-                entityType: (import_type?.toUpperCase() === 'GSTR2A') ? 'GSTR2A_REGISTER' : 'GSTR2B_REGISTER',
-                details: { filters: req.query, record_count: result.rows.length },
+                userId: req.user?.db_id || req.user?.id || req.user?.sub,
+                tenantId: tenantId,
+                workspaceId: workspaceId,
+                actionType: `VIEW_ALL_${displayType.replace('-', '')}_INVOICES`,
+                entityType: 'GSTR_DATA',
+                details: { 
+                    page_name: `${displayType} Register`,
+                    filters: req.query,
+                    pagination: {
+                        page: parseInt(page) || 1,
+                        page_size: parseInt(page_size) || 25
+                    },
+                    record_count: result.rows.length
+                },
                 req
             });
 
@@ -1036,14 +1054,23 @@ class GSTRImportController {
                 importType: import_type,
             });
 
-            // Log Activity (Blueprint Rule 5)
-            if (section?.toUpperCase() === 'ALL') { // Only log module view for full summaries
+            // --- ACTIVITY LOG ---
+            if (section?.toUpperCase() === 'ALL' || !section) { // Only log module view for full summaries
+                const tenantId = req.user?.tenant_id || req.user?.tenantId || req.headers['x-tenant-id'];
+                const displayType = (import_type?.toUpperCase() === 'GSTR2A') ? 'GSTR-2A' : 'GSTR-2B';
+
                 await logActivity({
-                    userId: req.user?.id || req.user?.sub,
-                    workspaceId,
-                    actionType: 'VIEW_SUMMARY',
-                    entityType: (import_type?.toUpperCase() === 'GSTR2A') ? 'GSTR2A_REGISTER' : 'GSTR2B_REGISTER',
-                    details: { period: return_period, import_type },
+                    userId: req.user?.db_id || req.user?.id || req.user?.sub,
+                    tenantId: tenantId,
+                    workspaceId: workspaceId,
+                    actionType: `VIEW_${displayType.replace('-', '')}_SUMMARY`,
+                    entityType: 'GSTR_DATA',
+                    details: { 
+                        page_name: `${displayType} Summary`,
+                        period: return_period, 
+                        import_type,
+                        filters: req.query
+                    },
                     req
                 });
             }

@@ -30,6 +30,21 @@ const getAllInvoices = async (req, res) => {
         };
 
         const result = await PurchaseInvoiceModel.getAll(workspaceId, filters, pagination);
+        
+        // Log Activity
+        await logActivity({
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'VIEW_ALL_PURCHASE_INVOICES',
+            entityType: 'BOOK_DATA',
+            details: { 
+                page_name: 'Purchase Register',
+                filters, 
+                pagination 
+            },
+            req
+        });
 
         return successResponse(res, {
             invoices: result.data,

@@ -32,11 +32,16 @@ const getAllInvoices = async (req, res) => {
 
         // Log Activity
         await logActivity({
-            userId: req.user?.id || req.user?.sub,
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: req.user?.tenant_id,
             workspaceId,
-            actionType: 'VIEW_MODULE',
-            entityType: 'GSTR2B_REGISTER',
-            details: { filters, pagination, total_records: result.data.length },
+            actionType: 'VIEW_ALL_GSTR2B_INVOICES',
+            entityType: 'GSTR_DATA',
+            details: { 
+                page_name: 'GSTR-2B Register',
+                filters, 
+                pagination 
+            },
             req
         });
 
@@ -70,10 +75,11 @@ const getInvoiceById = async (req, res) => {
 
         // Log Activity
         await logActivity({
-            userId: req.user?.id || req.user?.sub,
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: req.user?.tenant_id,
             workspaceId,
-            actionType: 'VIEW_RECORD',
-            entityType: 'GSTR2B_INVOICE',
+            actionType: 'VIEW_GSTR2B_RECORD',
+            entityType: 'GSTR_DATA',
             entityId: invoiceId,
             details: { invoice_number: invoice.document_number_clean || invoice.document_number_raw },
             req

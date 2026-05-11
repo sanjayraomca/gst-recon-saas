@@ -107,9 +107,9 @@ class GSTR2BController {
                 userId: req.user ? req.user.id : null,
                 tenantId: req.headers['x-tenant-id'] || (req.user ? req.user.tenant_id : null),
                 workspaceId,
-                actionType: 'GSTR2B_IMPORT',
+                actionType: 'IMPORT_GSTR_DATA',
                 entityType: 'GSTR_Data',
-                details: { fileName: req.file.originalname, results, period: return_period },
+                details: { fileName: req.file.originalname, results, period: return_period, source: 'EXCEL' },
                 req
             });
 

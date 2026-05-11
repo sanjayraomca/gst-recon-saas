@@ -53,13 +53,18 @@ class JsonImportController {
 
             // Log successful import
             await logActivity({
-                userId: req.user?.db_id,
+                userId: req.user?.db_id || req.user?.id || req.user?.sub,
                 tenantId: tenant_id,
                 workspaceId: gstinId,
-                actionType: 'SALES_IMPORT',
-                entityType: 'BookData',
-                entityId: gstinId,
-                details: { records: result.inserted, period: returnPeriod, orgGstin, source: 'JSON' },
+                actionType: 'IMPORT_SALES_BOOK',
+                entityType: 'BOOK_DATA',
+                details: { 
+                    page_name: 'Sales Register',
+                    records: result.inserted, 
+                    period: returnPeriod, 
+                    orgGstin, 
+                    source: 'JSON' 
+                },
                 req
             });
 
@@ -113,13 +118,18 @@ class JsonImportController {
 
             // Log successful import
             await logActivity({
-                userId: req.user?.db_id,
+                userId: req.user?.db_id || req.user?.id || req.user?.sub,
                 tenantId: tenant_id,
                 workspaceId: gstinId,
-                actionType: 'PURCHASE_IMPORT',
-                entityType: 'BookData',
-                entityId: gstinId,
-                details: { records: result.inserted, period: returnPeriod, orgGstin, source: 'JSON' },
+                actionType: 'IMPORT_PURCHASE_BOOK',
+                entityType: 'BOOK_DATA',
+                details: { 
+                    page_name: 'Purchase Register',
+                    records: result.inserted, 
+                    period: returnPeriod, 
+                    orgGstin, 
+                    source: 'JSON' 
+                },
                 req
             });
 

@@ -18,6 +18,13 @@ try {
     execSync('docker compose build --no-cache && docker compose up -d', { stdio: 'inherit', cwd: __dirname });
 
     console.log("\n==========================================");
+    console.log("Seeding default SuperAdmin...");
+    console.log("==========================================");
+    
+    // Wait for services and seed
+    execSync('node seed-superadmin.js', { stdio: 'inherit', cwd: __dirname });
+
+    console.log("\n==========================================");
     console.log("✅ Clean complete! All databases and storage are wiped and restarted.");
     console.log("==========================================");
 } catch (error) {
