@@ -1,6 +1,7 @@
 const ReconciliationActionModel = require('../models/reconciliationActionModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const { logAudit } = require('../../../shared/src/utils/auditLogger');
 const knex = require('../../../shared/src/db/connection');
 const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
 const { publishMessage } = require('../../../shared/src/nats/client');
@@ -64,7 +65,7 @@ const updateReconStatus = async (req, res) => {
         const workspaceId = req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
         const userId = req.user.db_id || req.user.sub || req.user.id;
-        const { recon_status, run_type = 'PURCHASE_2B' } = req.body;
+        const { recon_status, run_type = 'PURCHASE_2B', decision_reason, notes } = req.body;
         const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
 
         if (is2a) {
@@ -77,14 +78,14 @@ const updateReconStatus = async (req, res) => {
             }
         }
         const VALID_STATUSES = [
-            'pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded', 
+            'pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded',
             'claimed', 'wrong_entry_portal', 'not_to_be_claimed', 'not_eligible_for_claim',
             'claim', 'wrong entry portal', 'not to be claim', 'not eligible'
         ];
 
         const resultsTable = is2a ? 'reconciliation_results_2a' : 'reconciliation_results';
         let statusTable = is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status';
-        
+
         if (run_type === 'GSTR2A_VS_GSTR2B') {
             statusTable = 'reconciliation_status_2a_vs_2b';
         }
@@ -105,9 +106,24 @@ const updateReconStatus = async (req, res) => {
             return errorResponse(res, `Invalid or missing recon_status.`, 400);
         }
 
-        // 1. Fetch the reconciliation result to get invoice IDs and verify ownership
+        // 1. Fetch the reconciliation result with invoice details for auditing
         const reconResult = await trx(resultsTable)
-            .where({ id: resultIdInt, workspace_id: workspaceId })
+            .leftJoin('purchase_vouchers', `${resultsTable}.purchase_invoice_id`, 'purchase_vouchers.id')
+            .leftJoin('normalized_gstr2b_invoices', `${resultsTable}.gstr2b_invoice_id`, 'normalized_gstr2b_invoices.id')
+            .leftJoin('normalized_gstr2a_invoices', `${resultsTable}.gstr2a_invoice_id`, 'normalized_gstr2a_invoices.id')
+            .where({ [`${resultsTable}.id`]: resultIdInt, [`${resultsTable}.workspace_id`]: workspaceId })
+            .select(
+                `${resultsTable}.*`,
+                'purchase_vouchers.supplier_invoice_no as purchase_invoice_number',
+                'purchase_vouchers.supplier_invoice_date as purchase_invoice_date',
+                'purchase_vouchers.supplier_gstin as purchase_supplier_gstin',
+                'normalized_gstr2b_invoices.document_number_clean as gstr2b_invoice_number',
+                'normalized_gstr2b_invoices.document_date as gstr2b_invoice_date',
+                'normalized_gstr2b_invoices.supplier_gstin as gstr2b_supplier_gstin',
+                'normalized_gstr2a_invoices.document_number_clean as gstr2a_invoice_number',
+                'normalized_gstr2a_invoices.document_date as gstr2a_invoice_date',
+                'normalized_gstr2a_invoices.supplier_gstin as gstr2a_supplier_gstin'
+            )
             .first();
 
         if (!reconResult) {
@@ -126,6 +142,15 @@ const updateReconStatus = async (req, res) => {
         const gstrId = is2a ? (gstr2a_invoice_id || reconResult.gstr2a_source_id) : gstr2b_invoice_id;
 
         // 3. Upsert logic for reconciliation_status
+        const extraInfo = {
+            recon_result_id: resultIdInt,
+            match_score: reconResult.match_score,
+            match_status: reconResult.match_status,
+            recon_run_id: reconResult.recon_run_id,
+            decision_reason: decision_reason || reconResult.decision_reason,
+            notes: notes || reconResult.notes
+        };
+
         let existing = null;
         if (run_type === 'GSTR2A_VS_GSTR2B') {
             if (gstr2a_invoice_id) {
@@ -157,6 +182,8 @@ const updateReconStatus = async (req, res) => {
                 .where({ id: existing.id })
                 .update({
                     recon_status,
+                    extra_info: { ...(existing.extra_info || {}), ...extraInfo },
+                    updated_by: userId,
                     updated_date: knex.fn.now()
                 })
                 .returning('*');
@@ -165,8 +192,12 @@ const updateReconStatus = async (req, res) => {
                 workspace_id: workspaceId,
                 tenant_id,
                 recon_status,
+                gstr_type: is2a ? (run_type === 'GSTR2A_VS_GSTR2B' ? 'gstr2a2b' : 'gstr2a') : 'gstr2b',
+                added_by: userId,
+                updated_by: userId,
                 added_date: knex.fn.now(),
-                updated_date: knex.fn.now()
+                updated_date: knex.fn.now(),
+                extra_info: extraInfo
             };
 
             if (run_type === 'GSTR2A_VS_GSTR2B') {
@@ -175,8 +206,7 @@ const updateReconStatus = async (req, res) => {
             } else {
                 insertData.gstr_data_id = gstrId;
                 insertData.book_data_id = purchase_invoice_id;
-                insertData.updated_by = userId || null;
-                insertData.extra_info = { recon_result_id: resultIdInt };
+                insertData.book_data_type = 'purchase_voucher';
             }
 
             [statusRecord] = await trx(statusTable)
@@ -184,17 +214,57 @@ const updateReconStatus = async (req, res) => {
                 .returning('*');
         }
 
-        // 4. Update reconciliation_results table directly for fast filtering/UI
-        await trx(resultsTable)
-            .where({ id: resultIdInt })
-            .update({
-                action_status: recon_status,
-                updated_at: trx.fn.now()
-            });
+        // 4. Broadcast update: Sync action_status across ALL reconciliation results sharing these invoices
+        // This ensures consistency across different runs and reconciliation types (2B vs 2A vs 2A2B)
+        const broadcastUpdate = {
+            action_status: recon_status,
+            updated_at: trx.fn.now()
+        };
+
+        // Update main reconciliation_results (2B vs Books)
+        await trx('reconciliation_results')
+            .where(function () {
+                if (purchase_invoice_id) this.orWhere('purchase_invoice_id', purchase_invoice_id);
+                if (gstr2b_invoice_id) this.orWhere('gstr2b_invoice_id', gstr2b_invoice_id);
+                if (run_type === 'GSTR2A_VS_GSTR2B' && gstr2a_invoice_id) {
+                    // In 2A2B runs, the 'gstr2b_invoice_id' is the primary link in the results table
+                    this.orWhere('gstr2b_invoice_id', gstr2a_invoice_id);
+                }
+            })
+            .andWhere('workspace_id', workspaceId)
+            .update(broadcastUpdate);
+
+        // Update 2A reconciliation_results_2a (2A vs Books / 2A vs 2B)
+        await trx('reconciliation_results_2a')
+            .where(function () {
+                if (purchase_invoice_id) this.orWhere('purchase_invoice_id', purchase_invoice_id);
+                if (gstr2a_invoice_id) this.orWhere('gstr2a_invoice_id', gstr2a_invoice_id);
+                if (gstr2b_invoice_id) this.orWhere('gstr2a_invoice_id', gstr2b_invoice_id); // Case where 2B is treated as source
+            })
+            .andWhere('workspace_id', workspaceId)
+            .update(broadcastUpdate);
+
+        // 4.5. Log to data-level audit_log table
+        await logAudit({
+            tableName: statusTable,
+            recordId: statusRecord.id,
+            action: existing ? 'UPDATE' : 'INSERT',
+            oldValue: existing || { initial_status: 'none' },
+            newValue: statusRecord,
+            modifiedBy: userId,
+            trx
+        });
 
         await trx.commit();
 
         // 5. Async Log Activity (outside transaction)
+        const previousStatus = existing?.recon_status || 'initial';
+        const invoiceDetails = {
+            invoice_number: reconResult.purchase_invoice_number || reconResult.gstr2b_invoice_number || reconResult.gstr2a_invoice_number,
+            invoice_date: reconResult.purchase_invoice_date || reconResult.gstr2b_invoice_date || reconResult.gstr2a_invoice_date,
+            supplier_gstin: reconResult.purchase_supplier_gstin || reconResult.gstr2b_supplier_gstin || reconResult.gstr2a_supplier_gstin
+        };
+
         logActivity({
             userId,
             tenantId,
@@ -202,7 +272,14 @@ const updateReconStatus = async (req, res) => {
             actionType: 'RECON_STATUS_UPDATE',
             entityType: 'ReconciliationStatus',
             entityId: statusRecord.id,
-            details: { resultId, recon_status },
+            details: { 
+                resultId, 
+                new_status: recon_status, 
+                old_status: previousStatus,
+                invoice: invoiceDetails,
+                run_type,
+                description: `Status changed from ${previousStatus} to ${recon_status} for ${invoiceDetails.invoice_number ? 'Invoice ' + invoiceDetails.invoice_number : 'this record'}.`
+            },
             req
         }).catch(err => console.error('[ActivityLog] Error:', err));
 
@@ -212,11 +289,11 @@ const updateReconStatus = async (req, res) => {
         cleanup();
         if (trx) await trx.rollback();
         console.error('[updateReconStatus] Critical Error:', error);
-        
+
         // Temporary file logging for debugging
         const logPath = path.join(__dirname, 'debug_error.log');
         fs.appendFileSync(logPath, `[${new Date().toISOString()}] Error updating status for result ${req.params.result_id}: ${error.message}\n${error.stack}\n\n`);
-        
+
         return errorResponse(res, error.message, 500);
     }
 };
@@ -241,9 +318,9 @@ const notifySupplier = async (req, res) => {
         if (supplier_gstin) {
             knex('supplier_master')
                 .where({ workspace_id: workspaceId, gstin: supplier_gstin }) // Note: Column is 'gstin' not 'supplier_gstin'
-                .update({ 
+                .update({
                     email: to, // Note: Column is 'email' not 'supplier_email'
-                    updated_at: knex.fn.now() 
+                    updated_at: knex.fn.now()
                 })
                 .then(count => {
                     if (count > 0) console.log(`[notifySupplier] Updated email for supplier ${supplier_gstin} in master table`);

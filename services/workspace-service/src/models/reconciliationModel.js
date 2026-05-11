@@ -232,11 +232,22 @@ class ReconciliationModel {
             }
 
             const gstrInvoices = await gstrQuery;
-            console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} invoices`);
+console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} invoices`);
 
 
             // 4. Perform matching
             await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
+            
+            // --- NEW: Fetch existing statuses for inheritance ---
+            const statusTable = is2aVs2b ? 'reconciliation_status_2a_vs_2b' : (is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status');
+            const existingStatuses = await trx(statusTable).where({ workspace_id: workspaceId });
+            const statusMap = new Map();
+            existingStatuses.forEach(s => {
+                if (s.book_data_id) statusMap.set(`book:${s.book_data_id}`, s.recon_status);
+                if (s.gstr_data_id) statusMap.set(`gstr:${s.gstr_data_id}`, s.recon_status);
+                if (s.book_data_id && s.gstr_data_id) statusMap.set(`pair:${s.book_data_id}:${s.gstr_data_id}`, s.recon_status);
+            });
+
             const matchResults = [];
             const matchedGstrIds = new Set();
             const unmatchedPurchases = [];
@@ -265,6 +276,19 @@ class ReconciliationModel {
             };
 
             const createMatchResult = (overrides) => {
+                const bookId = overrides.purchase_invoice_id || (is2aVs2b ? overrides.gstr2a_invoice_id : null);
+                const gstrId = overrides.gstr2b_invoice_id || (is2a ? overrides.gstr2a_invoice_id : null);
+                
+                // Inherit status if it exists in the master table
+                let inheritedStatus = 'pending';
+                if (bookId && gstrId && statusMap.has(`pair:${bookId}:${gstrId}`)) {
+                    inheritedStatus = statusMap.get(`pair:${bookId}:${gstrId}`);
+                } else if (bookId && statusMap.has(`book:${bookId}`)) {
+                    inheritedStatus = statusMap.get(`book:${bookId}`);
+                } else if (gstrId && statusMap.has(`gstr:${gstrId}`)) {
+                    inheritedStatus = statusMap.get(`gstr:${gstrId}`);
+                }
+
                 return {
                     recon_run_id: runId,
                     workspace_id: workspaceId,
@@ -283,7 +307,7 @@ class ReconciliationModel {
                     decision_reason: null,
                     action_required: null,
                     action_priority: 'MEDIUM',
-                    action_status: 'pending',
+                    action_status: inheritedStatus,
                     created_at: knex.fn.now(),
                     updated_at: knex.fn.now(),
                     ...overrides
@@ -924,17 +948,10 @@ class ReconciliationModel {
 
         if (workflow_status && workflow_status !== 'all' && workflow_status !== 'ALL') {
             const statusList = Array.isArray(workflow_status) ? workflow_status : workflow_status.split(',').map(s => s.trim());
-            if (statusList.includes('pending')) {
-                // For pending, we show rows where status is either explicitly 'pending' or NULL
-                query.where(function () {
-                    this.whereIn(knex.raw('COALESCE(rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), statusList);
-                });
-            } else {
-                query.where(function () {
-                    this.whereIn('rs_pi.recon_status', statusList)
-                        .orWhereIn('rs_gi.recon_status', statusList);
-                });
-            }
+            // Consistently use COALESCE to prioritize rr.action_status as the source of truth
+            query.where(function () {
+                this.whereIn(knex.raw('COALESCE(rr.action_status, rs_pi.recon_status, rs_gi.recon_status, \'pending\')'), statusList);
+            });
         }
 
         if (action_required && action_required !== 'false') {
@@ -1104,7 +1121,7 @@ class ReconciliationModel {
                 }
             }
 
-            if (isPendingView && endDate) {
+            if (isPendingView && endDate && !isNaN(endDate.getTime())) {
                 const dateStr = endDate.toISOString().split('T')[0];
                 query.where(function () {
                     if (is2aVs2b) {
@@ -2099,6 +2116,7 @@ class ReconciliationModel {
                 knex.raw("COALESCE(tp.period_code, gi.return_period, '000000') as period"),
                 knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER')) as category"),
                 'rr.id as result_id',
+                'rr.action_status',
                 'rr.match_status',
                 knex.raw("COALESCE(pi.supplier_name, gi.supplier_name) as supplier_name"),
                 knex.raw("COALESCE(pi.supplier_gstin, gi.supplier_gstin) as supplier_gstin"),
