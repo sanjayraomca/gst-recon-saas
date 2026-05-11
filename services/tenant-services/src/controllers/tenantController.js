@@ -567,6 +567,7 @@ const provisionUser = async (req, res) => {
             full_name,
             phone: phone_number,
             designation: role,
+            tenant_id: tenantId,
             auth_provider_id: keycloakId,
             auth_provider_type: 'KEYCLOAK',
             // CRITICAL: New users are INACTIVE until they accept invite. Existing users stay as they are.
