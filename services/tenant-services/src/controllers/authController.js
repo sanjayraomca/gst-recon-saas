@@ -103,6 +103,19 @@ const login = async (req, res) => {
             }
         };
 
+        // Explicitly check for SuperAdmin role by email
+        const devEmail = 'superadmin.dev@gmail.com';
+        if (user.email === devEmail) {
+            const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
+            if (!hasSuperRole) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
+        }
+
         // Log Login
         await logActivity({
             userId: user.id,
@@ -279,7 +292,7 @@ const register = async (req, res) => {
                 id: tenantId,
                 owner_user_id: user.id,
                 tenant_code: email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').substring(0, 10) + '_' + Math.floor(Math.random() * 1000),
-                legal_name: full_name + "'s Org",
+                legal_name: full_name,
                 subscription_plan: 'STARTER',
                 subscription_status: 'ACTIVE',
                 created_at: new Date(),
@@ -507,10 +520,21 @@ const acceptInvite = async (req, res) => {
                     email: user.email,
                     full_name: full_name || user.full_name,
                     tenant_id: primaryTenantId,
-                    tenant_name: primaryTenantName
+                    tenant_name: primaryTenantName,
+                    roles: [] // Default to empty, populated below if SuperAdmin
                 },
                 tenant_id: primaryTenantId // Explicit tenant_id at top level for frontend
             };
+
+            // Explicitly check for SuperAdmin role by email
+            const devEmail = 'superadmin.dev@gmail.com';
+            if (user.email === devEmail) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
 
             return successResponse(res, responsePayload, 'Invitation accepted successfully');
 
