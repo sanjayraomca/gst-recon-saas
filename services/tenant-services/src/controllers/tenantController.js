@@ -1219,25 +1219,39 @@ const updateRolePermissions = async (req, res) => {
             return errorResponse(res, 'Permissions matrix is required', 400);
         }
 
-        // Find all workspaces for this tenant
+        // 1. Save to Tenant Metadata as the Global Policy
+        const tenant = await knex('tenants').where({ id }).first();
+        if (!tenant) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
+        const metadata = tenant.metadata || {};
+        metadata.role_policies = matrix;
+
+        await knex('tenants')
+            .where({ id })
+            .update({ 
+                metadata: JSON.stringify(metadata),
+                updated_at: new Date()
+            });
+
+        // 2. Propagate to all existing workspaces/users for this tenant
         const workspaces = await knex('workspaces').where({ tenant_id: id }).select('id');
         const workspaceIds = workspaces.map(w => w.id);
 
-        if (workspaceIds.length === 0) {
-            return successResponse(res, null, 'Role permissions saved (no active workspaces found to update).');
+        if (workspaceIds.length > 0) {
+            // Perform updates for each role in the matrix
+            for (const [role, permissions] of Object.entries(matrix)) {
+                await knex('workspace_users')
+                    .whereIn('workspace_id', workspaceIds)
+                    .andWhere({ role: role })
+                    .update({
+                        permissions: JSON.stringify(permissions)
+                    });
+            }
         }
 
-        // Perform updates for each role in the matrix
-        for (const [role, permissions] of Object.entries(matrix)) {
-            await knex('workspace_users')
-                .whereIn('workspace_id', workspaceIds)
-                .andWhere({ role: role })
-                .update({
-                    permissions: JSON.stringify(permissions)
-                });
-        }
-
-        return successResponse(res, null, 'Role permissions synchronized across all workspace users for this tenant.');
+        return successResponse(res, null, 'Role permissions synchronized globally for this tenant.');
     } catch (error) {
         console.error('Update Role Permissions Error:', error);
         return errorResponse(res, error);
@@ -1248,16 +1262,20 @@ const getRolePermissions = async (req, res) => {
     try {
         const { id } = req.params; // tenantId
 
-        // Find all workspaces for this tenant
+        // 1. Try to get from Tenant Metadata (Source of Truth)
+        const tenant = await knex('tenants').where({ id }).select('metadata').first();
+        if (tenant && tenant.metadata && tenant.metadata.role_policies) {
+            return successResponse(res, tenant.metadata.role_policies);
+        }
+
+        // 2. Fallback: If not in metadata, try to extract from existing workspace_users
         const workspaces = await knex('workspaces').where({ tenant_id: id }).select('id');
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length === 0) {
-            return successResponse(res, {}, 'No workspaces found');
+            return successResponse(res, {}, 'No policy found');
         }
 
-        // Get one representative record per role to see current permissions
-        // Using PostgreSQL DISTINCT ON to get one row per role
         const records = await knex('workspace_users')
             .whereIn('workspace_id', workspaceIds)
             .whereNotNull('permissions')

@@ -275,12 +275,27 @@ const createWorkspace = async (req, res) => {
                     console.log(`Updated user ${localUser.id} with tenant_id ${targetTenantId}`);
                 }
 
+                // Resolve permissions from Tenant-level policy if available
+                let permissions = { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true };
+                
+                const tenantRecord = await trx('tenants').where({ id: targetTenantId }).first();
+                if (tenantRecord && tenantRecord.metadata && tenantRecord.metadata.role_policies) {
+                    const policies = typeof tenantRecord.metadata.role_policies === 'string' 
+                        ? JSON.parse(tenantRecord.metadata.role_policies) 
+                        : tenantRecord.metadata.role_policies;
+                    
+                    if (policies[userRole]) {
+                        permissions = policies[userRole];
+                        console.log(`Applied tenant-level permissions for ${userRole}`);
+                    }
+                }
+
                 await trx('workspace_users').insert({
                     id: uuidv4(),
                     workspace_id: workspaceId,
                     user_id: localUser.id,
                     role: userRole,
-                    permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true },
+                    permissions: JSON.stringify(permissions),
                 });
 
                 // 6. Add User to Keycloak Groups (Tenant Admin & Users) for this Organization
