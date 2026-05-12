@@ -1088,7 +1088,9 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
         // --- Period Filtering: Exact Month / Quarter / FY on invoice dates ---
         // We filter directly on the actual invoice/document date columns so that
         // a record with invoice_date = 15/04/2025 correctly appears when Month=April is selected.
-        const isPendingView = workflow_status === 'pending';
+        // Check if we are in "Pending" view (can be string or array containing 'pending')
+        const workflowStatusStr = Array.isArray(workflow_status) ? workflow_status.join(',') : (workflow_status || '');
+        const isPendingView = workflowStatusStr.toLowerCase().includes('pending');
         const hasPeriodFilter = (fy && fy !== 'ALL') || (month && month !== 'ALL') || (quarter && quarter !== 'ALL');
 
         if (hasPeriodFilter) {
@@ -1107,12 +1109,13 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
             let endDate = null;
             if (isPendingView) {
                 if (month && month !== 'ALL') {
-                    const m = parseInt(month);
+                    const m = parseInt(month.toString().split('-').pop());
                     let yearForMonth = filterYear;
                     if (filterYear && m >= 1 && m <= 3) yearForMonth = filterYear + 1;
                     if (yearForMonth) endDate = new Date(yearForMonth, m, 0);
                 } else if (quarter && quarter !== 'ALL') {
-                    const q = parseInt(quarter);
+                    const qStr = quarter.toString().split('-').pop();
+                    const q = parseInt(qStr.replace('Q', ''));
                     const lastMonthOfQ = { 1: 6, 2: 9, 3: 12, 4: 3 }[q];
                     let yearForQ = (q === 4 && filterYear) ? filterYear + 1 : filterYear;
                     if (yearForQ) endDate = new Date(yearForQ, lastMonthOfQ, 0);
@@ -1135,7 +1138,8 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                     const self = this;
 
                     if (month && month !== 'ALL') {
-                        const m = parseInt(month);
+                        // Handle potential hyphenated strings from frontend (e.g. "2025-04" -> 4)
+                        const m = parseInt(month.toString().split('-').pop());
                         // For Indian FY: April (4) – December (12) → start year; Jan (1) – Mar (3) → start year + 1
                         let yearForMonth = filterYear;
                         if (filterYear && m >= 1 && m <= 3) {
@@ -1158,7 +1162,8 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                         });
                     } else if (quarter && quarter !== 'ALL') {
                         // Determine which months belong to this quarter (Indian FY)
-                        const q = parseInt(quarter);
+                        const qStr = quarter.toString().split('-').pop();
+                        const q = parseInt(qStr.replace('Q', ''));
                         const quarterMonthMap = { 1: [4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12], 4: [1, 2, 3] };
                         const qMonths = quarterMonthMap[q] || [];
 
@@ -2013,15 +2018,17 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
                 if (quarter && quarter !== 'ALL') {
+                    const qStr = quarter.toString().split('-').pop();
+                    const q = qStr.replace('Q', '');
                     const qtMap = { '1': [4, 5, 6], '2': [7, 8, 9], '3': [10, 11, 12], '4': [1, 2, 3] };
-                    const qtMonths = qtMap[String(quarter)] || [];
+                    const qtMonths = qtMap[String(q)] || [];
                     if (filterYear) {
                         const qPeriods = qtMonths.map(m => `${String(m).padStart(2, '0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
                     }
                 }
                 if (month && month !== 'ALL') {
-                    const m = parseInt(month);
+                    const m = parseInt(month.toString().split('-').pop());
                     if (filterYear) {
                         const yearForMonth = (m >= 1 && m <= 3) ? filterYear + 1 : filterYear;
                         const exactPeriod = `${String(m).padStart(2, '0')}${yearForMonth}`;
