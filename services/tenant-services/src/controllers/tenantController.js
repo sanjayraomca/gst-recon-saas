@@ -1403,6 +1403,9 @@ module.exports = {
                     this.where('audit_log.table_name', 'ilike', `%${search}%`)
                         .orWhere('audit_log.action', 'ilike', `%${search}%`)
                         .orWhere('audit_log.modified_by', 'ilike', `%${search}%`)
+                        .orWhere(database.raw('audit_log.record_id::text'), 'ilike', `%${search}%`)
+                        .orWhere(database.raw('audit_log.new_value::text'), 'ilike', `%${search}%`)
+                        .orWhere(database.raw('audit_log.old_value::text'), 'ilike', `%${search}%`)
                         .orWhere('users.full_name', 'ilike', `%${search}%`)
                         .orWhere('users.email', 'ilike', `%${search}%`);
                 });
