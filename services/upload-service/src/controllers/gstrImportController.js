@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const xlsx = require('xlsx');
 const progressEmitter = require('../utils/progressEmitter');
 const { publishEvent } = require('../nats/natsClient');
+const db = require('../../../shared/src/db/connection');
 
 /**
  * Controller for Generic GSTR Import
@@ -63,6 +64,7 @@ class GSTRImportController {
 
             // Use user and tenant info from request context (set by auth middleware)
             const userId = req.user?.db_id || req.user?.id;
+            const userEmail = req.user?.email;
             let tenantUuid = req.user?.tenantId || req.user?.tenant_id || req.headers['x-tenant-id'];
 
             if (!userId) {
@@ -814,8 +816,6 @@ class GSTRImportController {
             if (!userEmail) {
                 return errorResponse(res, { message: 'User email not found in token' }, 401);
             }
-
-            const db = require('../../../shared/src/db/connection');
 
             const userQuery = await db.raw('SELECT id, tenant_id FROM users WHERE email = ?', [userEmail]);
 
