@@ -1714,7 +1714,7 @@ CREATE INDEX IF NOT EXISTS idx_norm_gstr2a_listing
 -- ========================================================
 
 CREATE TABLE IF NOT EXISTS reconciliation_runs (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id),
     gstin_id UUID NOT NULL,
     period_id UUID REFERENCES tax_periods(id),
@@ -1734,7 +1734,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
 );
 
 CREATE TABLE IF NOT EXISTS reconciliation_results (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
     recon_run_id UUID NOT NULL REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id),
     purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
@@ -1763,7 +1763,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
 
 -- Separate results table for 2A vs Book isolation
 CREATE TABLE IF NOT EXISTS reconciliation_results_2a (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
     recon_run_id UUID NOT NULL REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id),
     purchase_invoice_id UUID REFERENCES purchase_vouchers(id),
@@ -1823,7 +1823,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_status (
 
 CREATE TABLE IF NOT EXISTS reconciliation_actions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    reconciliation_result_id INTEGER NOT NULL REFERENCES reconciliation_results(id) ON DELETE CASCADE,
+    reconciliation_result_id UUID NOT NULL REFERENCES reconciliation_results(id) ON DELETE CASCADE,
     action_type VARCHAR(50),
     decision VARCHAR(50),
     decision_reason TEXT,

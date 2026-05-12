@@ -95,11 +95,8 @@ const updateReconStatus = async (req, res) => {
             return errorResponse(res, 'X-Workspace-ID header is required', 400);
         }
 
-        const resultIdInt = parseInt(resultId, 10);
-        if (isNaN(resultIdInt)) {
-            await trx.rollback();
-            return errorResponse(res, 'result_id must be a valid integer', 400);
-        }
+        // No parseInt needed for UUIDs
+
 
         if (!recon_status || !VALID_STATUSES.includes(recon_status)) {
             await trx.rollback();
@@ -111,7 +108,7 @@ const updateReconStatus = async (req, res) => {
             .leftJoin('purchase_vouchers', `${resultsTable}.purchase_invoice_id`, 'purchase_vouchers.id')
             .leftJoin('normalized_gstr2b_invoices', `${resultsTable}.gstr2b_invoice_id`, 'normalized_gstr2b_invoices.id')
             .leftJoin('normalized_gstr2a_invoices', `${resultsTable}.gstr2a_invoice_id`, 'normalized_gstr2a_invoices.id')
-            .where({ [`${resultsTable}.id`]: resultIdInt, [`${resultsTable}.workspace_id`]: workspaceId })
+            .where({ [`${resultsTable}.id`]: resultId, [`${resultsTable}.workspace_id`]: workspaceId })
             .select(
                 `${resultsTable}.*`,
                 'purchase_vouchers.supplier_invoice_no as purchase_invoice_number',
@@ -143,7 +140,7 @@ const updateReconStatus = async (req, res) => {
 
         // 3. Upsert logic for reconciliation_status
         const extraInfo = {
-            recon_result_id: resultIdInt,
+            recon_result_id: resultId,
             match_score: reconResult.match_score,
             match_status: reconResult.match_status,
             recon_run_id: reconResult.recon_run_id,
