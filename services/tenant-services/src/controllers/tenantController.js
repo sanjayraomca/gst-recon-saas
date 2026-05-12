@@ -805,7 +805,11 @@ const getTenantActivities = async (req, res) => {
         const database = require('../../../shared/src/db/connection');
         let query = database('activity_logs')
             .leftJoin('users', 'activity_logs.user_id', 'users.id')
-            .where('activity_logs.tenant_id', tenantId);
+            .where('activity_logs.tenant_id', tenantId)
+            .where(function () {
+                this.whereNot('users.email', 'superadmin.dev@gmail.com')
+                    .orWhereNull('users.email');
+            });
 
         if (workspaceId) {
             query = query.where('activity_logs.workspace_id', workspaceId);
@@ -1390,6 +1394,10 @@ module.exports = {
             let query = database('audit_log')
                 .leftJoin('users', function() {
                     this.on(database.raw('audit_log.modified_by::uuid'), '=', 'users.id')
+                })
+                .where(function () {
+                    this.whereNot('users.email', 'superadmin.dev@gmail.com')
+                        .orWhereNull('users.email');
                 })
                 .select(
                     'audit_log.*',
