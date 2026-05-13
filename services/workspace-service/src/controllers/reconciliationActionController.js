@@ -68,14 +68,14 @@ const updateReconStatus = async (req, res) => {
         const { recon_status, run_type = 'PURCHASE_2B', decision_reason, notes } = req.body;
         const is2a = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(run_type);
 
-        if (is2a) {
-            // Drop the legacy check constraint that limits status values
-            try {
-                await trx.raw(`ALTER TABLE reconciliation_status_gst2a_vs_book DROP CONSTRAINT IF EXISTS chk_recon_status_2a`);
-            } catch (e) {
-                // Ignore if fails (e.g. permission issues or already dropped)
-                console.log('[updateReconStatus] Note: Could not drop constraint chk_recon_status_2a, continuing...');
-            }
+        // Drop legacy check constraints that limit status values to a fixed list
+        try {
+            await trx.raw(`ALTER TABLE reconciliation_status DROP CONSTRAINT IF EXISTS chk_recon_status`);
+            await trx.raw(`ALTER TABLE reconciliation_status_gst2a_vs_book DROP CONSTRAINT IF EXISTS chk_recon_status_2a`);
+            await trx.raw(`ALTER TABLE reconciliation_status_2a_vs_2b DROP CONSTRAINT IF EXISTS chk_recon_status_2a_vs_2b`);
+        } catch (e) {
+            // Ignore if fails (e.g. permission issues or already dropped)
+            console.log('[updateReconStatus] Note: Could not drop status constraints, continuing...');
         }
         const VALID_STATUSES = [
             'pending', 'matched', 'mismatched', 'not_in_books', 'not_in_portal', 'excluded',
@@ -145,7 +145,11 @@ const updateReconStatus = async (req, res) => {
             match_status: reconResult.match_status,
             recon_run_id: reconResult.recon_run_id,
             decision_reason: decision_reason || reconResult.decision_reason,
-            notes: notes || reconResult.notes
+            notes: notes || reconResult.notes,
+            // Include invoice identifiers to make audit logs searchable by invoice number
+            purchase_invoice_number: reconResult.purchase_invoice_number,
+            gstr2b_invoice_number: reconResult.gstr2b_invoice_number,
+            gstr2a_invoice_number: reconResult.gstr2a_invoice_number
         };
 
         let existing = null;

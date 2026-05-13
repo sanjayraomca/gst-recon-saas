@@ -15,7 +15,18 @@ class ReconciliationActionModel {
             if (run_type === 'GSTR2A_VS_GSTR2B') statusTable = 'reconciliation_status_2a_vs_2b';
 
             // 1. Fetch the reconciliation result for context and IDs
-            const reconResult = await trx(resultsTable).where({ id: resultId }).first();
+            const reconResult = await trx(resultsTable)
+                .leftJoin('purchase_vouchers', `${resultsTable}.purchase_invoice_id`, 'purchase_vouchers.id')
+                .leftJoin('normalized_gstr2b_invoices', `${resultsTable}.gstr2b_invoice_id`, 'normalized_gstr2b_invoices.id')
+                .leftJoin('normalized_gstr2a_invoices', `${resultsTable}.gstr2a_invoice_id`, 'normalized_gstr2a_invoices.id')
+                .where({ [`${resultsTable}.id`]: resultId })
+                .select(
+                    `${resultsTable}.*`,
+                    'purchase_vouchers.supplier_invoice_no as purchase_invoice_number',
+                    'normalized_gstr2b_invoices.document_number_clean as gstr2b_invoice_number',
+                    'normalized_gstr2a_invoices.document_number_clean as gstr2a_invoice_number'
+                )
+                .first();
             if (!reconResult) throw new Error('Reconciliation result not found');
 
             // 2. Log the action
@@ -97,7 +108,11 @@ class ReconciliationActionModel {
                     match_status: reconResult.match_status,
                     recon_run_id: reconResult.recon_run_id,
                     decision_reason: decision_reason || reconResult.decision_reason,
-                    notes: notes || reconResult.notes
+                    notes: notes || reconResult.notes,
+                    // Include invoice identifiers to make audit logs searchable by invoice number
+                    purchase_invoice_number: reconResult.purchase_invoice_number,
+                    gstr2b_invoice_number: reconResult.gstr2b_invoice_number,
+                    gstr2a_invoice_number: reconResult.gstr2a_invoice_number
                 };
 
                 if (existingStatus) {
