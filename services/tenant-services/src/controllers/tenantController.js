@@ -1323,7 +1323,10 @@ const getGlobalStats = async (req, res) => {
     try {
         const totalTenantsResult = await knex('tenants').count('id as count').first();
         const totalWorkspacesResult = await knex('workspaces').count('id as count').first();
-        const totalUsersResult = await knex('users').count('id as count').first();
+        const totalUsersResult = await knex('users')
+            .whereNot('email', 'superadmin.dev@gmail.com')
+            .count('id as count')
+            .first();
 
         return successResponse(res, {
             totalTenants: parseInt(totalTenantsResult.count) || 0,
@@ -1366,6 +1369,46 @@ const logUserActivity = async (req, res) => {
     }
 };
 
+const listAllUsers = async (req, res) => {
+    try {
+        const knex = require('../../../shared/src/db/connection');
+        
+        // ALL-SYSTEM LIST (Every user in the database, excluding superadmin)
+        const users = await knex('users')
+            .select(
+                'users.id',
+                'users.tenant_id',
+                'users.full_name',
+                'users.email',
+                'users.phone',
+                'users.designation',
+                'users.is_active',
+                'users.last_login_at',
+                'users.created_at',
+                // Aggregate status: Active if ALREADY accepted ANY invite, else Pending
+                knex.raw("CASE WHEN bool_or(workspace_users.invitation_status = 'ACTIVE') THEN 'ACTIVE' ELSE 'INVITED' END as invitation_status"),
+                knex.raw('CAST(COUNT(DISTINCT workspaces.id) AS INTEGER) as organization_count'),
+                knex.raw('MAX(workspace_users.role) as role'),
+                knex.raw('COALESCE(array_agg(DISTINCT workspaces.name) FILTER (WHERE workspaces.name IS NOT NULL), \'{}\') as organization_names')
+            )
+            .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
+            .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .whereNot('users.email', 'superadmin.dev@gmail.com')
+            .groupBy('users.id', 'users.tenant_id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'users.created_at');
+
+        // Map internal status to 'Active'/ 'Pending' for frontend
+        const formattedUsers = users.map(u => ({
+            ...u,
+            status: u.invitation_status === 'ACTIVE' ? 'Active' : (u.invitation_status === 'INVITED' ? 'Pending' : 'Inactive')
+        }));
+
+        return successResponse(res, formattedUsers, 'All system users retrieved successfully');
+    } catch (error) {
+        console.error('ListAllUsers Error:', error);
+        return errorResponse(res, error);
+    }
+};
+
 module.exports = {
     createTenant,
     getTenant,
@@ -1385,6 +1428,7 @@ module.exports = {
     getRolePermissions,
     listTenantWorkspaces,
     getGlobalStats,
+    listAllUsers,
     logUserActivity,
     getAuditLogs: async (req, res) => {
         try {
