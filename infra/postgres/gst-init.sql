@@ -531,6 +531,43 @@ INSERT INTO state_code_master (state, code) VALUES
 ON CONFLICT (state) DO NOTHING;
 
 -- ============================================
+-- SUPERADMIN SEEDING
+-- ============================================
+
+DO $$ 
+DECLARE 
+    v_tenant_id UUID := '00000000-0000-0000-0000-000000000001';
+    v_workspace_id UUID := '00000000-0000-0000-0000-000000000002';
+    v_user_id UUID;
+    v_email TEXT := 'superadmin.dev@gmail.com';
+BEGIN
+    -- 1. Insert Default Tenant
+    INSERT INTO tenants (id, tenant_code, legal_name, subscription_plan, subscription_status)
+    VALUES (v_tenant_id, 'SYSTEM_TENANT', 'System Administration', 'ENTERPRISE', 'ACTIVE')
+    ON CONFLICT (tenant_code) DO NOTHING;
+
+    -- 2. Insert Default Workspace
+    INSERT INTO workspaces (id, tenant_id, workspace_code, name, workspace_type, compliance_level)
+    VALUES (v_workspace_id, v_tenant_id, 'SYSTEM_WS', 'System Workspace', 'ENTERPRISE', 'AUDIT_READY')
+    ON CONFLICT (tenant_id, workspace_code) DO NOTHING;
+
+    -- 3. Ensure User Exists and get ID
+    -- We try to use a fixed ID for consistency in fresh installs, but handle existing emails
+    INSERT INTO users (id, email, full_name, auth_provider_type, is_active, tenant_id)
+    VALUES ('00000000-0000-0000-0000-000000000003', v_email, 'Dev SuperAdmin', 'KEYCLOAK', TRUE, v_tenant_id)
+    ON CONFLICT (email) DO UPDATE SET is_active = EXCLUDED.is_active
+    RETURNING id INTO v_user_id;
+
+    -- 4. Link User to Workspace with SUPER_ADMIN role
+    INSERT INTO workspace_users (workspace_id, user_id, role)
+    VALUES (v_workspace_id, v_user_id, 'SUPER_ADMIN')
+    ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role;
+
+    -- 5. Update Tenant Owner
+    UPDATE tenants SET owner_user_id = v_user_id WHERE id = v_tenant_id AND (owner_user_id IS NULL OR owner_user_id != v_user_id);
+END $$;
+
+-- ============================================
 -- DOMAIN 11: GSTR IMPORT & RECONCILIATION
 -- ============================================
 
