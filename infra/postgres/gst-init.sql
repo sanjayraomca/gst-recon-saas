@@ -534,6 +534,7 @@ ON CONFLICT (state) DO NOTHING;
 -- SUPERADMIN SEEDING
 -- ============================================
 
+/*
 DO $$ 
 DECLARE 
     v_tenant_id UUID := '00000000-0000-0000-0000-000000000001';
@@ -566,6 +567,7 @@ BEGIN
     -- 5. Update Tenant Owner
     UPDATE tenants SET owner_user_id = v_user_id WHERE id = v_tenant_id AND (owner_user_id IS NULL OR owner_user_id != v_user_id);
 END $$;
+*/
 
 -- ============================================
 -- DOMAIN 11: GSTR IMPORT & RECONCILIATION

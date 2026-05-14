@@ -34,13 +34,13 @@ class BookDataModel {
                 return { table: 'sales', invoiceTypes: ['DEBIT_NOTE'] };
             case 'purchase_invoice':
             case 'PURCHASE_REGISTER':
-                return { table: 'purchase', voucherTypes: ['PURCHASE', 'EXPENSE', 'CREDIT_NOTE', 'DEBIT_NOTE'] };
+                return { table: 'purchase', voucherTypes: ['PURCHASE'] };
             case 'PURCHASE_UPLOAD':
                 return { table: 'purchase' }; // Includes all: PA, EXP, CN, DN
             case 'expense_invoice':
                 return { table: 'purchase', voucherTypes: ['EXPENSE'] };
             case 'purchase_return':
-                return { table: 'purchase', bookTypes: ['DN'], voucherTypes: ['PURCHASE'] };
+                return { table: 'purchase', bookTypes: ['PR'], voucherTypes: ['PURCHASE'] };
             case 'cn_purchase':
                 return { table: 'purchase', voucherTypes: ['CREDIT_NOTE'], bookTypes: ['CN'] };
             case 'dn_purchase':
@@ -263,15 +263,23 @@ class BookDataModel {
                 sgst: 'si.total_sgst',
                 cess: 'si.total_cess',
                 totalAmt: 'si.total_invoice_value',
+                net: 'si.total_invoice_value',
+                netAmount: 'si.total_invoice_value',
+                roundOff: 'si.round_off',
                 status: 'si.filing_status',
                 docType: 'si.invoice_type',
+                gstType: knex.raw("UPPER(COALESCE(si.invoice_type, 'NONGST'))"),
                 placeOfSupply: 'si.place_of_supply'
             };
 
-            if (filters.column_filters) {
-                let cf = filters.column_filters;
-                if (typeof cf === 'string') cf = JSON.parse(cf);
-                BookDataModel._applyColumnFilters(q, cf, colMapping);
+            let cf = filters.column_filters || pagination.columnFilters;
+            if (cf) {
+                if (typeof cf === 'string') {
+                    try { cf = JSON.parse(cf); } catch (e) { cf = null; }
+                }
+                if (cf && Object.keys(cf).length > 0) {
+                    BookDataModel._applyColumnFilters(q, cf, colMapping);
+                }
             }
 
             // Apply legacy period/search logic alongside new filters for full composability
@@ -377,8 +385,8 @@ class BookDataModel {
             if (group_by_supplier) {
                 records = await q
                     .select(
-                        knex.raw('trim(si.customer_name) as party'),
-                        knex.raw('trim(si.customer_gstin) as gstin'),
+                        knex.raw('max(si.customer_name) as party'),
+                        knex.raw('max(si.customer_gstin) as gstin'),
                         knex.raw('sum(si.total_taxable_value) as "taxableAmt"'),
                         knex.raw('sum(si.total_cgst) as cgst'),
                         knex.raw('sum(si.total_sgst) as sgst'),
@@ -388,7 +396,7 @@ class BookDataModel {
                         knex.raw('sum(si.round_off) as "roundOff"'),
                         knex.raw('count(*) as "invoiceCount"'),
                         knex.raw('max(si.place_of_supply) as "placeOfSupply"'),
-                        knex.raw('max(si.invoice_type) as "docType"')
+                        knex.raw('UPPER(max(si.invoice_type)) as "gstType"')
                     )
                     .groupByRaw('trim(si.customer_gstin), trim(si.customer_name)')
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
@@ -412,6 +420,7 @@ class BookDataModel {
                         'si.place_of_supply as placeOfSupply',
                         knex.raw("CASE WHEN si.is_interstate THEN 'Yes' ELSE 'No' END as \"isInterstate\""),
                         'si.filing_status as status',
+                        knex.raw("UPPER(COALESCE(si.invoice_type, 'NONGST')) as \"gstType\""),
                         'si.invoice_type as docType',
                         'si.book_type as bookType',
                         'si.round_off as roundOff',
@@ -466,16 +475,24 @@ class BookDataModel {
                 sgst: 'ev.total_sgst_amount',
                 cess: 'ev.total_cess_amount',
                 totalAmt: 'ev.net_amount',
+                net: 'ev.net_amount',
+                netAmount: 'ev.net_amount',
+                roundOff: 'ev.round_off',
                 status: 'ev.status',
                 docType: 'ev.book_type',
                 vchType: 'ev.voucher_type',
+                gstType: knex.raw("COALESCE(NULLIF(UPPER(ev.source_section), 'EXPENSE'), NULLIF(UPPER(ev.voucher_type), 'EXPENSE'), 'NONGST')"),
                 placeOfSupply: 'ev.place_of_supply'
             };
 
-            if (filters.column_filters) {
-                let cf = filters.column_filters;
-                if (typeof cf === 'string') cf = JSON.parse(cf);
-                BookDataModel._applyColumnFilters(q, cf, colMappingPr);
+            let cfPr = filters.column_filters || pagination.columnFilters;
+            if (cfPr) {
+                if (typeof cfPr === 'string') {
+                    try { cfPr = JSON.parse(cfPr); } catch (e) { cfPr = null; }
+                }
+                if (cfPr && Object.keys(cfPr).length > 0) {
+                    BookDataModel._applyColumnFilters(q, cfPr, colMappingPr);
+                }
             }
 
             // Apply legacy logic alongside new filters
@@ -507,6 +524,9 @@ class BookDataModel {
                     this.where('ev.supplier_invoice_no', 'ilike', `%${search}%`)
                         .orWhere('ev.supplier_name', 'ilike', `%${search}%`)
                         .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
+                        .orWhere('ev.book_vchr_no', 'ilike', `%${search}%`)
+                        .orWhere('ev.voucher_type', 'ilike', `%${search}%`)
+                        .orWhere('ev.source_section', 'ilike', `%${search}%`)
                 });
             }
             if (gstin) {
@@ -590,6 +610,7 @@ class BookDataModel {
                         knex.raw('sum(ev.round_off) as "roundOff"'),
                         knex.raw('count(*) as "invoiceCount"'),
                         knex.raw('max(ev.place_of_supply) as "placeOfSupply"'),
+                        knex.raw('COALESCE(NULLIF(UPPER(max(ev.source_section)), \'EXPENSE\'), NULLIF(UPPER(max(ev.voucher_type)), \'EXPENSE\'), \'NONGST\') as "gstType"'),
                         knex.raw('max(ev.voucher_type) as "vchType"')
                     )
                     .groupByRaw('trim(ev.supplier_gstin), trim(ev.supplier_name)')
@@ -621,7 +642,7 @@ class BookDataModel {
                         'ev.book_type as docType',
                         'ev.voucher_type as vchType',
                         'ev.voucher_type',
-                        'ev.source_section as gstType',
+                        knex.raw("COALESCE(NULLIF(UPPER(ev.source_section), 'EXPENSE'), NULLIF(UPPER(ev.voucher_type), 'EXPENSE'), 'NONGST') as \"gstType\""),
                         'ev.is_rcm as reverseCharge',
                         'ev.round_off as roundOff',
                         'rs.recon_status as workflow_status',
@@ -717,8 +738,11 @@ class BookDataModel {
                     sgst: 'si.total_sgst',
                     cess: 'si.total_cess',
                     totalAmt: 'si.total_invoice_value',
+                    net: 'si.total_invoice_value',
+                    roundOff: 'si.round_off',
                     status: 'si.filing_status',
                     docType: 'si.invoice_type',
+                    gstType: knex.raw("UPPER(COALESCE(si.invoice_type, 'NONGST'))"),
                     placeOfSupply: 'si.place_of_supply'
                 };
                 BookDataModel._applyColumnFilters(q, cf, colMappingSales);
@@ -818,9 +842,12 @@ class BookDataModel {
                     sgst: 'ev.total_sgst_amount',
                     cess: 'ev.total_cess_amount',
                     totalAmt: 'ev.net_amount',
+                    net: 'ev.net_amount',
+                    roundOff: 'ev.round_off',
                     status: 'ev.status',
                     docType: 'ev.book_type',
                     vchType: 'ev.voucher_type',
+                    gstType: knex.raw("COALESCE(NULLIF(UPPER(ev.source_section), 'EXPENSE'), NULLIF(UPPER(ev.voucher_type), 'EXPENSE'), 'NONGST')"),
                     placeOfSupply: 'ev.place_of_supply'
                 };
                 BookDataModel._applyColumnFilters(q, cf, colMappingPr);
