@@ -16,7 +16,9 @@ app.use('/workspaces', require('./routes/workspaceRoutes'));
 app.use('/purchase-invoices', require('./routes/purchaseInvoiceRoutes'));
 app.use('/gstr2b-invoices', require('./routes/gstr2bInvoiceRoutes'));
 app.use('/reconciliation', require('./routes/reconciliationRoutes'));
-app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-reversals
+app.use('/connectors', require('./connectors/connectorRoutes')); // API key management for inbound ERP connectors (SUPER_ADMIN only)
+app.use('/itc-decisions', require('./routes/itcRoutes'));   // ITC decisions
+app.use('/itc-reversals', require('./routes/itcRoutes'));   // ITC reversals
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
 app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
 app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
@@ -43,7 +45,7 @@ const ReconciliationTriggerService = require('./services/reconciliationTriggerSe
 const startServer = async () => {
     try {
         await connectNats();
-        
+
         // Initialize automated reconciliation listeners
         ReconciliationTriggerService.init();
 
