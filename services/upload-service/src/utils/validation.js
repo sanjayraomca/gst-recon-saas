@@ -67,12 +67,15 @@ const parseExcelDate = (dateVal) => {
         }
     }
 
-    // If number (Excel serial date)
-    if (typeof dateVal === 'number' || (typeof dateVal === 'string' && !isNaN(parseFloat(dateVal)) && /^\d+$/.test(dateVal.trim()))) {
+    // If number (Excel serial date) or string that looks like one
+    const isNumeric = typeof dateVal === 'number' || (typeof dateVal === 'string' && !isNaN(parseFloat(dateVal)) && /^\d+(\.\d+)?$/.test(dateVal.trim()));
+    
+    if (isNumeric) {
         const num = parseFloat(dateVal);
         // Excel serial dates are usually between 20000 (1954) and 60000 (2064)
         if (num > 20000 && num < 60000) {
-            const date = new Date((num - 25569) * 86400 * 1000);
+            // Excel's epoch is Dec 30, 1899. (num - 25569) converts to Unix epoch days.
+            const date = new Date(Math.round((num - 25569) * 86400 * 1000));
             return date.toISOString().split('T')[0];
         }
     }

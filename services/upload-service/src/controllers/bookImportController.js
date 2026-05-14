@@ -161,8 +161,21 @@ class BookImportController {
             const workbook = xlsx.readFile(uploadedFilePath);
             const { validateFileType } = require('../utils/fileValidation');
 
+            // 7. Extract Rows (with fallback for ParamQuery)
+            const sheetName = workbook.SheetNames[0];
+            const sheet = sheetName ? workbook.Sheets[sheetName] : null;
+            let jsonRows = sheet ? xlsx.utils.sheet_to_json(sheet, { header: 1 }) : null;
+
+            if (!jsonRows || jsonRows.length < 2) {
+                console.log(`[DEBUG] Standard parser returned empty, attempting ParamQuery fallback parser...`);
+                const fallbackRows = parseParamQueryFallback(uploadedFilePath);
+                if (fallbackRows && fallbackRows.length >= 2) {
+                    jsonRows = fallbackRows;
+                }
+            }
+
             console.log(`[DEBUG] Validating file type: expected=${type}`);
-            const fileTypeValidation = validateFileType(workbook, type);
+            const fileTypeValidation = validateFileType(workbook, type, jsonRows);
             if (!fileTypeValidation.valid) {
                 console.log(`[DEBUG] File type validation failed: ${fileTypeValidation.message}`);
                 if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
@@ -229,17 +242,7 @@ class BookImportController {
                 await progressEmitter.emitProgress(upload_id, 45, 'Extracting sheets...');
             }
 
-            const sheetName = workbook.SheetNames[0];
-            console.log(`[DEBUG] Processing first sheet: ${sheetName}`);
-            let jsonRows = sheetName ? xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 }) : null;
-
-            if (!jsonRows || jsonRows.length < 2) {
-                console.log(`[DEBUG] Standard parser returned empty, attempting ParamQuery fallback parser...`);
-                const fallbackRows = parseParamQueryFallback(uploadedFilePath);
-                if (fallbackRows && fallbackRows.length >= 2) {
-                    jsonRows = fallbackRows;
-                }
-            }
+            console.log(`[DEBUG] Processing extracted rows. Count=${jsonRows ? jsonRows.length : 0}`);
 
             console.log(`[DEBUG] Total rows read from sheet: ${jsonRows ? jsonRows.length : 0}`);
 

@@ -718,10 +718,10 @@ class GSTRImportController {
                 workspaceId: workspaceId || null,
                 actionType: 'IMPORT_GSTR_DATA',
                 entityType: 'GSTR_Data',
-                details: { 
-                    fileName: req.file.originalname, 
-                    type: gstr_type.toUpperCase(), 
-                    recordsInserted: totalInserted, 
+                details: {
+                    fileName: req.file.originalname,
+                    type: gstr_type.toUpperCase(),
+                    recordsInserted: totalInserted,
                     period: return_period,
                     source: 'EXCEL'
                 },
@@ -971,14 +971,14 @@ class GSTRImportController {
             // --- ACTIVITY LOG ---
             const tenantId = req.user?.tenant_id || req.user?.tenantId || req.headers['x-tenant-id'];
             const displayType = (import_type?.toUpperCase() === 'GSTR2A') ? 'GSTR-2A' : 'GSTR-2B';
-            
+
             await logActivity({
                 userId: req.user?.db_id || req.user?.id || req.user?.sub,
                 tenantId: tenantId,
                 workspaceId: workspaceId,
                 actionType: `VIEW_ALL_${displayType.replace('-', '')}_INVOICES`,
                 entityType: 'GSTR_DATA',
-                details: { 
+                details: {
                     page_name: `${displayType} Register`,
                     filters: req.query,
                     pagination: {
@@ -1065,9 +1065,9 @@ class GSTRImportController {
                     workspaceId: workspaceId,
                     actionType: `VIEW_${displayType.replace('-', '')}_SUMMARY`,
                     entityType: 'GSTR_DATA',
-                    details: { 
+                    details: {
                         page_name: `${displayType} Summary`,
-                        period: return_period, 
+                        period: return_period,
                         import_type,
                         filters: req.query
                     },

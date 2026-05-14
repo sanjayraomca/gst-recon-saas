@@ -15,7 +15,7 @@ const fs = require('fs');
 const parseParamQueryFallback = (filePath) => {
     try {
         // Attempt to extract worksheet1.xml from the ZIP archive
-        const xml = execSync(`unzip -p "${filePath}" worksheet1.xml 2>/dev/null`).toString();
+        const xml = execSync(`unzip -p "${filePath}" worksheet1.xml 2>/dev/null`, { maxBuffer: 10 * 1024 * 1024 }).toString();
         
         if (!xml || xml.trim() === '') {
             return null; // Not a ParamQuery file or failed to extract

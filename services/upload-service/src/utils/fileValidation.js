@@ -10,14 +10,15 @@
  * 
  * @param {Object} workbook - Parsed xlsx workbook
  * @param {string} type - Expected type (e.g., GSTR2A, GSTR2B, SALES, PURCHASE)
+ * @param {Array} overrideRows - Optional pre-parsed rows to validate against
  * @returns {Object} - { valid: boolean, message: string }
  */
-const validateFileType = (workbook, type) => {
-    if (!workbook || !workbook.SheetNames || !type) {
+const validateFileType = (workbook, type, overrideRows = null) => {
+    if ((!workbook || !workbook.SheetNames) && !overrideRows) {
         return { valid: false, message: 'Invalid workbook or type provided.' };
     }
 
-    const sNames = workbook.SheetNames.map(s => s.toUpperCase());
+    const sNames = (workbook?.SheetNames || ['Fallback']).map(s => s.toUpperCase());
     const typeUpper = type.toUpperCase();
 
     // 1. GSTR-2A / 2B Validation
@@ -62,14 +63,22 @@ const validateFileType = (workbook, type) => {
         }
     }
 
-    // 2. Sales/Purchase Book Validation
     if (typeUpper === 'SALES' || typeUpper === 'PURCHASE' ||
         typeUpper === 'SALES_RETURN' || typeUpper === 'PURCHASE_RETURN' ||
         typeUpper === 'SALES_REGISTER' || typeUpper === 'PURCHASE_REGISTER') {
 
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const xlsx = require('xlsx');
-        const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, range: 0 });
+        let rows = overrideRows;
+        if (!rows && workbook && workbook.SheetNames.length > 0) {
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            if (sheet) {
+                const xlsx = require('xlsx');
+                rows = xlsx.utils.sheet_to_json(sheet, { header: 1, range: 0 });
+            }
+        }
+
+        if (!rows || rows.length === 0) {
+             return { valid: false, message: 'No data found in the file.' };
+        }
 
         // Collect all text from the first 15 rows into one big uppercase string (header scan)
         let headerText = '';
