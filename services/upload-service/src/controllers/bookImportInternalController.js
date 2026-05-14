@@ -5,6 +5,7 @@ const { processPurchaseSheet, processSalesSheet } = require('../utils/bookSheetP
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { publishEvent } = require('../nats/natsClient');
+const { parseParamQueryFallback } = require('../utils/paramQueryParser');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const db = require('../../../shared/src/db/connection');
@@ -75,7 +76,15 @@ const uploadInternal = async (req, res) => {
         // ── Parse file — same as main controller ─────────────────────────────
         const workbook = xlsx.readFile(uploadedFilePath);
         const sheetName = workbook.SheetNames[0];
-        const jsonRows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+        let jsonRows = sheetName ? xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 }) : null;
+
+        // ParamQuery Fallback check
+        if (!jsonRows || jsonRows.length < 2) {
+            const fallbackRows = parseParamQueryFallback(uploadedFilePath);
+            if (fallbackRows && fallbackRows.length >= 2) {
+                jsonRows = fallbackRows;
+            }
+        }
 
         if (!jsonRows || jsonRows.length < 2) {
             if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);

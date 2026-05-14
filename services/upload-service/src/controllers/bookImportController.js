@@ -11,6 +11,7 @@ const db = require('../../../shared/src/db/connection');
 const progressEmitter = require('../utils/progressEmitter');
 const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
 const { publishEvent } = require('../nats/natsClient');
+const { parseParamQueryFallback } = require('../utils/paramQueryParser');
 
 
 async function computeFileHash(filePath) {
@@ -230,8 +231,17 @@ class BookImportController {
 
             const sheetName = workbook.SheetNames[0];
             console.log(`[DEBUG] Processing first sheet: ${sheetName}`);
-            const jsonRows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-            console.log(`[DEBUG] Total rows read from sheet: ${jsonRows.length}`);
+            let jsonRows = sheetName ? xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 }) : null;
+
+            if (!jsonRows || jsonRows.length < 2) {
+                console.log(`[DEBUG] Standard parser returned empty, attempting ParamQuery fallback parser...`);
+                const fallbackRows = parseParamQueryFallback(uploadedFilePath);
+                if (fallbackRows && fallbackRows.length >= 2) {
+                    jsonRows = fallbackRows;
+                }
+            }
+
+            console.log(`[DEBUG] Total rows read from sheet: ${jsonRows ? jsonRows.length : 0}`);
 
             if (upload_id) {
                 await progressEmitter.emitProgress(upload_id, 60, 'Validating & formatting records...');
