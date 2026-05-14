@@ -1,28 +1,28 @@
 {
   "info": {
-    "name": "GST Tool — Book Data Connectors API (Final)",
-    "_postman_id": "gst-connectors-v3",
-    "description": "API key management for inbound ERP connectors.\n\n**Base URL**: http://localhost:3002\n\n**Auth**: JWT Bearer token (verifyToken) + SUPER_ADMIN role check.\nOnly a system Super Admin can call these endpoints.\n\n**Key Design**:\n- One record per workspace/organization\n- `production_key` → for live data pushes\n- `sandbox_key` → for testing/demo\n- `status`: active | inactive\n- `mode`: live | demo\n\n**How SuperAdmin creates a key**:\n1. Login as SuperAdmin → get JWT\n2. POST /connectors/api-keys with body `{ tenant_id, workspace_id }`\n3. Share the production_key or sandbox_key with the ERP connector\n\n**How ERP connector authenticates**:\n- POST /connectors/validate-key with body `{ api_key: \"prod_xxx...\" }`\n- No JWT needed for validate-key (public endpoint)",
+    "name": "GST Tool — Book Data Connectors API",
+    "_postman_id": "gst-connectors-v4",
+    "description": "Complete API collection for the Book Data Connector system.\n\n**Base URL**: http://localhost:3002\n\n**Two types of auth**:\n1. `Authorization: Bearer <jwt>` — for SuperAdmin management endpoints\n2. `X-API-Key: prod_xxx...` — for ERP connector data push (no JWT needed)\n\n**Flow**:\n1. SuperAdmin logs in → gets JWT\n2. SuperAdmin calls POST /connectors/api-keys → gets production_key + sandbox_key\n3. SuperAdmin gives key to tenant/client\n4. Client configures key in their ERP (Tally, Zoho, SAP)\n5. ERP calls POST /connectors/book-import with X-API-Key header\n6. Data lands in purchase_vouchers / sales_invoices tables",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url",     "value": "http://localhost:3002", "type": "string" },
-    { "key": "auth_token",   "value": "paste-your-superadmin-jwt-here", "type": "string" },
-    { "key": "tenant_id",    "value": "paste-target-tenant-uuid", "type": "string" },
-    { "key": "workspace_id", "value": "paste-target-workspace-uuid", "type": "string" }
+    { "key": "base_url",        "value": "http://localhost:3002",                                            "type": "string" },
+    { "key": "auth_token",      "value": "paste-your-superadmin-jwt-here",                                  "type": "string" },
+    { "key": "tenant_id",       "value": "285424e3-14fa-4eb9-b52c-2506655e868a",                            "type": "string", "description": "SHIV SHAKTI ENTERPRISE tenant" },
+    { "key": "workspace_id",    "value": "3869f921-2003-4998-8843-c135b5db8ec9",                            "type": "string", "description": "SHIV SHAKTI ENTERPRISE workspace" },
+    { "key": "production_key",  "value": "prod_709b22463cda03ad60bd4e598daeb4639231a5876001b7b22a0d8ffbd55a027b", "type": "string" },
+    { "key": "sandbox_key",     "value": "sand_c6996ef3f63f0dfe96b39b6475d159a05ddf921cc007f71cac1487be481067c1", "type": "string" }
   ],
   "item": [
     {
-      "name": "🔑 API Key Management (SUPER_ADMIN only)",
-      "description": "All endpoints here require:\n- Authorization: Bearer <superadmin_jwt>\n- Body/Query must include tenant_id + workspace_id of the TARGET organization\n\nThe SuperAdmin's own workspace is irrelevant — they operate cross-tenant.",
+      "name": "🔑 Step 1 — SuperAdmin: Manage API Keys",
+      "description": "SuperAdmin-only endpoints. Requires JWT with SUPER_ADMIN role.\nHeader: Authorization: Bearer {{auth_token}}",
       "item": [
         {
-          "name": "Get API Keys",
+          "name": "1a. Get API Keys for a workspace",
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{auth_token}}", "type": "text" }
-            ],
+            "header": [{ "key": "Authorization", "value": "Bearer {{auth_token}}", "type": "text" }],
             "url": {
               "raw": "{{base_url}}/connectors/api-keys?tenant_id={{tenant_id}}&workspace_id={{workspace_id}}",
               "host": ["{{base_url}}"],
@@ -32,41 +32,11 @@
                 { "key": "workspace_id", "value": "{{workspace_id}}" }
               ]
             },
-            "description": "Get the API key record for a specific organization.\n\nQuery params:\n- `tenant_id` (required) — the target tenant\n- `workspace_id` (required) — the target organization/workspace\n\nReturns null if no keys configured yet."
-          },
-          "response": [
-            {
-              "name": "200 OK — Keys Found",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"API keys retrieved successfully\",\n  \"data\": {\n    \"id\": \"uuid-here\",\n    \"tenant_id\": \"tenant-uuid\",\n    \"workspace_id\": \"workspace-uuid\",\n    \"status\": \"active\",\n    \"mode\": \"live\",\n    \"production_key\": \"prod_4f2a9e1b3c7d0f8a5e2b6c9d1a4f7e0b3c6d9e2a\",\n    \"sandbox_key\": \"sand_7e3b1f9d2a5c8e1b4d7f0a3c6e9b2d5f8a1c4e7\",\n    \"created_at\": \"2026-05-14T08:00:00.000Z\",\n    \"updated_at\": \"2026-05-14T08:00:00.000Z\"\n  }\n}"
-            },
-            {
-              "name": "200 OK — No Keys Yet",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"No API keys configured for workspace \\\"Acme Corp\\\" yet\",\n  \"data\": null\n}"
-            },
-            {
-              "name": "403 Forbidden — Not Super Admin",
-              "status": "Forbidden",
-              "code": 403,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": false,\n  \"error\": \"Forbidden — only SUPER_ADMIN can manage API keys\"\n}"
-            },
-            {
-              "name": "404 Not Found — Bad tenant/workspace",
-              "status": "Not Found",
-              "code": 404,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": false,\n  \"error\": \"Workspace not found or does not belong to the specified tenant\"\n}"
-            }
-          ]
+            "description": "Returns the production_key and sandbox_key for the workspace.\nReturns null in data if no keys exist yet."
+          }
         },
         {
-          "name": "Create API Keys",
+          "name": "1b. Create API Keys",
           "event": [
             {
               "listen": "test",
@@ -74,9 +44,11 @@
                 "exec": [
                   "const json = pm.response.json();",
                   "if (json.success && json.data) {",
-                  "    console.log('🔑 Production Key:', json.data.production_key);",
-                  "    console.log('🧪 Sandbox Key:   ', json.data.sandbox_key);",
-                  "    console.log('Record ID:', json.data.id);",
+                  "    pm.collectionVariables.set('production_key', json.data.production_key);",
+                  "    pm.collectionVariables.set('sandbox_key', json.data.sandbox_key);",
+                  "    console.log('✅ Keys saved to collection variables');",
+                  "    console.log('Production:', json.data.production_key);",
+                  "    console.log('Sandbox:', json.data.sandbox_key);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -95,31 +67,15 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw":  "{{base_url}}/connectors/api-keys",
+              "raw": "{{base_url}}/connectors/api-keys",
               "host": ["{{base_url}}"],
               "path": ["connectors", "api-keys"]
             },
-            "description": "Create production + sandbox API keys for a specific organization.\n\nBody (required):\n- `tenant_id` — which tenant owns this organization\n- `workspace_id` — the target organization/workspace\n\nReturns 409 if keys already exist.\nUse POST /api-keys/regenerate to rotate existing keys."
-          },
-          "response": [
-            {
-              "name": "200 OK — Keys Created",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"API keys created for workspace \\\"Acme Corp\\\"\",\n  \"data\": {\n    \"id\": \"uuid-here\",\n    \"tenant_id\": \"{{tenant_id}}\",\n    \"workspace_id\": \"{{workspace_id}}\",\n    \"status\": \"active\",\n    \"mode\": \"live\",\n    \"production_key\": \"prod_4f2a9e1b3c7d...\",\n    \"sandbox_key\": \"sand_7e3b1f9d2a5c...\",\n    \"created_at\": \"2026-05-14T08:00:00.000Z\"\n  }\n}"
-            },
-            {
-              "name": "409 Conflict — Already Exists",
-              "status": "Conflict",
-              "code": 409,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": false,\n  \"error\": \"API keys already exist for workspace \\\"Acme Corp\\\". Use POST /api-keys/regenerate to rotate keys or PATCH /api-keys to change status/mode.\"\n}"
-            }
-          ]
+            "description": "Creates production_key + sandbox_key for the organization.\nThe test script auto-saves the keys to collection variables.\n\nReturns 409 if keys already exist — use Regenerate instead."
+          }
         },
         {
-          "name": "Update Status / Mode",
+          "name": "1c. Update Status or Mode",
           "request": {
             "method": "PATCH",
             "header": [
@@ -128,28 +84,35 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"workspace_id\": \"{{workspace_id}}\",\n  \"status\": \"inactive\",\n  \"mode\": \"demo\"\n}",
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"workspace_id\": \"{{workspace_id}}\",\n  \"status\": \"active\",\n  \"mode\": \"live\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw":  "{{base_url}}/connectors/api-keys",
+              "raw": "{{base_url}}/connectors/api-keys",
               "host": ["{{base_url}}"],
               "path": ["connectors", "api-keys"]
             },
-            "description": "Update status or mode for an organization's API keys.\n\nBody (required):\n- `tenant_id`\n- `workspace_id`\n- `status`: \"active\" | \"inactive\"  (optional)\n- `mode`: \"live\" | \"demo\"  (optional)\n\nAt least one of status or mode is required.\n\nExample use cases:\n- Set status=inactive to block all inbound ERP pushes\n- Set mode=demo to route all data to sandbox"
-          },
-          "response": [
-            {
-              "name": "200 OK — Updated",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"API keys updated successfully\",\n  \"data\": {\n    \"id\": \"uuid-here\",\n    \"tenant_id\": \"...\",\n    \"workspace_id\": \"...\",\n    \"status\": \"inactive\",\n    \"mode\": \"demo\",\n    \"production_key\": \"prod_4f2a...\",\n    \"sandbox_key\": \"sand_7e3b...\",\n    \"updated_at\": \"2026-05-14T10:00:00.000Z\"\n  }\n}"
-            }
-          ]
+            "description": "Change status (active/inactive) or mode (live/demo).\n\nSet status=inactive to instantly block all ERP data pushes.\nSet mode=demo to mark all incoming data as demo/test data."
+          }
         },
         {
-          "name": "Regenerate Keys",
+          "name": "1d. Regenerate Keys",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success && json.data) {",
+                  "    pm.collectionVariables.set('production_key', json.data.production_key);",
+                  "    pm.collectionVariables.set('sandbox_key', json.data.sandbox_key);",
+                  "    console.log('✅ New keys saved. Old keys are now INVALID.');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -162,24 +125,15 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw":  "{{base_url}}/connectors/api-keys/regenerate",
+              "raw": "{{base_url}}/connectors/api-keys/regenerate",
               "host": ["{{base_url}}"],
               "path": ["connectors", "api-keys", "regenerate"]
             },
-            "description": "Rotate keys for a specific organization.\nOld key is immediately invalidated — ERP connector must be reconfigured.\n\nBody:\n- `tenant_id` (required)\n- `workspace_id` (required)\n- `which`: \"production\" | \"sandbox\" | \"both\"  (default: \"both\")"
-          },
-          "response": [
-            {
-              "name": "200 OK — Rotated",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"Both keys regenerated for workspace \\\"Acme Corp\\\"\",\n  \"data\": {\n    \"id\": \"uuid-here\",\n    \"production_key\": \"prod_NEW_KEY...\",\n    \"sandbox_key\": \"sand_NEW_KEY...\",\n    \"updated_at\": \"2026-05-14T11:00:00.000Z\"\n  }\n}"
-            }
-          ]
+            "description": "Rotates keys. The old key is immediately invalidated.\nERPs must be reconfigured with the new key.\n\nwhich: \"production\" | \"sandbox\" | \"both\""
+          }
         },
         {
-          "name": "Delete API Keys",
+          "name": "1e. Delete API Keys",
           "request": {
             "method": "DELETE",
             "header": [
@@ -192,63 +146,317 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw":  "{{base_url}}/connectors/api-keys",
+              "raw": "{{base_url}}/connectors/api-keys",
               "host": ["{{base_url}}"],
               "path": ["connectors", "api-keys"]
             },
-            "description": "Permanently delete the API key record for a specific organization.\nBoth production and sandbox keys are destroyed.\n\n⚠️ Irreversible — must POST /api-keys again to re-create.\n\nBody:\n- `tenant_id` (required)\n- `workspace_id` (required)"
-          },
-          "response": [
-            {
-              "name": "200 OK — Deleted",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"API keys deleted for workspace \\\"Acme Corp\\\"\",\n  \"data\": null\n}"
-            }
-          ]
+            "description": "Permanently deletes both keys. Use carefully — ERP connector will stop working immediately."
+          }
         }
       ]
     },
     {
-      "name": "🔐 ERP Connector Auth (Public)",
-      "description": "No JWT required. Called by external ERP connectors to authenticate inbound data pushes.",
+      "name": "📥 Step 2 — ERP Connector: Push Book Data",
+      "description": "These endpoints are called by the ERP software (Tally, Zoho, SAP, QuickBooks).\n\nNO JWT required.\nAuthentication is via: X-API-Key: {{production_key}} or {{sandbox_key}}\n\nproduction_key → mode: live (real data)\nsandbox_key    → mode: demo (test data)",
       "item": [
         {
-          "name": "Validate API Key",
+          "name": "2a. Push Purchase Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success) {",
+                  "    console.log('✅ Import successful');",
+                  "    console.log('Import ID:', json.data.import_id);",
+                  "    console.log('Records inserted:', json.data.records_inserted);",
+                  "    console.log('Records updated:', json.data.records_updated);",
+                  "    console.log('Mode:', json.data.mode);",
+                  "} else {",
+                  "    console.log('❌ Failed:', json.error);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
+              { "key": "X-API-Key",    "value": "{{production_key}}", "type": "text", "description": "Use production_key for live data, sandbox_key for testing" },
+              { "key": "Content-Type", "value": "application/json",   "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"purchase_register\",\n  \"return_period\": \"042026\",\n  \"records\": [\n    {\n      \"vchr_no\": \"PR-001\",\n      \"vchr_date\": \"2026-04-05\",\n      \"supplier_name\": \"ABC Traders Pvt Ltd\",\n      \"supplier_gstin\": \"27AABCU9603R1ZT\",\n      \"taxable_value\": 10000,\n      \"igst\": 1800,\n      \"cgst\": 0,\n      \"sgst\": 0,\n      \"cess\": 0,\n      \"total_value\": 11800,\n      \"items\": [\n        {\n          \"hsn_code\": \"8471\",\n          \"description\": \"Laptop\",\n          \"quantity\": 1,\n          \"unit_rate\": 10000,\n          \"taxable_amount\": 10000,\n          \"igst_amount\": 1800,\n          \"total_amount_with_tax\": 11800\n        }\n      ]\n    },\n    {\n      \"vchr_no\": \"PR-002\",\n      \"vchr_date\": \"2026-04-10\",\n      \"supplier_name\": \"XYZ Stationery\",\n      \"supplier_gstin\": \"29AABCD1234E1ZF\",\n      \"taxable_value\": 5000,\n      \"igst\": 0,\n      \"cgst\": 450,\n      \"sgst\": 450,\n      \"cess\": 0,\n      \"total_value\": 5900\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import"]
+            },
+            "description": "Push purchase register data from ERP.\n\nField reference:\n- vchr_no: your ERP voucher number (required, used as unique key)\n- vchr_date: YYYY-MM-DD format\n- supplier_name: vendor name\n- supplier_gstin: 15-char GSTIN (optional but recommended)\n- taxable_value: amount before GST\n- igst / cgst / sgst / cess: tax amounts\n- total_value: final invoice amount\n- items[]: optional line-item breakdown\n\nDuplicate vchr_no for same period = UPDATE (not error)\nNew vchr_no = INSERT"
+          }
+        },
+        {
+          "name": "2b. Push Sales Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success) {",
+                  "    console.log('✅ Import successful');",
+                  "    console.log('Import ID:', json.data.import_id);",
+                  "    console.log('Records inserted:', json.data.records_inserted);",
+                  "} else {",
+                  "    console.log('❌ Failed:', json.error);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key",    "value": "{{production_key}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json",   "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"sales_register\",\n  \"return_period\": \"042026\",\n  \"records\": [\n    {\n      \"invoice_no\": \"INV-001\",\n      \"invoice_date\": \"2026-04-02\",\n      \"party_name\": \"Customer Corp Ltd\",\n      \"party_gstin\": \"29AABCD9999E1ZZ\",\n      \"taxable_value\": 25000,\n      \"igst\": 4500,\n      \"cgst\": 0,\n      \"sgst\": 0,\n      \"total_value\": 29500\n    },\n    {\n      \"invoice_no\": \"INV-002\",\n      \"invoice_date\": \"2026-04-15\",\n      \"party_name\": \"Walk-in Customer\",\n      \"party_gstin\": \"\",\n      \"taxable_value\": 1000,\n      \"igst\": 0,\n      \"cgst\": 90,\n      \"sgst\": 90,\n      \"total_value\": 1180\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import"]
+            },
+            "description": "Push sales register data from ERP.\n\nField reference:\n- invoice_no: your ERP invoice number (required)\n- invoice_date: YYYY-MM-DD\n- party_name: customer name\n- party_gstin: customer GSTIN (empty string if B2C)\n- taxable_value / igst / cgst / sgst / total_value\n\nAlias fields also accepted:\n  invoice_number, vchr_no, customer_name, customer_gstin"
+          }
+        },
+        {
+          "name": "2c. Push via Sandbox Key (Demo/Test mode)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key",    "value": "{{sandbox_key}}", "type": "text", "description": "Sandbox key → all data tagged as demo mode" },
               { "key": "Content-Type", "value": "application/json", "type": "text" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"api_key\": \"prod_4f2a9e1b3c7d...\"\n}",
+              "raw": "{\n  \"type\": \"purchase_register\",\n  \"return_period\": \"042026\",\n  \"records\": [\n    {\n      \"vchr_no\": \"TEST-PR-001\",\n      \"vchr_date\": \"2026-04-01\",\n      \"supplier_name\": \"Test Vendor\",\n      \"taxable_value\": 1000,\n      \"cgst\": 90,\n      \"sgst\": 90,\n      \"total_value\": 1180\n    }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw":  "{{base_url}}/connectors/validate-key",
+              "raw": "{{base_url}}/connectors/book-import",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import"]
+            },
+            "description": "Use sandbox_key to push test data.\nResponse will show mode: \"demo\".\nData goes to same tables but is tagged as demo source.\n\nUse this to test your ERP integration before going live."
+          }
+        },
+        {
+          "name": "2d. Push Purchase Return",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key",    "value": "{{production_key}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json",   "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"purchase_return\",\n  \"return_period\": \"042026\",\n  \"records\": [\n    {\n      \"vchr_no\": \"PR-RET-001\",\n      \"vchr_date\": \"2026-04-20\",\n      \"supplier_name\": \"ABC Traders Pvt Ltd\",\n      \"supplier_gstin\": \"27AABCU9603R1ZT\",\n      \"taxable_value\": 2000,\n      \"igst\": 360,\n      \"total_value\": 2360\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import"]
+            },
+            "description": "Push purchase return (debit note) data.\ntype: purchase_return"
+          }
+        },
+        {
+          "name": "2e. Push Sales Return",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key",    "value": "{{production_key}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json",   "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"sales_return\",\n  \"return_period\": \"042026\",\n  \"records\": [\n    {\n      \"invoice_no\": \"CR-NOTE-001\",\n      \"invoice_date\": \"2026-04-25\",\n      \"party_name\": \"Customer Corp Ltd\",\n      \"party_gstin\": \"29AABCD9999E1ZZ\",\n      \"taxable_value\": 5000,\n      \"igst\": 900,\n      \"total_value\": 5900\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import"]
+            },
+            "description": "Push sales return (credit note) data.\ntype: sales_return"
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔐 Step 2-alt — Validate Key (Optional Auth Check)",
+      "description": "Optional — ERP can call this first to confirm the key is valid before pushing data.\nNo JWT needed.",
+      "item": [
+        {
+          "name": "Validate API Key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success) {",
+                  "    console.log('✅ Key valid');",
+                  "    console.log('Workspace:', json.data.workspaceId);",
+                  "    console.log('Mode:', json.data.mode);",
+                  "    console.log('Key Type:', json.data.keyType);",
+                  "} else {",
+                  "    console.log('❌ Invalid key:', json.error);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{production_key}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/validate-key",
               "host": ["{{base_url}}"],
               "path": ["connectors", "validate-key"]
             },
-            "description": "PUBLIC — No JWT required.\n\nCalled by the ERP connector (e.g. Tally plugin) to authenticate before pushing data.\nSend either the production_key or sandbox_key.\n\nResponse tells you:\n- `workspaceId` — which organization to import data into\n- `tenantId` — which tenant owns it\n- `mode` — live or demo (so import pipeline knows how to tag the data)\n- `keyType` — production or sandbox"
-          },
-          "response": [
+            "description": "Verify a key without pushing data.\nReturns workspaceId, tenantId, mode, keyType."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📂 Step 3 — File Upload (CSV / XLSX via API Key)",
+      "description": "Upload real export files from Tally, Zoho, SAP directly.\n\nAuth: X-API-Key header (no JWT needed)\nContent-Type: multipart/form-data\n\nForm-data fields:\n  file          → select your .csv or .xlsx file\n  type          → purchase_register | sales_register | purchase_return | sales_return\n  return_period → MMYYYY (e.g. 042025)\n\nSupported file formats: .csv, .xlsx, .xls (max 20MB)\n\nDuplicate vouchers are UPDATED not rejected.",
+      "item": [
+        {
+          "name": "3a. Upload Purchase Register CSV",
+          "event": [
             {
-              "name": "200 OK — Valid Key",
-              "status": "OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"message\": \"API key is valid\",\n  \"data\": {\n    \"keyId\": \"uuid-here\",\n    \"workspaceId\": \"workspace-uuid\",\n    \"tenantId\": \"tenant-uuid\",\n    \"mode\": \"live\",\n    \"keyType\": \"production\"\n  }\n}"
-            },
-            {
-              "name": "401 — Invalid / Inactive Key",
-              "status": "Unauthorized",
-              "code": 401,
-              "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": false,\n  \"error\": \"Invalid or inactive API key\"\n}"
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success) {",
+                  "    console.log('✅ File import successful');",
+                  "    console.log('Filename:', json.data.filename);",
+                  "    console.log('Rows in file:', json.data.rows_in_file);",
+                  "    console.log('Records parsed:', json.data.records_parsed);",
+                  "    console.log('Records INSERTED:', json.data.records_inserted);",
+                  "    console.log('Records UPDATED:', json.data.records_updated);",
+                  "    console.log('Mode:', json.data.mode);",
+                  "    console.log('Import ID:', json.data.import_id);",
+                  "} else {",
+                  "    console.log('❌ Failed:', json.error);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
             }
-          ]
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{production_key}}", "type": "text", "description": "Use production_key for live, sandbox_key for testing" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select your purchase register .csv or .xlsx file here"
+                },
+                { "key": "type",          "value": "purchase_register", "type": "text" },
+                { "key": "return_period", "value": "042025",            "type": "text", "description": "MMYYYY — April 2025 = 042025" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import/file",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import", "file"]
+            },
+            "description": "Upload a purchase register CSV or XLSX file.\n\nExpected columns (Tally export format):\n  vchr_no, vchr_date, party_name, party_gstn_no,\n  total_taxable_amount, total_igst_tax_amount,\n  total_cgst_tax_amount, total_sgst_tax_amount,\n  invoice_amount, gstr_category, filing_period\n\nTest file: A1B_DATA/purchase/a1b_purchase_book_data_fy2025_2026.csv\n\nExpected response:\n  rows_in_file: 498\n  records_parsed: 490\n  records_inserted: ~236 (unique vouchers)\n  mode: live"
+          }
+        },
+        {
+          "name": "3b. Upload Sales Register CSV",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{production_key}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select your sales register .csv or .xlsx file here"
+                },
+                { "key": "type",          "value": "sales_register", "type": "text" },
+                { "key": "return_period", "value": "042025",         "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import/file",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import", "file"]
+            },
+            "description": "Upload a sales register CSV or XLSX file.\n\nSame column format as purchase — party_name becomes customer_name internally."
+          }
+        },
+        {
+          "name": "3c. Upload via Sandbox Key (test mode)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{sandbox_key}}", "type": "text", "description": "Sandbox key → mode: demo" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Any .csv or .xlsx file for testing"
+                },
+                { "key": "type",          "value": "purchase_register", "type": "text" },
+                { "key": "return_period", "value": "042025",            "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/connectors/book-import/file",
+              "host": ["{{base_url}}"],
+              "path": ["connectors", "book-import", "file"]
+            },
+            "description": "Use sandbox_key to test file uploads safely.\nResponse will show mode: 'demo'.\nData is imported but tagged as test data."
+          }
         }
       ]
     },
@@ -260,22 +468,11 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw":  "{{base_url}}/health",
-              "host": ["{{base_url}}"],
-              "path": ["health"]
-            }
-          },
-          "response": [
-            {
-              "name": "200 OK",
-              "code": 200,
-              "_postman_previewlanguage": "json",
-              "body": "{ \"status\": \"UP\", \"service\": \"workspace-service\" }"
-            }
-          ]
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
         }
       ]
     }
   ]
 }
+

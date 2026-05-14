@@ -11,10 +11,25 @@ const {
     requireSuperAdmin
 } = require('./connectorController');
 
+const { validateApiKeyMiddleware } = require('./apiKeyMiddleware');
+const { importBookData } = require('./bookImportConnectorController');
+const { uploadMiddleware, importBookFile } = require('./bookFileImportConnectorController');
+
 // ── PUBLIC ───────────────────────────────────────────────────────────────────
 // No JWT — called directly by ERP connectors (Tally, Zoho, SAP, QuickBooks)
 // to authenticate an inbound Purchase/Sales register push.
 router.post('/validate-key', validateApiKey);
+
+// ── ERP DATA PUSH (X-API-Key authentication — no JWT) ────────────────────────
+// The ERP connector uses the API key issued by SuperAdmin.
+// apiKeyMiddleware validates the key and resolves workspaceId + tenantId.
+
+// JSON push: { type, return_period, records: [...] }
+router.post('/book-import', validateApiKeyMiddleware, importBookData);
+
+// File upload: multipart/form-data with fields: file, type, return_period
+// Supports .csv, .xlsx, .xls  (same formats as manual Excel upload)
+router.post('/book-import/file', validateApiKeyMiddleware, uploadMiddleware, importBookFile);
 
 
 // ── PROTECTED (JWT required + SUPER_ADMIN only) ───────────────────────────────

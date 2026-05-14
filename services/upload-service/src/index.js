@@ -6,6 +6,7 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const gstr2bRoutes = require('./routes/gstr2bRoutes');
 const gstrImportRoutes = require('./routes/gstrImportRoutes');
 const bookImportRoutes = require('./routes/bookImportRoutes');
+const bookImportInternalRoutes = require('./routes/bookImportInternalRoutes');
 const { errorHandler } = require('../../shared/src/utils/responseHandler');
 
 dotenv.config();
@@ -24,6 +25,9 @@ app.get('/health', (req, res) => {
 // Routes
 app.use('/uploads', uploadRoutes);
 app.use('/gst-import', gstrImportRoutes);
+
+// Internal connector route (service-to-service only — not exposed via Traefik)
+app.use('/book-import/internal', bookImportInternalRoutes);
 
 // Error Handler
 app.use(errorHandler);

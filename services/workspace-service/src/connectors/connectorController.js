@@ -133,13 +133,13 @@ const createApiKeys = async (req, res) => {
             return errorResponse(res, 'Workspace not found or does not belong to the specified tenant', 404);
         }
 
-        // One record per workspace — prevent duplicates
+        // One key per workspace — if already exists, return it with a clear message
         const existing = await ConnectorModel.getByWorkspace(workspace_id, tenant_id);
         if (existing) {
-            return errorResponse(
+            return successResponse(
                 res,
-                `API keys already exist for workspace "${workspace.name}". Use POST /api-keys/regenerate to rotate keys or PATCH /api-keys to change status/mode.`,
-                409
+                existing,
+                `API keys already exist for workspace "${workspace.name}". Here are the existing keys. Use POST /connectors/api-keys/regenerate to rotate them.`
             );
         }
 
