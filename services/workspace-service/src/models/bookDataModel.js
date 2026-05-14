@@ -54,6 +54,22 @@ class BookDataModel {
         }
     }
 
+    static _resolveMultipleTypes(bookTypeId) {
+        const typeIds = String(bookTypeId).split(',').filter(Boolean);
+        if (typeIds.length === 0) return null;
+
+        const resolvedList = typeIds.map(id => BookDataModel._resolveType(id)).filter(Boolean);
+        if (resolvedList.length === 0) return null;
+
+        const table = resolvedList[0].table;
+        if (resolvedList.some(r => r.table !== table)) return null; // Cannot mix tables
+
+        return {
+            table,
+            types: resolvedList
+        };
+    }
+
     /**
      * _addPeriodFilter - Helper to apply period filtering to a knex query.
      * Supports YYYY-MM and YYYY-QX formats.
@@ -193,8 +209,8 @@ class BookDataModel {
     }
 
     static async getByType(workspaceId, bookTypeId, filters = {}, pagination = {}) {
-        const resolved = BookDataModel._resolveType(bookTypeId);
-        if (!resolved) throw new Error(`Unknown book type: ${bookTypeId}`);
+        const resolved = BookDataModel._resolveMultipleTypes(bookTypeId);
+        if (!resolved) throw new Error(`Unknown or mismatched book types: ${bookTypeId}`);
 
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
@@ -207,15 +223,22 @@ class BookDataModel {
         let records = [];
         let total = 0;
         let summary = { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0, roundOff: 0, net: 0 };
-        const group_by_supplier = filters.group_by_supplier === 'true' || filters.group_by === 'supplier';
+        const group_by_supplier = filters.group_by_supplier === 'true' || filters.group_by === 'supplier' || filters.grouped === 'true';
 
         if (resolved.table === 'sales') {
             // --- sales_invoices ---
             let q = knex('sales_invoices as si')
                 .where('si.workspace_id', workspaceId);
 
-            if (resolved.invoiceTypes) q = q.whereIn('si.invoice_type', resolved.invoiceTypes);
-            if (resolved.bookTypes) q = q.whereIn('si.book_type', resolved.bookTypes);
+            // Multi-type OR filter
+            q = q.where(function () {
+                resolved.types.forEach(t => {
+                    this.orWhere(function () {
+                        if (t.invoiceTypes) this.whereIn('si.invoice_type', t.invoiceTypes);
+                        if (t.bookTypes) this.whereIn('si.book_type', t.bookTypes);
+                    });
+                });
+            });
 
             // Advanced filters
             BookDataModel._applyAdvancedFilters(q, filters, {
@@ -299,7 +322,8 @@ class BookDataModel {
             if (status && status !== 'all') q = q.where('si.filing_status', status);
 
             const summaryQuery = q.clone().select(
-                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(si.customer_gstin), \'\'), coalesce(si.customer_name, \'\'))) as count' : 'count(*) as count'),
+                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(si.customer_gstin), \'\'), coalesce(trim(si.customer_name), \'\'))) as count' : 'count(*) as count'),
+                knex.raw('count(*) as total_records'),
                 knex.raw('sum(total_taxable_value) as total_taxable'),
                 knex.raw('sum(total_igst) as total_igst'),
                 knex.raw('sum(total_cgst) as total_cgst'),
@@ -312,6 +336,7 @@ class BookDataModel {
             const summaryResult = await summaryQuery;
             total = parseInt(summaryResult.count || 0);
             summary = {
+                totalCount: parseInt(summaryResult.total_records || 0),
                 taxable: parseFloat(summaryResult.total_taxable || 0),
                 igst: parseFloat(summaryResult.total_igst || 0),
                 cgst: parseFloat(summaryResult.total_cgst || 0),
@@ -352,7 +377,7 @@ class BookDataModel {
             if (group_by_supplier) {
                 records = await q
                     .select(
-                        knex.raw('si.customer_name as party'),
+                        knex.raw('trim(si.customer_name) as party'),
                         knex.raw('trim(si.customer_gstin) as gstin'),
                         knex.raw('sum(si.total_taxable_value) as "taxableAmt"'),
                         knex.raw('sum(si.total_cgst) as cgst'),
@@ -365,7 +390,7 @@ class BookDataModel {
                         knex.raw('max(si.place_of_supply) as "placeOfSupply"'),
                         knex.raw('max(si.invoice_type) as "docType"')
                     )
-                    .groupByRaw('trim(si.customer_gstin), si.customer_name')
+                    .groupByRaw('trim(si.customer_gstin), trim(si.customer_name)')
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                     .limit(page_size)
                     .offset(offset);
@@ -404,8 +429,15 @@ class BookDataModel {
                 .leftJoin('reconciliation_status as rs', 'ev.id', 'rs.book_data_id')
                 .where('ev.workspace_id', workspaceId);
 
-            if (resolved.voucherTypes) q = q.whereIn('ev.voucher_type', resolved.voucherTypes);
-            if (resolved.bookTypes) q = q.whereIn('ev.book_type', resolved.bookTypes);
+            // Multi-type OR filter
+            q = q.where(function () {
+                resolved.types.forEach(t => {
+                    this.orWhere(function () {
+                        if (t.voucherTypes) this.whereIn('ev.voucher_type', t.voucherTypes);
+                        if (t.bookTypes) this.whereIn('ev.book_type', t.bookTypes);
+                    });
+                });
+            });
 
             // Advanced filters
             BookDataModel._applyAdvancedFilters(q, filters, {
@@ -490,7 +522,8 @@ class BookDataModel {
             if (status && status !== 'all') q = q.where('ev.status', status);
 
             const summaryQuery = q.clone().select(
-                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(ev.supplier_gstin), \'\'), coalesce(ev.supplier_name, \'\'))) as count' : 'count(*) as count'),
+                knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(ev.supplier_gstin), \'\'), coalesce(trim(ev.supplier_name), \'\'))) as count' : 'count(*) as count'),
+                knex.raw('count(*) as total_records'),
                 knex.raw('sum(taxable_total) as total_taxable'),
                 knex.raw('sum(total_igst_amount) as total_igst'),
                 knex.raw('sum(total_cgst_amount) as total_cgst'),
@@ -503,6 +536,7 @@ class BookDataModel {
             const summaryResult = await summaryQuery;
             total = parseInt(summaryResult.count || 0);
             summary = {
+                totalCount: parseInt(summaryResult.total_records || 0),
                 taxable: parseFloat(summaryResult.total_taxable || 0),
                 igst: parseFloat(summaryResult.total_igst || 0),
                 cgst: parseFloat(summaryResult.total_cgst || 0),
@@ -545,8 +579,8 @@ class BookDataModel {
             if (group_by_supplier) {
                 records = await q
                     .select(
-                        knex.raw('ev.supplier_name as party'),
-                        knex.raw('ev.supplier_gstin as gstin'),
+                        knex.raw('trim(ev.supplier_name) as party'),
+                        knex.raw('trim(ev.supplier_gstin) as gstin'),
                         knex.raw('sum(ev.taxable_total) as "taxableAmt"'),
                         knex.raw('sum(ev.total_cgst_amount) as cgst'),
                         knex.raw('sum(ev.total_sgst_amount) as sgst'),
@@ -558,7 +592,7 @@ class BookDataModel {
                         knex.raw('max(ev.place_of_supply) as "placeOfSupply"'),
                         knex.raw('max(ev.voucher_type) as "vchType"')
                     )
-                    .groupByRaw('ev.supplier_gstin, ev.supplier_name')
+                    .groupByRaw('trim(ev.supplier_gstin), trim(ev.supplier_name)')
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                     .limit(page_size)
                     .offset(offset);
@@ -959,39 +993,65 @@ class BookDataModel {
      * getMasters - fetches unique GSTINs and Party Names for multi-select filters.
      */
     static async getMasters(workspaceId, bookTypeId) {
-        const resolved = BookDataModel._resolveType(bookTypeId);
-        if (!resolved) throw new Error(`Unknown book type: ${bookTypeId}`);
+        const resolved = BookDataModel._resolveMultipleTypes(bookTypeId);
+        if (!resolved) throw new Error(`Unknown or mismatched book types: ${bookTypeId}`);
 
         if (resolved.table === 'sales') {
+            const applyTypeFilters = (q) => {
+                q.where(function () {
+                    resolved.types.forEach(t => {
+                        this.orWhere(function () {
+                            if (t.invoiceTypes) this.whereIn('invoice_type', t.invoiceTypes);
+                            if (t.bookTypes) this.whereIn('book_type', t.bookTypes);
+                        });
+                    });
+                });
+            };
+
             let qGstins = knex('sales_invoices')
                 .where('workspace_id', workspaceId)
                 .whereNotNull('customer_gstin')
-                .whereNot('customer_gstin', '')
-                .select(knex.raw('DISTINCT trim(customer_gstin) as value'), knex.raw('trim(customer_gstin) as label'))
+                .whereNot('customer_gstin', '');
+            applyTypeFilters(qGstins);
+            qGstins = qGstins.select(knex.raw('DISTINCT trim(customer_gstin) as value'), knex.raw('trim(customer_gstin) as label'))
                 .orderBy('value', 'asc');
 
             let qParties = knex('sales_invoices')
                 .where('workspace_id', workspaceId)
                 .whereNotNull('customer_name')
-                .whereNot('customer_name', '')
-                .select(knex.raw('DISTINCT customer_name as value'), knex.raw('customer_name as label'))
+                .whereNot('customer_name', '');
+            applyTypeFilters(qParties);
+            qParties = qParties.select(knex.raw('DISTINCT customer_name as value'), knex.raw('customer_name as label'))
                 .orderBy('value', 'asc');
 
             const [gstins, parties] = await Promise.all([qGstins, qParties]);
             return { gstins, parties };
         } else {
+            const applyTypeFilters = (q) => {
+                q.where(function () {
+                    resolved.types.forEach(t => {
+                        this.orWhere(function () {
+                            if (t.voucherTypes) this.whereIn('voucher_type', t.voucherTypes);
+                            if (t.bookTypes) this.whereIn('book_type', t.bookTypes);
+                        });
+                    });
+                });
+            };
+
             let qGstins = knex('purchase_vouchers')
                 .where('workspace_id', workspaceId)
                 .whereNotNull('supplier_gstin')
-                .whereNot('supplier_gstin', '')
-                .select(knex.raw('DISTINCT trim(supplier_gstin) as value'), knex.raw('trim(supplier_gstin) as label'))
+                .whereNot('supplier_gstin', '');
+            applyTypeFilters(qGstins);
+            qGstins = qGstins.select(knex.raw('DISTINCT trim(supplier_gstin) as value'), knex.raw('trim(supplier_gstin) as label'))
                 .orderBy('value', 'asc');
 
             let qParties = knex('purchase_vouchers')
                 .where('workspace_id', workspaceId)
                 .whereNotNull('supplier_name')
-                .whereNot('supplier_name', '')
-                .select(knex.raw('DISTINCT supplier_name as value'), knex.raw('supplier_name as label'))
+                .whereNot('supplier_name', '');
+            applyTypeFilters(qParties);
+            qParties = qParties.select(knex.raw('DISTINCT supplier_name as value'), knex.raw('supplier_name as label'))
                 .orderBy('value', 'asc');
 
             const [gstins, parties] = await Promise.all([qGstins, qParties]);

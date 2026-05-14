@@ -66,7 +66,7 @@ const getBookData = async (req, res) => {
                 search, status, period, gstin, date_from, date_to, 
                 amt_min, amt_max, amt_net_min: minNetAmt, amt_net_max: maxNetAmt,
                 place_of_supply, sort_by, sort_dir, 
-                group_by_supplier: req.query.group_by_supplier || req.query.group_by,
+                group_by_supplier: req.query.group_by_supplier || req.query.group_by || req.query.grouped,
                 gstins: parseArr(gstins),
                 parties: parseArr(parties),
                 supply_type,
