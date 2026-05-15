@@ -523,7 +523,7 @@ class BookDataModel {
                 q = q.where(function () {
                     this.where('ev.supplier_invoice_no', 'ilike', `%${search}%`)
                         .orWhere('ev.supplier_name', 'ilike', `%${search}%`)
-                        .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`);
+                        .orWhere('ev.supplier_gstin', 'ilike', `%${search}%`)
                         .orWhere('ev.book_vchr_no', 'ilike', `%${search}%`)
                         .orWhere('ev.voucher_type', 'ilike', `%${search}%`)
                         .orWhere('ev.source_section', 'ilike', `%${search}%`)
