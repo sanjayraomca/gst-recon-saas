@@ -212,18 +212,20 @@ class BookDataModel {
         if (filters.place_of_supply) {
             const codes = String(filters.place_of_supply).split(',').filter(Boolean);
             if (codes.length > 0) {
-                const searchPatterns = [];
-                codes.forEach(code => {
-                    const trimmed = code.trim();
-                    searchPatterns.push(`${trimmed}%`);
-                    if (trimmed.startsWith('0')) {
-                        searchPatterns.push(`${trimmed.substring(1)}%`);
-                    }
-                });
                 q.where(function () {
-                    searchPatterns.forEach((p, idx) => {
-                        if (idx === 0) this.where(mapping.placeOfSupply, 'ilike', p);
-                        else this.orWhere(mapping.placeOfSupply, 'ilike', p);
+                    codes.forEach((code, idx) => {
+                        const trimmed = code.trim();
+                        const normalized = trimmed.padStart(2, '0');
+                        
+                        const condition = function() {
+                            this.where(mapping.placeOfSupply, '=', normalized)
+                                .orWhere(mapping.placeOfSupply, 'ilike', `${normalized} -%`)
+                                .orWhere(mapping.placeOfSupply, '=', trimmed)
+                                .orWhere(mapping.placeOfSupply, 'ilike', `${trimmed} -%`);
+                        };
+
+                        if (idx === 0) this.where(condition);
+                        else this.orWhere(condition);
                     });
                 });
             }
