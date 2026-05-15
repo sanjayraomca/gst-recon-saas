@@ -45,3 +45,4 @@ temp/
 *.key
 *.cert
 secrets/
+services/workspace-service/src/queries/
