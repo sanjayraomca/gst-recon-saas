@@ -1,6 +1,6 @@
 -- Transaction: FilterReconResults
--- Last Executed at: 5/15/2026, 7:49:03 AM
+-- Last Executed at: 5/15/2026, 11:37:09 AM
 -- Note: Query results include 'diff_' columns for parity with the dashboard UI.
 -- Bindings: []
 
-select "tp".*, "fy"."fy_code" from "tax_periods" as "tp" left join "financial_years" as "fy" on "tp"."fy_id" = "fy"."id" order by "tp"."year" desc, "tp"."month" desc;
+select "state", "code" from "state_code_master" order by "state" asc;
