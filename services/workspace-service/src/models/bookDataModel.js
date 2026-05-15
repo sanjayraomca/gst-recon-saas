@@ -212,9 +212,18 @@ class BookDataModel {
         if (filters.place_of_supply) {
             const codes = String(filters.place_of_supply).split(',').filter(Boolean);
             if (codes.length > 0) {
+                const searchPatterns = [];
+                codes.forEach(code => {
+                    const trimmed = code.trim();
+                    searchPatterns.push(`${trimmed}%`);
+                    if (trimmed.startsWith('0')) {
+                        searchPatterns.push(`${trimmed.substring(1)}%`);
+                    }
+                });
                 q.where(function () {
-                    codes.forEach(code => {
-                        this.orWhere(mapping.placeOfSupply, 'ilike', `${code.trim()}%`);
+                    searchPatterns.forEach((p, idx) => {
+                        if (idx === 0) this.where(mapping.placeOfSupply, 'ilike', p);
+                        else this.orWhere(mapping.placeOfSupply, 'ilike', p);
                     });
                 });
             }
@@ -342,6 +351,17 @@ class BookDataModel {
 
             // sales_invoices has filing_status, not status
             if (status && status !== 'all') q = q.where('si.filing_status', status);
+
+            // Advanced filters
+            BookDataModel._applyAdvancedFilters(q, filters, {
+                gstin: 'si.customer_gstin',
+                party: 'si.customer_name',
+                is_interstate: 'si.is_interstate',
+                roundoff: 'si.round_off',
+                taxableAmt: 'si.total_taxable_value',
+                totalAmt: 'si.total_invoice_value',
+                placeOfSupply: 'si.place_of_supply'
+            });
 
             const summaryQuery = q.clone().select(
                 knex.raw(group_by_supplier ? 'count(distinct (coalesce(trim(si.customer_gstin), \'\'), coalesce(trim(si.customer_name), \'\'))) as count' : 'count(*) as count'),
