@@ -115,7 +115,7 @@ class BookDataModel {
      * _applyColumnFilters - Helper to apply dynamic column-level filters (JSON-based)
      * Supports various operations like eq, cn, bw, gt, lt, etc.
      */
-    static _applyColumnFilters(q, columnFilters, mapping) {
+    static _applyColumnFilters(q, columnFilters, mapping, useHaving = false) {
         if (!columnFilters || Object.keys(columnFilters).length === 0) return q;
 
         Object.entries(columnFilters).forEach(([colKey, filter]) => {
@@ -127,38 +127,52 @@ class BookDataModel {
             const { op, val } = filter;
             const lowVal = String(val || '').toLowerCase();
 
+            const apply = (sql, params) => {
+                if (useHaving) q.havingRaw(sql, params);
+                else q.whereRaw(sql, params);
+            };
+
             switch (op) {
-                case 'eq': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) = ?`, [lowVal]); break;
-                case 'ne': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) != ?`, [lowVal]); break;
-                case 'bw': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
-                case 'bn': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`${lowVal}%`]); break;
-                case 'ew': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
-                case 'en': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
-                case 'cn': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
-                case 'nc': q.whereRaw(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
-                case 'lt': q.where(dbCol, '<', val); break;
-                case 'le': q.where(dbCol, '<=', val); break;
-                case 'gt': q.where(dbCol, '>', val); break;
-                case 'ge': q.where(dbCol, '>=', val); break;
+                case 'eq': apply(`LOWER(CAST(${dbCol} AS TEXT)) = ?`, [lowVal]); break;
+                case 'ne': apply(`LOWER(CAST(${dbCol} AS TEXT)) != ?`, [lowVal]); break;
+                case 'bw': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
+                case 'bn': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`${lowVal}%`]); break;
+                case 'ew': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
+                case 'en': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
+                case 'cn': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
+                case 'nc': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
+                case 'lt': 
+                    if (useHaving) q.having(knex.raw(dbCol), '<', val);
+                    else q.where(dbCol, '<', val); 
+                    break;
+                case 'le': 
+                    if (useHaving) q.having(knex.raw(dbCol), '<=', val);
+                    else q.where(dbCol, '<=', val); 
+                    break;
+                case 'gt': 
+                    if (useHaving) q.having(knex.raw(dbCol), '>', val);
+                    else q.where(dbCol, '>', val); 
+                    break;
+                case 'ge': 
+                    if (useHaving) q.having(knex.raw(dbCol), '>=', val);
+                    else q.where(dbCol, '>=', val); 
+                    break;
                 case 'in':
                     const vals = String(val).split(',').map(v => v.trim()).filter(Boolean);
-                    if (vals.length > 0) q.whereIn(dbCol, vals);
+                    if (vals.length > 0) {
+                        if (useHaving) q.havingRaw(`${dbCol} = ANY(?)`, [vals]);
+                        else q.whereIn(dbCol, vals);
+                    }
                     break;
-                case 'ni':
-                    const nvals = String(val).split(',').map(v => v.trim()).filter(Boolean);
-                    if (nvals.length > 0) q.whereNotIn(dbCol, nvals);
-                    break;
-                case 'nu': q.whereNull(dbCol).orWhereRaw(`CAST(${dbCol} AS TEXT) = ''`); break;
-                case 'nn': q.whereNotNull(dbCol).whereRaw(`CAST(${dbCol} AS TEXT) != ''`); break;
+                case 'nu': apply(`CAST(${dbCol} AS TEXT) IS NULL OR CAST(${dbCol} AS TEXT) = ''`, []); break;
+                case 'nn': apply(`CAST(${dbCol} AS TEXT) IS NOT NULL AND CAST(${dbCol} AS TEXT) != ''`, []); break;
 
-                // Date specific ops (Today, Yesterday, etc.) handled by frontend passing the right date range
-                // or we can handle "custom" here if needed.
                 case 'today':
                 case 'yesterday':
                 case 'last7':
                 case 'last30':
                 case 'custom':
-                    if (val) q.whereRaw(`${dbCol}::date = ?::date`, [val]);
+                    if (val) apply(`${dbCol}::date = ?::date`, [val]);
                     break;
             }
         });
@@ -491,7 +505,33 @@ class BookDataModel {
                     try { cfPr = JSON.parse(cfPr); } catch (e) { cfPr = null; }
                 }
                 if (cfPr && Object.keys(cfPr).length > 0) {
-                    BookDataModel._applyColumnFilters(q, cfPr, colMappingPr);
+                    if (group_by_supplier) {
+                        const aggregateKeys = ['taxableAmt', 'igst', 'cgst', 'sgst', 'cess', 'roundOff', 'totalAmt', 'totalInvoiceCount', 'invoiceCount'];
+                        const whereCF = {};
+                        const havingCF = {};
+                        Object.entries(cfPr).forEach(([k, v]) => {
+                            if (aggregateKeys.includes(k)) havingCF[k] = v;
+                            else whereCF[k] = v;
+                        });
+
+                        BookDataModel._applyColumnFilters(q, whereCF, colMappingPr);
+                        
+                        // Mapping for aggregates in HAVING
+                        const aggMapping = {
+                            taxableAmt: 'sum(ev.taxable_total)',
+                            igst: 'sum(ev.total_igst_amount)',
+                            cgst: 'sum(ev.total_cgst_amount)',
+                            sgst: 'sum(ev.total_sgst_amount)',
+                            cess: 'sum(ev.total_cess_amount)',
+                            roundOff: 'sum(ev.round_off)',
+                            totalAmt: 'sum(ev.net_amount)',
+                            totalInvoiceCount: 'count(*)',
+                            invoiceCount: 'count(*)'
+                        };
+                        BookDataModel._applyColumnFilters(q, havingCF, aggMapping, true);
+                    } else {
+                        BookDataModel._applyColumnFilters(q, cfPr, colMappingPr);
+                    }
                 }
             }
 
