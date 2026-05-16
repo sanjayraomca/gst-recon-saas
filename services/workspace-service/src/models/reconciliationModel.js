@@ -2019,9 +2019,9 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                 }
                 if (quarter && quarter !== 'ALL') {
                     const qStr = quarter.toString().split('-').pop();
-                    const q = qStr.replace('Q', '');
+                    const qNum = qStr.replace('Q', '');
                     const qtMap = { '1': [4, 5, 6], '2': [7, 8, 9], '3': [10, 11, 12], '4': [1, 2, 3] };
-                    const qtMonths = qtMap[String(q)] || [];
+                    const qtMonths = qtMap[String(qNum)] || [];
                     if (filterYear) {
                         const qPeriods = qtMonths.map(m => `${String(m).padStart(2, '0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
@@ -2094,8 +2094,10 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                     q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), months);
                 }
                 if (quarter && quarter !== 'ALL') {
+                    const qStr = quarter.toString().split('-').pop();
+                    const qNum = qStr.replace('Q', '');
                     const qtMap = { '1': [4, 5, 6], '2': [7, 8, 9], '3': [10, 11, 12], '4': [1, 2, 3] };
-                    const qtMonths = qtMap[String(quarter)] || [];
+                    const qtMonths = qtMap[String(qNum)] || [];
                     if (filterYear) {
                         const qPeriods = qtMonths.map(m => `${String(m).padStart(2, '0')}${m >= 4 ? filterYear : filterYear + 1}`);
                         q.whereIn(knex.raw("COALESCE(tp.period_code, gi.return_period)"), qPeriods);
