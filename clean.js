@@ -15,7 +15,7 @@ try {
     console.log("==========================================");
 
     // Start everything back up with fresh builds to apply latest code changes
-    execSync('docker compose build --no-cache && docker compose up -d', { stdio: 'inherit', cwd: __dirname });
+    execSync('docker compose up -d --build', { stdio: 'inherit', cwd: __dirname });
 
     console.log("\n==========================================");
     console.log("Seeding default SuperAdmin...");
