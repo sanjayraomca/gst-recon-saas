@@ -17,12 +17,7 @@ try {
     // Start everything back up with fresh builds to apply latest code changes
     execSync('docker compose up -d --build', { stdio: 'inherit', cwd: __dirname });
 
-    console.log("\n==========================================");
-    console.log("Seeding default SuperAdmin...");
-    console.log("==========================================");
-    
-    // Wait for services and seed
-    execSync('node seed-superadmin.js', { stdio: 'inherit', cwd: __dirname });
+
 
     console.log("\n==========================================");
     console.log("✅ Clean complete! All databases and storage are wiped and restarted.");

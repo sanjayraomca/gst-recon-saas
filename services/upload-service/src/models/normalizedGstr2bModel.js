@@ -362,12 +362,23 @@ class NormalizedGstr2bModel {
             supplierGstin,
             supplierName,
             documentNumber,
+            documentNumberOp,
             searchTerm,
             itcAvailable,
             fromDate,
             toDate,
             minAmount,
             maxAmount,
+            minTaxable,
+            maxTaxable,
+            minTax,
+            maxTax,
+            minIgst,
+            maxIgst,
+            minCgst,
+            maxCgst,
+            minSgst,
+            maxSgst,
             minNetAmount,
             maxNetAmount,
             supplyType,
@@ -415,22 +426,27 @@ class NormalizedGstr2bModel {
         if (supplierGstin) {
             const gstins = supplierGstin.split(',').map(g => g.trim()).filter(Boolean);
             if (gstins.length > 0) {
-                const placeholders = gstins.map(() => '?').join(',');
-                conditions.push(`supplier_gstin IN (${placeholders})`);
-                params.push(...gstins);
+                const clauses = gstins.map(() => 'supplier_gstin ILIKE ?').join(' OR ');
+                conditions.push(`(${clauses})`);
+                params.push(...gstins.map(g => `%${g}%`));
             }
         }
         if (supplierName) {
             const names = supplierName.split(',').map(n => n.trim()).filter(Boolean);
             if (names.length > 0) {
-                const placeholders = names.map(() => '?').join(',');
-                conditions.push(`supplier_name IN (${placeholders})`);
-                params.push(...names);
+                const clauses = names.map(() => 'supplier_name ILIKE ?').join(' OR ');
+                conditions.push(`(${clauses})`);
+                params.push(...names.map(n => `%${n}%`));
             }
         }
         if (documentNumber) {
-            conditions.push('(document_number_clean ILIKE ? OR document_number_raw ILIKE ?)');
-            params.push(`%${documentNumber}%`, `%${documentNumber}%`);
+            if (documentNumberOp === 'eq') {
+                conditions.push('(document_number_clean = ? OR document_number_raw = ?)');
+                params.push(documentNumber, documentNumber);
+            } else {
+                conditions.push('(document_number_clean ILIKE ? OR document_number_raw ILIKE ?)');
+                params.push(`%${documentNumber}%`, `%${documentNumber}%`);
+            }
         }
         if (searchTerm) {
             conditions.push('(supplier_gstin ILIKE ? OR document_number_clean ILIKE ? OR document_number_raw ILIKE ? OR supplier_name ILIKE ?)');
@@ -456,6 +472,46 @@ class NormalizedGstr2bModel {
         if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '') {
             conditions.push('document_value <= ?');
             params.push(parseFloat(maxAmount));
+        }
+        if (minTaxable !== undefined && minTaxable !== null && minTaxable !== '') {
+            conditions.push('taxable_value >= ?');
+            params.push(parseFloat(minTaxable));
+        }
+        if (maxTaxable !== undefined && maxTaxable !== null && maxTaxable !== '') {
+            conditions.push('taxable_value <= ?');
+            params.push(parseFloat(maxTaxable));
+        }
+        if (minTax !== undefined && minTax !== null && minTax !== '') {
+            conditions.push('total_tax >= ?');
+            params.push(parseFloat(minTax));
+        }
+        if (maxTax !== undefined && maxTax !== null && maxTax !== '') {
+            conditions.push('total_tax <= ?');
+            params.push(parseFloat(maxTax));
+        }
+        if (minIgst !== undefined && minIgst !== null && minIgst !== '') {
+            conditions.push('igst >= ?');
+            params.push(parseFloat(minIgst));
+        }
+        if (maxIgst !== undefined && maxIgst !== null && maxIgst !== '') {
+            conditions.push('igst <= ?');
+            params.push(parseFloat(maxIgst));
+        }
+        if (minCgst !== undefined && minCgst !== null && minCgst !== '') {
+            conditions.push('cgst >= ?');
+            params.push(parseFloat(minCgst));
+        }
+        if (maxCgst !== undefined && maxCgst !== null && maxCgst !== '') {
+            conditions.push('cgst <= ?');
+            params.push(parseFloat(maxCgst));
+        }
+        if (minSgst !== undefined && minSgst !== null && minSgst !== '') {
+            conditions.push('sgst >= ?');
+            params.push(parseFloat(minSgst));
+        }
+        if (maxSgst !== undefined && maxSgst !== null && maxSgst !== '') {
+            conditions.push('sgst <= ?');
+            params.push(parseFloat(maxSgst));
         }
         if (minNetAmount !== undefined && minNetAmount !== null && minNetAmount !== '') {
             conditions.push('(COALESCE(taxable_value, 0) + COALESCE(total_tax, 0)) >= ?');
