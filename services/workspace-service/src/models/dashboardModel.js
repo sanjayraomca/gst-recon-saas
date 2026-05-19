@@ -409,33 +409,51 @@ class DashboardModel {
         };
 
         // 10. Top Suppliers by Variance
-        let suppliersQuery = knex(is2aVs2b ? 'normalized_gstr2a_invoices' : 'purchase_vouchers')
-            .join(is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results', function () {
-                if (is2aVs2b) {
-                    this.on('normalized_gstr2a_invoices.id', '=', 'reconciliation_results_2a.gstr2a_source_id');
-                } else {
-                    this.on('purchase_vouchers.id', '=', 'reconciliation_results.purchase_invoice_id');
-                }
-            })
-            .where((is2aVs2b ? 'reconciliation_results_2a' : 'reconciliation_results') + '.workspace_id', workspaceId);
+        let topSuppliers = [];
+        if (latestRun) {
+            let suppliersQuery;
+            if (is2aVs2b) {
+                suppliersQuery = knex('reconciliation_results_2a')
+                    .leftJoin('normalized_gstr2a_invoices as gi', 'reconciliation_results_2a.gstr2a_invoice_id', 'gi.id')
+                    .leftJoin('normalized_gstr2b_invoices as gb', 'reconciliation_results_2a.gstr2b_invoice_id', 'gb.id')
+                    .leftJoin('normalized_gstr2a_invoices as sa', 'reconciliation_results_2a.gstr2a_source_id', 'sa.id')
+                    .where('reconciliation_results_2a.recon_run_id', latestRun.id);
+            } else {
+                suppliersQuery = knex('reconciliation_results')
+                    .leftJoin('purchase_vouchers as pv', 'reconciliation_results.purchase_invoice_id', 'pv.id')
+                    .leftJoin('normalized_gstr2b_invoices as gi', 'reconciliation_results.gstr2b_invoice_id', 'gi.id')
+                    .where('reconciliation_results.recon_run_id', latestRun.id);
+            }
 
-        if (financialYear && financialYear !== 'all') {
-            const startYear = parseInt(financialYear.split('-')[0], 10);
-            const dateCol = is2aVs2b ? 'document_date' : 'book_vchr_date';
-            suppliersQuery = suppliersQuery
-                .where(dateCol, '>=', `${startYear}-04-01`)
-                .where(dateCol, '<=', `${startYear + 1}-03-31`);
+            if (financialYear && financialYear !== 'all') {
+                const startYear = parseInt(financialYear.split('-')[0], 10);
+                const dateExpr = is2aVs2b 
+                    ? `COALESCE(gi.document_date, gb.document_date, sa.document_date)`
+                    : `COALESCE(pv.book_vchr_date, gi.document_date)`;
+                suppliersQuery = suppliersQuery
+                    .whereRaw(`${dateExpr} >= ?`, [`${startYear}-04-01`])
+                    .whereRaw(`${dateExpr} <= ?`, [`${startYear + 1}-03-31`]);
+            }
+
+            const nameExpr = is2aVs2b
+                ? 'COALESCE(gi.supplier_name, gb.supplier_name, sa.supplier_name)'
+                : 'COALESCE(pv.supplier_name, gi.supplier_name)';
+
+            const gstinExpr = is2aVs2b
+                ? 'COALESCE(gi.supplier_gstin, gb.supplier_gstin, sa.supplier_gstin)'
+                : 'COALESCE(pv.supplier_gstin, gi.supplier_gstin)';
+
+            topSuppliers = await suppliersQuery
+                .select(
+                    knex.raw(`MAX(${nameExpr}) as supplier_name`),
+                    knex.raw(`MAX(${gstinExpr}) as supplier_gstin`),
+                    knex.raw('SUM(ABS(variance_amount)) as total_variance'),
+                    knex.raw('COUNT(*) as invoice_count')
+                )
+                .groupByRaw(gstinExpr)
+                .orderBy('total_variance', 'desc')
+                .limit(5);
         }
-
-        const topSuppliers = await suppliersQuery
-            .select(
-                knex.raw(is2aVs2b ? 'MAX(supplier_name) as supplier_name' : 'supplier_name'),
-                knex.raw('SUM(ABS(variance_amount)) as total_variance'),
-                knex.raw('COUNT(*) as invoice_count')
-            )
-            .groupBy(is2aVs2b ? 'supplier_gstin' : 'supplier_name')
-            .orderBy('total_variance', 'desc')
-            .limit(5);
 
         return {
             currentMonth,
