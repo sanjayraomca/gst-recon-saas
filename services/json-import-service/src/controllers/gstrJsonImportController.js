@@ -324,12 +324,20 @@ class GstrJsonImportController {
                 totalSkipped += skipped;
 
                 if (result?.addedInvoices) {
-                    allAddedInvoices.push(...result.addedInvoices);
                     const addedSet = new Set(result.addedInvoices);
                     records.forEach(r => {
                         const val = r[keyField];
-                        if (val && !addedSet.has(val)) {
-                            allDuplicateInvoices.push(val);
+                        if (val) {
+                            const dateVal = r.invoice_date || r.revised_invoice_date || r.note_date || r.revised_note_date || r.boe_date || r.document_date || '';
+                            const invObj = {
+                                inv_no: val,
+                                inv_date: dateVal
+                            };
+                            if (addedSet.has(val)) {
+                                allAddedInvoices.push(invObj);
+                            } else {
+                                allDuplicateInvoices.push(invObj);
+                            }
                         }
                     });
                 }

@@ -97,11 +97,16 @@ class BookModel {
                     const invoiceId = headerRes.rows[0].id;
                     const isInserted = headerRes.rows[0].is_inserted;
 
+                    const invObj = {
+                        vchr_no: header.invoice_number || '',
+                        vchr_date: header.invoice_date || '',
+                        ref_vchr_no: header.original_invoice_no || ''
+                    };
                     if (isInserted) {
-                        addedInvoices.push(header.invoice_number);
+                        addedInvoices.push(invObj);
                         totalInserted++; // Only increment for truly new inserts
                     } else {
-                        duplicateInvoices.push(header.invoice_number);
+                        duplicateInvoices.push(invObj);
                     }
 
                     // Full Replace Strategy for Items
@@ -277,11 +282,16 @@ class BookModel {
                     const voucherId = headerRes.rows[0].id;
                     const isInserted = headerRes.rows[0].is_inserted;
 
+                    const invObj = {
+                        vchr_no: header.book_vchr_no || '',
+                        vchr_date: header.book_vchr_date || '',
+                        ref_vchr_no: header.supplier_invoice_no || ''
+                    };
                     if (isInserted) {
-                        addedInvoices.push(header.supplier_invoice_no);
+                        addedInvoices.push(invObj);
                         totalInserted++; // Only increment for truly new inserts
                     } else {
-                        duplicateInvoices.push(header.supplier_invoice_no);
+                        duplicateInvoices.push(invObj);
                     }
 
                     // Replace Strategy for Items

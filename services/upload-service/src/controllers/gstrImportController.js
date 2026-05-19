@@ -443,10 +443,17 @@ class GSTRImportController {
                                 totalInserted += inserted;
 
                                 // Tracking duplicates
-                                allAddedInvoices.push(...addedInvoices);
                                 const addedSet = new Set(addedInvoices);
                                 b2bInvoices.forEach(inv => {
-                                    if (!addedSet.has(inv.invoice_number)) allDuplicateInvoices.push(inv.invoice_number);
+                                    const invObj = {
+                                        inv_no: inv.invoice_number || '',
+                                        inv_date: inv.invoice_date || ''
+                                    };
+                                    if (addedSet.has(inv.invoice_number)) {
+                                        allAddedInvoices.push(invObj);
+                                    } else {
+                                        allDuplicateInvoices.push(invObj);
+                                    }
                                 });
 
                                 const currentSectionSkipped = (b2bInvoices.length - inserted) + normSkip;
@@ -475,10 +482,17 @@ class GSTRImportController {
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
 
-                                allAddedInvoices.push(...addedInvoices);
                                 const addedSet = new Set(addedInvoices);
                                 b2baInvoices.forEach(inv => {
-                                    if (!addedSet.has(inv.revised_invoice_number)) allDuplicateInvoices.push(inv.revised_invoice_number);
+                                    const invObj = {
+                                        inv_no: inv.revised_invoice_number || '',
+                                        inv_date: inv.revised_invoice_date || ''
+                                    };
+                                    if (addedSet.has(inv.revised_invoice_number)) {
+                                        allAddedInvoices.push(invObj);
+                                    } else {
+                                        allDuplicateInvoices.push(invObj);
+                                    }
                                 });
 
                                 const currentSectionSkipped = (b2baInvoices.length - inserted) + normSkip;
@@ -507,10 +521,17 @@ class GSTRImportController {
                                 sectionCounters.normalized += normIns;
                                 totalInserted += inserted;
 
-                                allAddedInvoices.push(...addedInvoices);
                                 const addedSet = new Set(addedInvoices);
                                 cdnrNotes.forEach(inv => {
-                                    if (!addedSet.has(inv.note_number)) allDuplicateInvoices.push(inv.note_number);
+                                    const invObj = {
+                                        inv_no: inv.note_number || '',
+                                        inv_date: inv.note_date || ''
+                                    };
+                                    if (addedSet.has(inv.note_number)) {
+                                        allAddedInvoices.push(invObj);
+                                    } else {
+                                        allDuplicateInvoices.push(invObj);
+                                    }
                                 });
 
                                 const currentSectionSkipped = (cdnrNotes.length - inserted) + normSkip;
