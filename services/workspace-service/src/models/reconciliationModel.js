@@ -763,7 +763,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
 
     static async getLatestRun(workspaceId, runType) {
         return knex('reconciliation_runs')
-            .where({ workspace_id: workspaceId, run_type: runType })
+            .where({ workspace_id: workspaceId, run_type: runType, status: 'COMPLETED' })
             .orderBy('created_at', 'desc')
             .first();
     }

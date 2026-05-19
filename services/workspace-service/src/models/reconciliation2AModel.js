@@ -1019,7 +1019,7 @@ class Reconciliation2AModel {
         let run;
         if (runId === 'all' || runId === 'latest') {
             run = await knex('reconciliation_runs')
-                .where({ workspace_id: workspaceId })
+                .where({ workspace_id: workspaceId, status: 'COMPLETED' })
                 .whereIn('run_type', ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'])
                 .orderBy('created_at', 'desc')
                 .first();

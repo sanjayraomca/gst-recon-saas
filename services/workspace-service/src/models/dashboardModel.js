@@ -257,7 +257,7 @@ class DashboardModel {
 
         // 5. Reconciliation Stats (Latest Run)
         const latestRun = await knex('reconciliation_runs')
-            .where({ workspace_id: workspaceId })
+            .where({ workspace_id: workspaceId, status: 'COMPLETED' })
             .orderBy('created_at', 'desc')
             .first();
 
