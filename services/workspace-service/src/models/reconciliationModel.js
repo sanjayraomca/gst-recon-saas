@@ -1341,6 +1341,21 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                     val = value.val;
                 }
 
+                // Intercept status filter to coalesce partial_match under matched
+                if (key === 'status' || key === 'match_status') {
+                    const list = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined && v !== '') : (val ? [val] : []);
+                    if (list.length > 0) {
+                        query.where(function () {
+                            let finalList = [...list];
+                            if (list.includes('matched')) {
+                                finalList = [...new Set([...finalList, 'partial_match'])];
+                            }
+                            this.whereIn('rr.match_status', finalList);
+                        });
+                    }
+                    return;
+                }
+
                 const isValueEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
                 if (isValueEmpty && !['nu', 'nn'].includes(op)) return;
 
@@ -1538,11 +1553,11 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
         };
         statusCountsResult.forEach(row => {
             const status = row.match_status;
-            if (status === 'matched') {
-                summary.matched = parseInt(row.count);
+            if (status === 'matched' || status === 'partial_match') {
+                summary.matched += parseInt(row.count);
             } else if (status === 'mismatch') {
-                summary.mismatched = parseInt(row.count);
-            } else if (['missing_in_2b', 'missing_in_books', 'not_eligible'].includes(status)) {
+                summary.mismatched += parseInt(row.count);
+            } else if (['missing_in_2b', 'missing_in_books', 'not_eligible', 'missing_in_portal', 'not_in_portal', 'not_in_books'].includes(status)) {
                 summary.missing += parseInt(row.count);
             }
         });

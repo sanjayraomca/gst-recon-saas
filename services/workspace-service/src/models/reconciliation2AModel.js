@@ -723,6 +723,21 @@ class Reconciliation2AModel {
                 val = value.val;
             }
 
+            // Intercept status filter to coalesce partial_match under matched
+            if (key === 'status' || key === 'match_status') {
+                const list = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined && v !== '') : (val ? [val] : []);
+                if (list.length > 0) {
+                    query.where(function () {
+                        let finalList = [...list];
+                        if (list.includes('matched')) {
+                            finalList = [...new Set([...finalList, 'partial_match'])];
+                        }
+                        this.whereIn('rr.match_status', finalList);
+                    });
+                }
+                return;
+            }
+
             const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
             if (isEmpty && !['nu', 'nn'].includes(op)) return;
 
@@ -832,10 +847,10 @@ class Reconciliation2AModel {
         // Totals
         const totalsResult = await query.clone().clearSelect().select(
             knex.raw('COUNT(*) as total_count'),
-            knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match') THEN 1 ELSE 0 END) as matched_count"),
-            knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match') THEN COALESCE(sa.taxable_value, pi.taxable_total, gi.taxable_value, 0) ELSE 0 END) as matched_taxable"),
-            knex.raw("SUM(CASE WHEN rr.match_status IN ('mismatch', 'partial_match') THEN 1 ELSE 0 END) as mismatch_count"),
-            knex.raw("SUM(CASE WHEN rr.match_status IN ('mismatch', 'partial_match') THEN COALESCE(sa.taxable_value, pi.taxable_total, gi.taxable_value, 0) ELSE 0 END) as mismatch_taxable"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match', 'partial_match') THEN 1 ELSE 0 END) as matched_count"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('matched', 'tolerance_match', 'partial_match') THEN COALESCE(sa.taxable_value, pi.taxable_total, gi.taxable_value, 0) ELSE 0 END) as matched_taxable"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('mismatch') THEN 1 ELSE 0 END) as mismatch_count"),
+            knex.raw("SUM(CASE WHEN rr.match_status IN ('mismatch') THEN COALESCE(sa.taxable_value, pi.taxable_total, gi.taxable_value, 0) ELSE 0 END) as mismatch_taxable"),
             knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_portal', 'not_in_portal') THEN 1 ELSE 0 END) as missing_in_portal_count"),
             knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_portal', 'not_in_portal') THEN COALESCE(sa.taxable_value, pi.taxable_total, gi.taxable_value, 0) ELSE 0 END) as missing_in_portal_taxable"),
             knex.raw("SUM(CASE WHEN rr.match_status IN ('missing_in_books', 'not_in_books') THEN 1 ELSE 0 END) as missing_in_books_count"),
