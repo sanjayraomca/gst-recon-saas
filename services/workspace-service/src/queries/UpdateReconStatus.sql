@@ -1,6 +1,6 @@
 -- Transaction: UpdateReconStatus
--- Last Executed at: 5/19/2026, 7:02:12 AM
+-- Last Executed at: 5/19/2026, 7:30:08 AM
 -- Note: Query results include 'diff_' columns for parity with the dashboard UI.
--- Bindings: []
+-- Bindings: ["undefined","4760cee6-92d2-4683-a3c3-ed15eb06de47",1]
 
-COMMIT;
+select "reconciliation_results_2a".*, "purchase_vouchers"."supplier_invoice_no" as "purchase_invoice_number", "purchase_vouchers"."supplier_invoice_date" as "purchase_invoice_date", "purchase_vouchers"."supplier_gstin" as "purchase_supplier_gstin", "normalized_gstr2b_invoices"."document_number_clean" as "gstr2b_invoice_number", "normalized_gstr2b_invoices"."document_date" as "gstr2b_invoice_date", "normalized_gstr2b_invoices"."supplier_gstin" as "gstr2b_supplier_gstin", "normalized_gstr2a_invoices"."document_number_clean" as "gstr2a_invoice_number", "normalized_gstr2a_invoices"."document_date" as "gstr2a_invoice_date", "normalized_gstr2a_invoices"."supplier_gstin" as "gstr2a_supplier_gstin" from "reconciliation_results_2a" left join "purchase_vouchers" on "reconciliation_results_2a"."purchase_invoice_id" = "purchase_vouchers"."id" left join "normalized_gstr2b_invoices" on "reconciliation_results_2a"."gstr2b_invoice_id" = "normalized_gstr2b_invoices"."id" left join "normalized_gstr2a_invoices" on "reconciliation_results_2a"."gstr2a_invoice_id" = "normalized_gstr2a_invoices"."id" where "reconciliation_results_2a"."id" = 'undefined' and "reconciliation_results_2a"."workspace_id" = '4760cee6-92d2-4683-a3c3-ed15eb06de47' limit 1;

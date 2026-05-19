@@ -222,7 +222,7 @@ class GSTRImportController {
                 importType: gstr_type.toUpperCase(),
                 originalFilename: req.file.originalname,
                 uploadedFilepath: uploadedFilePath,
-                uploadedFileUrl: minioResult.presignedUrl,
+                uploadedFileUrl: `http://minio.gst.local:9091/browser/${minioResult.bucket || 'gst-documents'}/${encodeURIComponent(minioResult.objectPath)}`,
                 extraInfo: {
                     minioPath: minioResult.objectPath,
                     isUpdate,
@@ -1255,6 +1255,67 @@ class GSTRImportController {
             return successResponse(res, options, 'Filter options retrieved successfully');
         } catch (error) {
             console.error('[getFilterOptions] Error:', error);
+            return errorResponse(res, error);
+        }
+    }
+
+    /**
+     * Download original uploaded import file from MinIO
+     * GET /gst-import/import/download/:import_filing_id
+     */
+    static async downloadImportFile(req, res) {
+        try {
+            const { import_filing_id } = req.params;
+            if (!import_filing_id) {
+                return errorResponse(res, { message: 'Import filing ID is required', isCustom: true }, 400);
+            }
+
+            const importRecord = await GSTRImportModel.getImportById(import_filing_id);
+            if (!importRecord) {
+                return errorResponse(res, { message: 'Import record not found', isCustom: true }, 404);
+            }
+
+            // Get objectPath from extra_info or parse it from uploaded_file_url
+            let objectPath = importRecord.extra_info?.minioPath;
+            if (!objectPath && importRecord.uploaded_file_url) {
+                // Fallback: extract path from URL
+                try {
+                    const url = new URL(importRecord.uploaded_file_url);
+                    const pathParts = url.pathname.split('/');
+                    // Skip "/browser/[bucket]/"
+                    if (pathParts.length > 3) {
+                        objectPath = decodeURIComponent(pathParts.slice(3).join('/'));
+                    }
+                } catch (e) {
+                    console.warn('[downloadImportFile] Failed to parse uploaded_file_url fallback:', e);
+                }
+            }
+
+            if (!objectPath) {
+                return errorResponse(res, { message: 'Secure file storage path not found for this import', isCustom: true }, 400);
+            }
+
+            const originalFilename = importRecord.original_filename || 'downloaded_file';
+            let contentType = 'application/octet-stream';
+            if (originalFilename.endsWith('.json')) {
+                contentType = 'application/json';
+            } else if (originalFilename.endsWith('.xlsx')) {
+                contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            } else if (originalFilename.endsWith('.xls')) {
+                contentType = 'application/vnd.ms-excel';
+            } else if (originalFilename.endsWith('.csv')) {
+                contentType = 'text/csv';
+            }
+
+            // Fetch from MinIO
+            const stream = await minioClient.client.getObject(minioClient.bucketName, objectPath);
+
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(originalFilename)}"`);
+            res.setHeader('Content-Type', contentType);
+
+            stream.pipe(res);
+        } catch (error) {
+            console.error('[downloadImportFile] Error:', error);
             return errorResponse(res, error);
         }
     }

@@ -111,6 +111,9 @@ router.get('/filter-options', verifyToken, GSTRImportController.getFilterOptions
 // Get specific import details
 router.get('/import/:import_filing_id', verifyToken, GSTRImportController.getImportById);
 
+// Download original uploaded import file from MinIO
+router.get('/import/download/:import_filing_id', verifyToken, GSTRImportController.downloadImportFile);
+
 // ─── GSTR-2B Normalized Listing ─────────────────────────────────────────────
 // Paginated invoice listing: GET /gst-import/gstr2b/list
 //   Query: return_period, section, supplier_gstin, document_number, itc_available, page, page_size

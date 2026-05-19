@@ -222,7 +222,7 @@ class BookImportController {
                 importType: IMPORT_TYPE,
                 originalFilename: req.file.originalname || 'unknown_file',
                 uploadedFilepath: uploadedFilePath,
-                uploadedFileUrl: minioResult.presignedUrl,
+                uploadedFileUrl: `http://minio.gst.local:9091/browser/${minioResult.bucket || 'gst-documents'}/${encodeURIComponent(minioResult.objectPath)}`,
                 extraInfo: { minioPath: minioResult.objectPath },
                 importedBy: userId,
                 userEmail,

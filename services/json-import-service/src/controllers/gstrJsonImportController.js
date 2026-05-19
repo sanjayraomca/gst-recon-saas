@@ -180,6 +180,13 @@ class GstrJsonImportController {
 
             //  console.log(`[GstrJsonImport] Final resolved context: tenant=${finalTenantId}, user=${finalUserId}, gstin=${gstinRecipient}`);
 
+            let uploadedFileUrl = null;
+            if (minioResult && minioResult.success) {
+                uploadedFileUrl = `http://minio.gst.local:9091/browser/${minioResult.bucket || 'gst-documents'}/${encodeURIComponent(minioResult.objectPath)}`;
+            } else if (minioResult && minioResult.presignedUrl) {
+                uploadedFileUrl = minioResult.presignedUrl;
+            }
+
             const importRecord = await GSTRImportModel.createImportRecord({
                 tenantUuid: finalTenantId,
                 workspaceId: workspaceId,
@@ -190,7 +197,7 @@ class GstrJsonImportController {
                 importType: gstrType.toUpperCase(),
                 originalFilename: minioMetadata.originalFilename,
                 uploadedFilepath: null,
-                uploadedFileUrl: minioResult.presignedUrl,
+                uploadedFileUrl: uploadedFileUrl,
                 extraInfo: {
                     source: 'JSON_IMPORT',
                     minioPath: minioResult.objectPath

@@ -1,6 +1,6 @@
 -- Transaction: FilterReconResults
--- Last Executed at: 5/19/2026, 7:19:19 AM
+-- Last Executed at: 5/19/2026, 7:59:07 AM
 -- Note: Query results include 'diff_' columns for parity with the dashboard UI.
--- Bindings: ["VIEW_RECONCILIATION_RESULTS","2026-05-19T07:19:19.502Z","{\"page_name\":\"Reconciliation Results\",\"runId\":\"893b06df-a924-484b-8bec-499cc31607c8\",\"filters\":{\"fy\":\"2025\",\"quarter\":\"ALL\",\"month\":\"04\",\"has_variance\":\"false\",\"column_filters\":\"{}\",\"page\":\"1\",\"pageSize\":\"5000\"}}","893b06df-a924-484b-8bec-499cc31607c8","RECONCILIATION","::ffff:172.18.0.9","8017612e-cd0c-4e5b-87c5-1d623891aa3c","Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36","ff513ac8-a121-4346-80a3-297eb00950c8","4760cee6-92d2-4683-a3c3-ed15eb06de47"]
+-- Bindings: []
 
-insert into "activity_logs" ("action_type", "created_at", "details", "entity_id", "entity_type", "ip_address", "tenant_id", "user_agent", "user_id", "workspace_id") values ('VIEW_RECONCILIATION_RESULTS', Tue May 19 2026 07:19:19 GMT+0000 (Coordinated Universal Time), '{"page_name":"Reconciliation Results","runId":"893b06df-a924-484b-8bec-499cc31607c8","filters":{"fy":"2025","quarter":"ALL","month":"04","has_variance":"false","column_filters":"{}","page":"1","pageSize":"5000"}}', '893b06df-a924-484b-8bec-499cc31607c8', 'RECONCILIATION', '::ffff:172.18.0.9', '8017612e-cd0c-4e5b-87c5-1d623891aa3c', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', 'ff513ac8-a121-4346-80a3-297eb00950c8', 'VIEW_RECONCILIATION_RESULTS'0);
+COMMIT;
