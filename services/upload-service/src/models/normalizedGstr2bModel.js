@@ -388,6 +388,7 @@ class NormalizedGstr2bModel {
             importType,
             page = 1,
             pageSize = 50,
+            columnFilters,
         } = filters;
 
         if (!workspaceId) throw new Error('workspaceId is required for listInvoices');
@@ -538,6 +539,164 @@ class NormalizedGstr2bModel {
             conditions.push('import_type = ?');
             params.push(importType.toUpperCase());
         }
+
+        // Apply dynamic inline column filters
+        let parsedColumnFilters = {};
+        if (columnFilters) {
+            try {
+                parsedColumnFilters = typeof columnFilters === 'string'
+                    ? JSON.parse(columnFilters)
+                    : columnFilters;
+            } catch (e) {
+                console.error('[NormalizedGstr2bModel] Failed to parse columnFilters:', e);
+            }
+        }
+
+        const filterColMapping = {
+            party_name: { col: 'supplier_name', text: true },
+            gstin: { col: 'supplier_gstin', text: true },
+            invoice_number: { col: 'document_number_clean', text: true, fallbackCol: 'document_number_raw' },
+            gst_type: { col: 'source_section', text: true },
+            doc_type: { col: 'document_type', text: true },
+            document_type: { col: 'document_type', text: true },
+            taxable_amount: { col: 'taxable_value', numeric: true },
+            tax_amount: { col: 'total_tax', numeric: true },
+            igst: { col: 'igst', numeric: true },
+            cgst: { col: 'cgst', numeric: true },
+            sgst: { col: 'sgst', numeric: true },
+            cess: { col: 'cess', numeric: true }
+        };
+
+        Object.entries(parsedColumnFilters).forEach(([key, value]) => {
+            const def = filterColMapping[key];
+            if (!def) return;
+
+            let op = 'cn';
+            let val = value;
+
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                op = value.op || 'cn';
+                val = value.val;
+            }
+
+            const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
+            if (isEmpty && !['nu', 'nn'].includes(op)) return;
+
+            const col = def.col;
+            const fallbackCol = def.fallbackCol;
+
+            // Generate clause for a single column
+            const getSqlClause = (columnName) => {
+                let sql = '';
+                let clauseParams = [];
+
+                if (def.text) {
+                    if (op === 'eq') {
+                        sql = `${columnName} = ?`;
+                        clauseParams.push(val);
+                    } else if (op === 'ne') {
+                        sql = `${columnName} != ?`;
+                        clauseParams.push(val);
+                    } else if (op === 'bw') {
+                        sql = `${columnName} ILIKE ?`;
+                        clauseParams.push(`${val}%`);
+                    } else if (op === 'bn') {
+                        sql = `${columnName} NOT ILIKE ?`;
+                        clauseParams.push(`${val}%`);
+                    } else if (op === 'ew') {
+                        sql = `${columnName} ILIKE ?`;
+                        clauseParams.push(`%${val}`);
+                    } else if (op === 'en') {
+                        sql = `${columnName} NOT ILIKE ?`;
+                        clauseParams.push(`%${val}`);
+                    } else if (op === 'cn') {
+                        sql = `${columnName} ILIKE ?`;
+                        clauseParams.push(`%${val}%`);
+                    } else if (op === 'nc') {
+                        sql = `${columnName} NOT ILIKE ?`;
+                        clauseParams.push(`%${val}%`);
+                    } else if (op === 'in') {
+                        const vals = Array.isArray(val) ? val : val.split(',').map(v => v.trim()).filter(Boolean);
+                        if (vals.length > 0) {
+                            const placeholders = vals.map(() => '?').join(',');
+                            sql = `${columnName} IN (${placeholders})`;
+                            clauseParams.push(...vals);
+                        }
+                    } else if (op === 'ni') {
+                        const vals = Array.isArray(val) ? val : val.split(',').map(v => v.trim()).filter(Boolean);
+                        if (vals.length > 0) {
+                            const placeholders = vals.map(() => '?').join(',');
+                            sql = `${columnName} NOT IN (${placeholders})`;
+                            clauseParams.push(...vals);
+                        }
+                    } else if (op === 'nu') {
+                        sql = `(${columnName} IS NULL OR ${columnName} = '')`;
+                    } else if (op === 'nn') {
+                        sql = `(${columnName} IS NOT NULL AND ${columnName} != '')`;
+                    }
+                } else if (def.numeric) {
+                    const numVal = parseFloat(val);
+                    if (isNaN(numVal) && !['nu', 'nn'].includes(op)) return null;
+
+                    if (op === 'eq') {
+                        sql = `ROUND(COALESCE(${columnName}::numeric, 0), 2) = ROUND(?::numeric, 2)`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'ne') {
+                        sql = `ROUND(COALESCE(${columnName}::numeric, 0), 2) != ROUND(?::numeric, 2)`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'lt') {
+                        sql = `${columnName} < ?`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'le') {
+                        sql = `${columnName} <= ?`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'gt') {
+                        sql = `${columnName} > ?`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'ge') {
+                        sql = `${columnName} >= ?`;
+                        clauseParams.push(numVal);
+                    } else if (op === 'in') {
+                        const vals = Array.isArray(val) ? val : val.split(',').map(v => parseFloat(v)).filter(v => !isNaN(v));
+                        if (vals.length > 0) {
+                            const placeholders = vals.map(() => 'ROUND(?::numeric, 2)').join(',');
+                            sql = `ROUND(COALESCE(${columnName}::numeric, 0), 2) IN (${placeholders})`;
+                            clauseParams.push(...vals);
+                        }
+                    } else if (op === 'ni') {
+                        const vals = Array.isArray(val) ? val : val.split(',').map(v => parseFloat(v)).filter(v => !isNaN(v));
+                        if (vals.length > 0) {
+                            const placeholders = vals.map(() => 'ROUND(?::numeric, 2)').join(',');
+                            sql = `ROUND(COALESCE(${columnName}::numeric, 0), 2) NOT IN (${placeholders})`;
+                            clauseParams.push(...vals);
+                        }
+                    } else if (op === 'nu') {
+                        sql = `${columnName} IS NULL`;
+                    } else if (op === 'nn') {
+                        sql = `${columnName} IS NOT NULL`;
+                    }
+                }
+
+                return sql ? { sql, params: clauseParams } : null;
+            };
+
+            const clause = getSqlClause(col);
+            if (!clause) return;
+
+            if (fallbackCol) {
+                const fallbackClause = getSqlClause(fallbackCol);
+                if (fallbackClause) {
+                    conditions.push(`(${clause.sql} OR ${fallbackClause.sql})`);
+                    params.push(...clause.params, ...fallbackClause.params);
+                } else {
+                    conditions.push(clause.sql);
+                    params.push(...clause.params);
+                }
+            } else {
+                conditions.push(clause.sql);
+                params.push(...clause.params);
+            }
+        });
 
         const whereClause = conditions.join(' AND ');
 
@@ -770,7 +929,7 @@ class NormalizedGstr2bModel {
         if (!workspaceId) throw new Error('workspaceId is required for getFilterOptions');
 
         const dbField = field === 'gstins' ? 'supplier_gstin' : 'supplier_name';
-        const conditions = ['workspace_id = ?', `${dbField} IS NOT NULL` ];
+        const conditions = ['workspace_id = ?', `${dbField} IS NOT NULL`];
         const params = [workspaceId];
 
         if (returnPeriod && returnPeriod !== 'ALL') {

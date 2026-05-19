@@ -953,6 +953,7 @@ class GSTRImportController {
                 page,
                 page_size,
                 import_type,
+                column_filters,
             } = req.query;
 
             const result = await NormalizedGstr2bModel.listInvoices({
@@ -988,6 +989,7 @@ class GSTRImportController {
                 importType: import_type,
                 page,
                 pageSize: page_size,
+                columnFilters: column_filters,
             });
 
             // --- ACTIVITY LOG ---

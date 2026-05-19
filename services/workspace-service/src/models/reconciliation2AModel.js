@@ -184,7 +184,7 @@ class Reconciliation2AModel {
                 const pNormalizedInv = Reconciliation2AModel.normalizeInvoiceNumber(rawInvNo);
                 const pGstin = invA.supplier_gstin;
                 const pDateObj = new Date(is2aVs2b ? invA.document_date : invA.supplier_invoice_date);
-                const pCategory = mapCategory(is2aVs2b ? (invA.document_type || invA.source_section) : invA.voucher_type); 
+                const pCategory = mapCategory(is2aVs2b ? (invA.document_type || invA.source_section) : invA.voucher_type);
 
                 const taxA = is2aVs2b ? (parseFloat(invA.total_tax) || 0) :
                     ((parseFloat(invA.total_igst_amount) || 0) + (parseFloat(invA.total_cgst_amount) || 0) +
@@ -348,7 +348,7 @@ class Reconciliation2AModel {
                 await progressEmitter.emitProgress(runId, 95, 'Updating status tracking...');
                 const tenantId = workspace?.tenant_id || workspaceId;
                 const statusTable = is2aVs2b ? 'reconciliation_status_2a_vs_2b' : 'reconciliation_status_gst2a_vs_book';
-                
+
                 const statusRows = inserted.map(r => ({
                     workspace_id: workspaceId,
                     tenant_id: tenantId,
@@ -365,7 +365,7 @@ class Reconciliation2AModel {
                 // 1. Deduplicate summary status
                 const dedupedStatus = new Map();
                 for (const row of statusRows) {
-                    const key = is2aVs2b 
+                    const key = is2aVs2b
                         ? (row.gstr2a_invoice_id || row.gstr2b_invoice_id)
                         : (row.book_data_id || row.gstr_data_id);
                     if (!key) continue;
@@ -1189,25 +1189,25 @@ class Reconciliation2AModel {
                     )
                     .as('t')
             )
-            .select(
-                'period', 'category',
-                knex.raw("COUNT(DISTINCT pi_id) + COUNT(DISTINCT sa_id) as books_count"),
-                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_igst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_igst ELSE 0 END) as books_igst"),
-                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cgst ELSE 0 END) as books_cgst"),
-                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_sgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_sgst ELSE 0 END) as books_sgst"),
-                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cess ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cess ELSE 0 END) as books_cess"),
-                knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_tax ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_tax ELSE 0 END) as books_tax"),
-                knex.raw("COUNT(DISTINCT gi_id) + COUNT(DISTINCT gb_id) as gstr_count"),
-                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_igst ELSE 0 END) as gstr_igst"),
-                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cgst ELSE 0 END) as gstr_cgst"),
-                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_sgst ELSE 0 END) as gstr_sgst"),
-                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cess ELSE 0 END) as gstr_cess"),
-                knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_tax ELSE 0 END) as gstr_tax"),
-                knex.raw("SUM(CASE WHEN match_status IN ('matched', 'tolerance_match', 'exact_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as matched_tax"),
-                knex.raw("SUM(CASE WHEN match_status IN ('partial_match', 'mismatch', 'probability_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as partial_tax"),
-                knex.raw("SUM(CASE WHEN match_status IN ('missing_in_books', 'not_in_books') AND g_rn = 1 THEN g_tax ELSE 0 END) as mismatch_tax")
-            )
-            .groupBy('period', 'category'),
+                .select(
+                    'period', 'category',
+                    knex.raw("COUNT(DISTINCT pi_id) + COUNT(DISTINCT sa_id) as books_count"),
+                    knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_igst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_igst ELSE 0 END) as books_igst"),
+                    knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cgst ELSE 0 END) as books_cgst"),
+                    knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_sgst ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_sgst ELSE 0 END) as books_sgst"),
+                    knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_cess ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_cess ELSE 0 END) as books_cess"),
+                    knex.raw("SUM(CASE WHEN pi_rn = 1 THEN pi_tax ELSE 0 END) + SUM(CASE WHEN sa_rn = 1 THEN sa_tax ELSE 0 END) as books_tax"),
+                    knex.raw("COUNT(DISTINCT gi_id) + COUNT(DISTINCT gb_id) as gstr_count"),
+                    knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_igst ELSE 0 END) as gstr_igst"),
+                    knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cgst ELSE 0 END) as gstr_cgst"),
+                    knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_sgst ELSE 0 END) as gstr_sgst"),
+                    knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_cess ELSE 0 END) as gstr_cess"),
+                    knex.raw("SUM(CASE WHEN g_rn = 1 THEN g_tax ELSE 0 END) as gstr_tax"),
+                    knex.raw("SUM(CASE WHEN match_status IN ('matched', 'tolerance_match', 'exact_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as matched_tax"),
+                    knex.raw("SUM(CASE WHEN match_status IN ('partial_match', 'mismatch', 'probability_match') AND g_rn = 1 THEN g_tax ELSE 0 END) as partial_tax"),
+                    knex.raw("SUM(CASE WHEN match_status IN ('missing_in_books', 'not_in_books') AND g_rn = 1 THEN g_tax ELSE 0 END) as mismatch_tax")
+                )
+                .groupBy('period', 'category'),
             baseQuery.clone()
                 .select(
                     knex.raw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000') as period"),
