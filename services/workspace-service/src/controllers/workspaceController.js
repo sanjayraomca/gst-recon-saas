@@ -15,7 +15,7 @@ const createWorkspace = async (req, res) => {
     try {
         console.log("createWorkspace: Body", req.body);
         console.log("createWorkspace: User", req.user);
-        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId, legal_name, address, trade_name, state, city, filing_frequency, gstn_password } = req.body;
+        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId, legal_name, address, trade_name, state, city, filing_frequency, gstn_password, gst_username, gst_user_name, email } = req.body;
         // code is treated as GSTIN here per request context
         const gstin = code;
 
@@ -133,7 +133,7 @@ const createWorkspace = async (req, res) => {
                 }
             }
 
-            await trx('gstin_master').insert({
+             await trx('gstin_master').insert({
                 id: gstinId,
                 gstin: gstin,
                 legal_name: legal_name || name,
@@ -142,6 +142,8 @@ const createWorkspace = async (req, res) => {
                 registration_type: 'REGULAR',
                 address: address ? JSON.stringify(address) : JSON.stringify({ city: city, state: stateCode }),
                 gstin_pwd_encrypted: encryptedPassword,
+                gst_user_name: gst_username || gst_user_name || null,
+                contact_email: email || null,
                 password_updated_at: encryptedPassword ? new Date() : null,
                 is_active: true,
                 created_at: new Date(),
