@@ -121,13 +121,11 @@ class ReconciliationModel {
                         else if (taxPeriod.quarter === 3) quarterMonths = [10, 11, 12];
                         else if (taxPeriod.quarter === 4) quarterMonths = [1, 2, 3];
 
-                        sourceAQuery = sourceAQuery
-                            .whereIn(trx.raw(`EXTRACT(MONTH FROM document_date)`), quarterMonths)
-                            .whereRaw(`EXTRACT(YEAR FROM document_date) = ?`, [taxPeriod.year]);
+                        const periods = quarterMonths.map(m => `${String(m).padStart(2, '0')}${taxPeriod.year}`);
+                        sourceAQuery = sourceAQuery.whereIn('return_period', periods);
                     } else {
-                        sourceAQuery = sourceAQuery
-                            .whereRaw(`EXTRACT(MONTH FROM document_date) = ?`, [taxPeriod.month])
-                            .whereRaw(`EXTRACT(YEAR FROM document_date) = ?`, [taxPeriod.year]);
+                        const periodStr = `${String(taxPeriod.month).padStart(2, '0')}${taxPeriod.year}`;
+                        sourceAQuery = sourceAQuery.where('return_period', periodStr);
                     }
                 }
                 purchaseInvoices = await sourceAQuery;
@@ -221,23 +219,21 @@ class ReconciliationModel {
                     else if (taxPeriod.quarter === 3) quarterMonths = [10, 11, 12];
                     else if (taxPeriod.quarter === 4) quarterMonths = [1, 2, 3];
 
-                    gstrQuery = gstrQuery
-                        .whereIn(trx.raw(`EXTRACT(MONTH FROM ${gstrTable}.document_date)`), quarterMonths)
-                        .whereRaw(`EXTRACT(YEAR FROM ${gstrTable}.document_date) = ?`, [taxPeriod.year]);
+                    const periods = quarterMonths.map(m => `${String(m).padStart(2, '0')}${taxPeriod.year}`);
+                    gstrQuery = gstrQuery.whereIn(`${gstrTable}.return_period`, periods);
                 } else {
-                    gstrQuery = gstrQuery
-                        .whereRaw(`EXTRACT(MONTH FROM ${gstrTable}.document_date) = ?`, [taxPeriod.month])
-                        .whereRaw(`EXTRACT(YEAR FROM ${gstrTable}.document_date) = ?`, [taxPeriod.year]);
+                    const periodStr = `${String(taxPeriod.month).padStart(2, '0')}${taxPeriod.year}`;
+                    gstrQuery = gstrQuery.where(`${gstrTable}.return_period`, periodStr);
                 }
             }
 
             const gstrInvoices = await gstrQuery;
-console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} invoices`);
+            console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} invoices`);
 
 
             // 4. Perform matching
             await progressEmitter.emitProgress(runId, 45, 'Performing rule-based matching...');
-            
+
             // --- NEW: Fetch existing statuses for inheritance ---
             const statusTable = is2aVs2b ? 'reconciliation_status_2a_vs_2b' : (is2a ? 'reconciliation_status_gst2a_vs_book' : 'reconciliation_status');
             const existingStatuses = await trx(statusTable).where({ workspace_id: workspaceId });
@@ -278,7 +274,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
             const createMatchResult = (overrides) => {
                 const bookId = overrides.purchase_invoice_id || (is2aVs2b ? overrides.gstr2a_invoice_id : null);
                 const gstrId = overrides.gstr2b_invoice_id || (is2a ? overrides.gstr2a_invoice_id : null);
-                
+
                 // Inherit status if it exists in the master table
                 let inheritedStatus = 'pending';
                 if (bookId && gstrId && statusMap.has(`pair:${bookId}:${gstrId}`)) {
@@ -1430,7 +1426,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                                         case 'en': self[`${method}Raw`](`${colSql} NOT ILIKE ?`, [`%${searchText}`]); break;
                                         case 'cn': self[`${method}Raw`](`${colSql} ILIKE ?`, [`%${searchText}%`]); break;
                                         case 'nc': self[`${method}Raw`](`${colSql} NOT ILIKE ?`, [`%${searchText}%`]); break;
-                                        case 'in': self[`${method}Raw`](`${colSql} IN (${valueList.map(()=>'?').join(',')})`, valueList); break;
+                                        case 'in': self[`${method}Raw`](`${colSql} IN (${valueList.map(() => '?').join(',')})`, valueList); break;
                                         case 'nu': self[`${method}Raw`](`${colSql} IS NULL`); break;
                                         case 'nn': self[`${method}Raw`](`${colSql} IS NOT NULL`); break;
                                         default: self[`${method}Raw`](`${colSql} ILIKE ?`, [`%${searchText}%`]);
@@ -2062,7 +2058,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
             })
             .select(
                 knex.raw("COALESCE(tp.period_code, gi.return_period, '000000') as period"),
-                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER')) as category"),
+                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, CASE WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%CREDIT%' THEN 'CDNR-C' WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%DEBIT%' THEN 'CDNR-D' WHEN pi.voucher_type IS NOT NULL AND (UPPER(pi.voucher_type) LIKE '%IMPORT%' OR UPPER(pi.voucher_type) LIKE '%BOE%') THEN 'IMPG' WHEN pi.voucher_type IS NOT NULL THEN 'B2B' ELSE 'OTHER' END)) as category"),
                 // Books side
                 knex.raw("COUNT(pi.id) as books_count"),
                 knex.raw("SUM(COALESCE(pi.total_igst_amount,0)) as books_igst"),
@@ -2082,8 +2078,8 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                 knex.raw("SUM(COALESCE(pi.total_cgst_amount,0)) - SUM(COALESCE(gi.cgst,0)) as diff_cgst"),
                 knex.raw("SUM(COALESCE(pi.total_sgst_amount,0)) - SUM(COALESCE(gi.sgst,0)) as diff_sgst")
             )
-            .groupByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))")
-            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))");
+            .groupByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, CASE WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%CREDIT%' THEN 'CDNR-C' WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%DEBIT%' THEN 'CDNR-D' WHEN pi.voucher_type IS NOT NULL AND (UPPER(pi.voucher_type) LIKE '%IMPORT%' OR UPPER(pi.voucher_type) LIKE '%BOE%') THEN 'IMPG' WHEN pi.voucher_type IS NOT NULL THEN 'B2B' ELSE 'OTHER' END))")
+            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, CASE WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%CREDIT%' THEN 'CDNR-C' WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%DEBIT%' THEN 'CDNR-D' WHEN pi.voucher_type IS NOT NULL AND (UPPER(pi.voucher_type) LIKE '%IMPORT%' OR UPPER(pi.voucher_type) LIKE '%BOE%') THEN 'IMPG' WHEN pi.voucher_type IS NOT NULL THEN 'B2B' ELSE 'OTHER' END))");
 
         // ── Invoice-level rows ───────────────────────────────────────────────────
         const invoices = await knex('reconciliation_results as rr')
@@ -2138,7 +2134,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
             })
             .select(
                 knex.raw("COALESCE(tp.period_code, gi.return_period, '000000') as period"),
-                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER')) as category"),
+                knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, CASE WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%CREDIT%' THEN 'CDNR-C' WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%DEBIT%' THEN 'CDNR-D' WHEN pi.voucher_type IS NOT NULL AND (UPPER(pi.voucher_type) LIKE '%IMPORT%' OR UPPER(pi.voucher_type) LIKE '%BOE%') THEN 'IMPG' WHEN pi.voucher_type IS NOT NULL THEN 'B2B' ELSE 'OTHER' END)) as category"),
                 'rr.id as result_id',
                 'rr.action_status',
                 'rr.match_status',
@@ -2163,7 +2159,7 @@ console.log(`[MatchingTask] Fetched ${gstrInvoices.length} ${portalTypeLabel} in
                 'pi.book_vchr_no as vchr_no',
                 'pi.gstr_category'
             )
-            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, 'OTHER'))");
+            .orderByRaw("COALESCE(tp.period_code, gi.return_period, '000000'), UPPER(COALESCE(pi.source_section, gi.source_section, CASE WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%CREDIT%' THEN 'CDNR-C' WHEN pi.voucher_type IS NOT NULL AND UPPER(pi.voucher_type) LIKE '%DEBIT%' THEN 'CDNR-D' WHEN pi.voucher_type IS NOT NULL AND (UPPER(pi.voucher_type) LIKE '%IMPORT%' OR UPPER(pi.voucher_type) LIKE '%BOE%') THEN 'IMPG' WHEN pi.voucher_type IS NOT NULL THEN 'B2B' ELSE 'OTHER' END))");
 
         // ── Build hierarchy ──────────────────────────────────────────────────────
         const periodMap = {};

@@ -1,0 +1,67 @@
+=== Checking Purchase Vouchers for 042025 ===
+Total Book Vouchers: 54
+┌─────────┬────────────────────────────────────────┬─────────────────────────────────────────────┬────────────────────┬──────────────────────────┬─────────┐
+│ (index) │ id                                     │ supplier_name                               │ invoice_no         │ date                     │ tax     │
+├─────────┼────────────────────────────────────────┼─────────────────────────────────────────────┼────────────────────┼──────────────────────────┼─────────┤
+│ 0       │ 'b52156f5-85f3-4cd0-aaa6-167b4b3a4f3a' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 1       │ 'a462ceae-34e2-4260-ab98-e23cfbd7ed78' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 2       │ 'dd515f4b-c255-431d-a17c-8a87aa07fbb2' │ 'ICICI BANK LTD (GST)'                      │ '138251261880469'  │ 2025-04-06T18:30:00.000Z │ 0.18    │
+│ 3       │ '2e87f556-dfa6-4015-b0a5-54135382dd90' │ 'ICICI BANK LTD (GST)'                      │ '135250404023852'  │ 2025-04-03T18:30:00.000Z │ 291.46  │
+│ 4       │ '3fa5533f-15ef-49ed-bc2f-65ff2a4e33e9' │ 'EPF PAYABLE'                               │ ''                 │ null                     │ 0       │
+│ 5       │ '49828ecb-0240-404c-83c3-c512f32477f9' │ 'ICICI BANK LTD (GST)'                      │ '135250408038179'  │ 2025-04-07T18:30:00.000Z │ 209.02  │
+│ 6       │ '34c8fb2b-3611-4399-b93e-c934b4ccdf20' │ 'ICICI BANK LTD (GST)'                      │ '135250411058075'  │ 2025-04-10T18:30:00.000Z │ 1211    │
+│ 7       │ 'de4f8733-a6c4-4ef3-be85-48041e04f705' │ 'Royal Enterprise'                          │ 'AT0432526'        │ 2025-04-18T18:30:00.000Z │ 588.78  │
+│ 8       │ 'bd404246-9f10-46bf-916c-0091a4b85c75' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 9       │ '0eca025b-27b0-4db5-9a6d-20e67d84a143' │ 'ICICI BANK LTD (GST)'                      │ '135250424120779'  │ 2025-04-23T18:30:00.000Z │ 90      │
+│ 10      │ '55a6f9c6-7c79-4465-8085-e876122a8065' │ 'TORRENT POWER'                             │ '3250859'          │ 2025-04-07T18:30:00.000Z │ 0       │
+│ 11      │ 'f4e5cb00-f0a8-405b-992c-76474564a7d5' │ 'Make My Trip -  Haryana'                   │ ''                 │ null                     │ 0       │
+│ 12      │ '2a52fd21-6e11-4687-8b48-3a1b2c18306f' │ 'Make My Trip -  Haryana'                   │ ''                 │ null                     │ 0       │
+│ 13      │ 'd9def843-5ac9-468d-a236-cf44cdbb39cd' │ 'TORRENT POWER'                             │ '3282509'          │ 2025-04-28T18:30:00.000Z │ 0       │
+│ 14      │ '5416b805-a329-4c7b-ade1-6b2935e1c784' │ 'Sagar Marketing - AMD'                     │ 'P045'             │ 2025-04-28T18:30:00.000Z │ 560.14  │
+│ 15      │ 'ccaf2242-7e31-41f8-ba01-61fa6d3a79d6' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 16      │ 'f1e46909-6352-4937-8858-e8e3635f8563' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 17      │ '571aabd1-c353-486d-bab2-99a339b1ab9f' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 18      │ '58588c55-ef2b-4c94-b016-b4a97db16bc1' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 19      │ '2ea7038e-9780-4ca0-860a-0c82c9d166d2' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 20      │ 'cb7504fe-2060-4236-bb42-df98301bca80' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 21      │ '81d8efad-ddad-4638-a9fd-ed30b289d413' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 22      │ '59f1b2f8-05b1-433d-ad6d-cfe7ef3c36de' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 23      │ 'e9f9490e-8c58-4225-bbd7-3fea958a127b' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 24      │ '320efd39-b14b-43ea-9f03-1e8163644c12' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 25      │ '776f008c-fd29-405c-9021-c6e15af18fb3' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 26      │ 'e5412768-21b2-4f49-ba51-af9abecdd086' │ 'FUEL & PETROL'                             │ ''                 │ null                     │ 0       │
+│ 27      │ '9a8973f2-feee-4c92-aa2b-fc9cb0f7023e' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 28      │ '6b4560c4-1148-4ff1-ac1d-7066ee99d1b3' │ 'BHARTI AIRTEL LIMITED'                     │ 'MF2624I000151102' │ 2025-04-08T18:30:00.000Z │ 343.08  │
+│ 29      │ 'c12ca61f-a690-45f2-ba0e-e91abb1c0a4f' │ 'BHARTI AIRTEL LIMITED'                     │ 'MF2624I000030115' │ 2025-04-02T18:30:00.000Z │ 80.82   │
+│ 30      │ 'f6d1bb17-df82-4101-8e22-95b5ba91237e' │ 'Make My Trip -  Haryana'                   │ ''                 │ null                     │ 0       │
+│ 31      │ 'e31cadac-994e-4796-8415-5417ec887cf1' │ 'ICICI BANK LTD (GST)'                      │ '135250424120790'  │ 2025-04-23T18:30:00.000Z │ 90      │
+│ 32      │ '7ea1b8c7-8f30-46ab-b4d6-0cfcf1e20cee' │ 'ICICI BANK LTD (GST)'                      │ '135250424120834'  │ 2025-04-23T18:30:00.000Z │ 90      │
+│ 33      │ 'e9776ae5-d4eb-44a0-ad88-c74d6e35e3d8' │ 'AMAZON WEB SERVICES INDIA PRIVATE LIMITED' │ 'AIN2526000276054' │ 2025-04-01T18:30:00.000Z │ 2610.32 │
+│ 34      │ 'fd162beb-66a5-4e03-8b24-634ebd986db4' │ 'SALARY PAYABLE'                            │ ''                 │ null                     │ 0       │
+│ 35      │ 'f45bf21f-6da6-4024-91fe-1d98766964c4' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 36      │ '4bdbbd24-d4a6-43a9-bb66-d3d6a5eda45c' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 37      │ 'f19d3fb2-223c-407d-9098-dd305357d796' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 38      │ 'cb65099a-87c6-46a6-86b1-2664cf79e4ad' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 39      │ '3913177d-41e2-4070-a79b-2832cc691e1c' │ 'GOOGLE INDIA PRIVATE LIMITED'              │ '5237081399'       │ 2025-04-29T18:30:00.000Z │ 99.36   │
+│ 40      │ '32e006d5-a498-4f6c-9dcf-5f8849b73ac2' │ 'BHARTI AIRTEL LIMITED'                     │ 'HF2624I000025725' │ 2025-04-02T18:30:00.000Z │ 179.82  │
+│ 41      │ 'ec72a42c-91a6-44c5-8bab-4d591500d7ae' │ 'Make My Trip -  Haryana'                   │ 'M06AI26I00971270' │ 2025-04-14T18:30:00.000Z │ 48.81   │
+│ 42      │ 'bc4b5f86-02cc-46db-99a4-a172d3ad9e91' │ 'Make My Trip -  Haryana'                   │ 'M06AI26I01095621' │ 2025-04-15T18:30:00.000Z │ 65.08   │
+│ 43      │ '42e2ba5e-3c2b-4ad0-ba3c-68237b6b740a' │ 'SNV AVIATION PRIVATE LIMITED - AMD'        │ '242E2FZ2V0425002' │ 2025-04-14T18:30:00.000Z │ 286.64  │
+│ 44      │ '77cf3439-960f-4a91-9d51-658dd307f7af' │ 'SNV AVIATION PRIVATE LIMITED - Kolkata'    │ '192HBTC9X0425002' │ 2025-04-14T18:30:00.000Z │ 272.6   │
+│ 45      │ '6a1d5b3c-3fb9-4765-a9da-8d1e2ee126f5' │ 'SNV AVIATION PRIVATE LIMITED - AMD'        │ '243E473YF0425003' │ 2025-04-14T18:30:00.000Z │ 286.64  │
+│ 46      │ '6876d24e-6337-4b2f-86ef-c991c71e12f6' │ 'SNV AVIATION PRIVATE LIMITED - Kolkata'    │ '193FYFRMA0425003' │ 2025-04-14T18:30:00.000Z │ 272.6   │
+│ 47      │ '64f12222-1a57-4755-aa27-6439e85c637a' │ 'SNV AVIATION PRIVATE LIMITED - AMD'        │ '243E473YF0425002' │ 2025-04-14T18:30:00.000Z │ 4.76    │
+│ 48      │ '89e24996-92e1-45bd-800a-1f9ce603fcc7' │ 'SNV AVIATION PRIVATE LIMITED - Kolkata'    │ '193FYFRMA0425002' │ 2025-04-14T18:30:00.000Z │ 4.7     │
+│ 49      │ '28717468-5ad6-4d44-851e-febf859ddfbc' │ 'SNV AVIATION PRIVATE LIMITED - AMD'        │ '243E2FZ2V0425003' │ 2025-04-14T18:30:00.000Z │ 4.76    │
+│ 50      │ '34f5caeb-f4c6-4f2c-a11a-364215e30db5' │ 'SNV AVIATION PRIVATE LIMITED - Kolkata'    │ '193HBTC9X0425003' │ 2025-04-14T18:30:00.000Z │ 4.7     │
+│ 51      │ 'c58e1536-d31a-4398-8893-69c21e6d752b' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 52      │ '39a69858-6d2b-4471-8893-8ff73efd0128' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+│ 53      │ '796e43c1-7957-4447-8716-a1b7acc1ea7b' │ 'LOCAL VENDOR UNREGISTERED / B2C'           │ ''                 │ null                     │ 0       │
+└─────────┴────────────────────────────────────────┴─────────────────────────────────────────────┴────────────────────┴──────────────────────────┴─────────┘
+
+=== Checking GSTR-2B Invoices for 042025 ===
+Total GSTR-2B Invoices: 0
+┌─────────┐
+│ (index) │
+├─────────┤
+└─────────┘
