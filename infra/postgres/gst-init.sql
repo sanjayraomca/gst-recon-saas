@@ -185,6 +185,7 @@ CREATE TABLE gstin_master (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     gstin CHAR(15) UNIQUE NOT NULL,
     legal_name VARCHAR(500) NOT NULL,
+    gst_user_name VARCHAR(50) DEFAULT NULL,
     trade_name VARCHAR(500),
     registration_type VARCHAR(30) NOT NULL
         CHECK (registration_type IN ('REGULAR', 'COMPOSITION', 'SEZ', 'UNREGISTERED', 'ISD', 'CASUAL')),
