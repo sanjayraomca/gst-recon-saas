@@ -1,6 +1,12 @@
 -- =========================================================================
 -- EXTERNAL GST INTEGRATION SERVICE - DATABASE SCHEMA
 -- =========================================================================
+-- Enable essential extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "btree_gin";
+
+
 -- ARCHITECTURE:
 --   - You own ONE White Book account (client_id, client_secret, email stored in .env)
 --   - Users register with your service and receive an API key
