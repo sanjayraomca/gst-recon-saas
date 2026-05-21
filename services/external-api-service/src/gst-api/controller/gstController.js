@@ -8,7 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 // ─────────────────────────────────────────────────────────────
 const registerClient = async (req, res) => {
     try {
-        const { contact_email, platform, client_name } = req.body;
+        const { contact_email, platform, client_name, user_id, extra_info } = req.body;
         if (!contact_email || !platform) {
             return res.status(400).json({ success: false, error: 'contact_email and platform are required.' });
         }
@@ -17,6 +17,26 @@ const registerClient = async (req, res) => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(contact_email)) {
             return res.status(400).json({ success: false, error: 'Invalid contact_email format.' });
+        }
+
+        // Validate user_id if provided
+        if (user_id) {
+            const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+            if (!uuidRegex.test(user_id)) {
+                return res.status(400).json({ success: false, error: 'Invalid user_id format. Must be a valid UUID.' });
+            }
+            // Verify user exists
+            const user = await db('users').where({ id: user_id }).first();
+            if (!user) {
+                return res.status(404).json({ success: false, error: `User with ID ${user_id} not found.` });
+            }
+        }
+
+        // Validate extra_info if provided
+        if (extra_info !== undefined && extra_info !== null) {
+            if (typeof extra_info !== 'object' || Array.isArray(extra_info)) {
+                return res.status(400).json({ success: false, error: 'extra_info must be a valid JSON object.' });
+            }
         }
 
         // 1. Check if API key already exists for this email + platform
@@ -39,11 +59,13 @@ const registerClient = async (req, res) => {
                 client_name: resolvedClientName,
                 contact_email,
                 api_key: apiKey,
+                user_id: user_id || null,
+                extra_info: extra_info || null,
                 is_active: true,
                 created_at: new Date(),
                 updated_at: new Date()
             })
-            .returning(['id', 'platform', 'client_name', 'contact_email', 'api_key', 'created_at']);
+            .returning(['id', 'platform', 'client_name', 'contact_email', 'api_key', 'user_id', 'extra_info', 'created_at']);
 
         return res.status(201).json({
             success: true,

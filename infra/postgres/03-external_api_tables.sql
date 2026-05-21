@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS ext_api_clients (
     is_active       BOOLEAN DEFAULT TRUE,
     rate_limit_per_minute INTEGER DEFAULT 60,          -- Request throttle per client
     allowed_libs    TEXT[] DEFAULT ARRAY['GST'],        -- GST, EINVOICE, EWAYBILL
+    user_id         UUID        REFERENCES users(id) ON DELETE SET NULL DEFAULT NULL,
+    extra_info      JSONB       DEFAULT NULL,
     created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ext_api_clients_email_platform_key UNIQUE (contact_email, platform)

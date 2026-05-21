@@ -201,6 +201,7 @@ CREATE TABLE gstin_master (
     address JSONB,
     gstin_pwd_encrypted TEXT,
     password_updated_at TIMESTAMPTZ,
+    gstin_status VARCHAR(20) DEFAULT 'ACTIVE',
     is_active BOOLEAN DEFAULT TRUE,
     compliance_score NUMERIC(5,2) DEFAULT 100.00,
     last_filing_date DATE,
