@@ -8,23 +8,42 @@ const { v4: uuidv4 } = require('uuid');
 // ─────────────────────────────────────────────────────────────
 const registerClient = async (req, res) => {
     try {
-        const { client_name, contact_email } = req.body;
-        if (!client_name || !contact_email) {
-            return res.status(400).json({ success: false, error: 'client_name and contact_email are required.' });
+        const { contact_email, platform, client_name } = req.body;
+        if (!contact_email || !platform) {
+            return res.status(400).json({ success: false, error: 'contact_email and platform are required.' });
         }
 
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(contact_email)) {
+            return res.status(400).json({ success: false, error: 'Invalid contact_email format.' });
+        }
+
+        // 1. Check if API key already exists for this email + platform
+        const existing = await db('ext_api_clients')
+            .where({ contact_email, platform })
+            .first();
+        if (existing) {
+            return res.status(409).json({
+                success: false,
+                error: `An API key has already been created for contact email '${contact_email}' on platform '${platform}'.`
+            });
+        }
+
+        const resolvedClientName = client_name || contact_email.split('@')[0];
         const apiKey = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, ''); // 64-char key
 
         const [client] = await db('ext_api_clients')
             .insert({
-                client_name,
+                platform,
+                client_name: resolvedClientName,
                 contact_email,
                 api_key: apiKey,
                 is_active: true,
                 created_at: new Date(),
                 updated_at: new Date()
             })
-            .returning(['id', 'client_name', 'contact_email', 'api_key', 'created_at']);
+            .returning(['id', 'platform', 'client_name', 'contact_email', 'api_key', 'created_at']);
 
         return res.status(201).json({
             success: true,

@@ -23,6 +23,7 @@ CREATE EXTENSION IF NOT EXISTS "btree_gin";
 -- 1.1 API Clients (Your customers / other accounting softwares)
 CREATE TABLE IF NOT EXISTS ext_api_clients (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    platform        VARCHAR(255) NOT NULL,              -- e.g. "White Books", "Tally" (software name/link)
     client_name     VARCHAR(200) NOT NULL,              -- e.g. "My Billing App", "ERP System"
     contact_email   VARCHAR(255) NOT NULL,
     api_key         VARCHAR(64)  UNIQUE NOT NULL,       -- Generated key given to the user
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS ext_api_clients (
     rate_limit_per_minute INTEGER DEFAULT 60,          -- Request throttle per client
     allowed_libs    TEXT[] DEFAULT ARRAY['GST'],        -- GST, EINVOICE, EWAYBILL
     created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ext_api_clients_email_platform_key UNIQUE (contact_email, platform)
 );
 CREATE INDEX IF NOT EXISTS idx_ext_api_clients_key ON ext_api_clients(api_key);
 

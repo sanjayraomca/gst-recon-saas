@@ -64,7 +64,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"client_name\": \"My Billing Software\",\n  \"contact_email\": \"admin@mybilling.com\"\n}"
+              "raw": "{\n  \"contact_email\": \"admin@mybilling.com\",\n  \"platform\": \"My Billing Software\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/ext/gst/clients",
@@ -78,13 +78,13 @@
               "name": "Success - Client Registered",
               "status": "Created",
               "code": 201,
-              "body": "{\n  \"success\": true,\n  \"message\": \"API client registered. Store your api_key safely — it will not be shown again.\",\n  \"data\": {\n    \"id\": \"0721ed7e-9ce8-4163-9fe4-8e12fbcb5328\",\n    \"client_name\": \"My Billing Software\",\n    \"contact_email\": \"admin@mybilling.com\",\n    \"api_key\": \"d8edce85388a4ee6be000b5567f15e02388782566255454d94deed4ce7c61241\",\n    \"created_at\": \"2026-05-20T10:43:02.043Z\"\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"message\": \"API client registered. Store your api_key safely — it will not be shown again.\",\n  \"data\": {\n    \"id\": \"0721ed7e-9ce8-4163-9fe4-8e12fbcb5328\",\n    \"platform\": \"My Billing Software\",\n    \"client_name\": \"My Billing Software\",\n    \"contact_email\": \"admin@mybilling.com\",\n    \"api_key\": \"d8edce85388a4ee6be000b5567f15e02388782566255454d94deed4ce7c61241\",\n    \"created_at\": \"2026-05-20T10:43:02.043Z\"\n  }\n}"
             },
             {
               "name": "Error - Missing Fields",
               "status": "Bad Request",
               "code": 400,
-              "body": "{\n  \"success\": false,\n  \"error\": \"client_name and contact_email are required.\"\n}"
+              "body": "{\n  \"success\": false,\n  \"error\": \"contact_email and platform are required.\"\n}"
             }
           ]
         },
