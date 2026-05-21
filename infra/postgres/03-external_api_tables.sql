@@ -295,3 +295,17 @@ CREATE TABLE IF NOT EXISTS ext_api_request_log (
 CREATE INDEX IF NOT EXISTS idx_ext_req_log_client  ON ext_api_request_log(client_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ext_req_log_date    ON ext_api_request_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_ext_req_log_gstin   ON ext_api_request_log(gstin);
+
+-- =========================================================================
+-- SECTION 8: FILING PREFERENCES CACHE
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS ext_preferences_cache (
+    gstin           CHAR(15)    NOT NULL,
+    financial_year  CHAR(7)     NOT NULL,
+    preferences_data JSONB       NOT NULL,
+    cached_until    TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (gstin, financial_year)
+);
+

@@ -16,6 +16,12 @@ app.get('/health', (req, res) => {
 // ─── GST API Routes ──────────────────────────────────────────
 app.use('/ext/gst', require('./gst-api/routes/gstRoutes'));
 
+// ─── E-Invoice API Routes ────────────────────────────────────
+app.use('/ext/einvoice', require('./einvoice-api/routes/einvoiceRoutes'));
+
+// ─── E-Way Bill API Routes ───────────────────────────────────
+app.use('/ext/ewaybill', require('./ewaybill-api/routes/ewaybillRoutes'));
+
 // ─── 404 Handler ─────────────────────────────────────────────
 app.use((req, res) => {
     res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found.` });

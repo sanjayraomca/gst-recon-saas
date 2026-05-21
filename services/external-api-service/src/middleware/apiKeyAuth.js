@@ -1,11 +1,10 @@
 const db = require('../config/db');
 
 /**
- * API Key Authentication Middleware
- * Every request from external apps must include: Header X-API-Key
- * Validates key against ext_api_clients table and attaches client to req
+ * API Key Authentication Middleware Factory
+ * @param {string} requiredLib - The library namespace required for this router (e.g. 'GST')
  */
-const apiKeyAuth = async (req, res, next) => {
+const apiKeyAuth = (requiredLib) => async (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
 
     if (!apiKey) {
@@ -24,6 +23,14 @@ const apiKeyAuth = async (req, res, next) => {
             return res.status(401).json({
                 success: false,
                 error: 'Invalid or inactive API key.'
+            });
+        }
+
+        // Verify library permission
+        if (requiredLib && (!client.allowed_libs || !client.allowed_libs.includes(requiredLib))) {
+            return res.status(403).json({
+                success: false,
+                error: `Access denied. Your API key does not have permission to access the '${requiredLib}' library.`
             });
         }
 

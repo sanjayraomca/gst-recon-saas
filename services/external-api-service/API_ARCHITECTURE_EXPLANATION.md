@@ -1,17 +1,18 @@
-# Architecture & Implementation Plan: External GST Integration Service
+# Architecture & Implementation Plan: External GST, E-Invoice & E-Way Bill Integration Service
 
-This document provides a comprehensive technical overview of the newly engineered **External GST Integration Infrastructure** designed to serve as a high-performance, secure, and globally accessible API layer for multiple internal and external accounting softwares.
+This document provides a comprehensive technical overview of the newly engineered **External Integration Infrastructure** designed to serve as a high-performance, secure, and globally accessible API layer for multiple internal and external accounting softwares.
 
 ---
 
 ## 1. Executive Summary
 
-Instead of coupling the GSP (GST Suvidha Provider) integration directly into our SaaS platform codebase, we have designed and built a **fully decoupled, standalone microservice** (`external-api-service`). 
+Instead of coupling the GSP (GST Suvidha Provider), E-Invoice, and E-Way Bill integrations directly into our SaaS platform codebase, we have designed and built a **fully decoupled, standalone microservice** (`external-api-service`).
 
 ### Key Business & Technical Benefits:
 * **Multi-Client Portability**: Other billing applications, ERPs, or external accounting clients can consume this API using secure client API keys.
-* **Cost & Performance Optimization**: Highly efficient caching keeps public searches and return tracks cached on our side, dramatically reducing White Book GSP query charges and avoiding rate limit blocks.
+* **Cost & Performance Optimization**: Highly efficient caching keeps public taxpayer details, return tracks, and filing preferences cached on our side, dramatically reducing White Book GSP query charges and avoiding rate limit blocks.
 * **Credential Isolation**: Only this isolated service handles our direct GSP credentials (`client_id`, `client_secret`, and `email`). Clients only interact using transient API keys.
+* **Granular Library Authorization**: Access keys are restricted to specific authorized namespaces (`GST`, `EINVOICE`, `EWAYBILL`).
 
 ---
 
@@ -31,10 +32,10 @@ The following diagram illustrates the secure intermediate proxy model:
   │ EXTERNAL-API-SERVICE                                  │
   │ (Node.js/Express Middleware, Token Manager & Router)  │
   ├────────────────────────────────────────────────────────┤
-  │   [API Key Auth]  ───> [Log Auditing] ───> [Controller]│
+  │   [API Key Auth]  ───> [Log Auditing] ───> [Router]    │
   └────────────────────────────────────────────────────────┘
             │                                     │
-       Cache Query                          Secure GSP Call
+     Cache Query & Logic                    Secure GSP Call
             ▼                                     ▼
   ┌──────────────────┐                  ┌──────────────────┐
   │ PostgreSQL Cache │                  │ White Book (GSP) │
@@ -46,34 +47,62 @@ The following diagram illustrates the secure intermediate proxy model:
 
 ## 3. Core Technical Mechanics
 
-### A. Secure API Client Authentication
-When a new client application joins, they run a one-time registration. The service returns a secure `64-character API Key` and stores it in the `ext_api_clients` table.
-* Every subsequent request must present this key in the header (`X-API-Key: <key>`).
-* The middleware validates the key in **~0-1ms** before any business logic executes.
+### A. Secure API Client & Library Authentication
+When a client application registers, they are assigned a secure `64-character API Key` and configuration parameters (like `rate_limit_per_minute` and `allowed_libs`).
+* Every request must present this key in the header (`X-API-Key: <key>`).
+* **Library Scoping**: Before resolving a route, the gateway validates that the client has the corresponding library in `allowed_libs` (e.g. `'GST'`, `'EINVOICE'`, or `'EWAYBILL'`). Unallowed calls are rejected with `403 Forbidden`.
 
-### B. Smart Caching Layer
-To optimize speed and GSP invoice costs, we implemented a server-side caching engine:
-* **Public Searches (`/ext/gst/search`)**: Cached automatically in PostgreSQL for **24 hours**. If five different clients search the same GSTIN, only the first search hits the live GSP server; the remaining four are served locally in **~3ms**.
-* **Return Trackings (`/ext/gst/rettrack`)**: Cached for **6 hours** per client to prevent unnecessary duplicate polling of filing tables.
+### B. Smart Caching Layer (Least API Trigger System)
+To prevent unnecessary API requests to the partner GSP, we implemented an optimized database caching architecture:
+* **Taxpayer details (`/ext/gst/search`)**: Cached automatically in PostgreSQL for **7 days (168 hours)**.
+* **Return Trackings (`/ext/gst/rettrack`)**: Cached for **48 hours** and **shared globally across all clients**. If Client A queries a GSTIN, Client B's query resolves instantly from the cache, preventing duplicate partner calls.
+* **Filing Preferences (`/ext/gst/preferences`)**: Cached in PostgreSQL (`ext_preferences_cache`) for **7 days**.
+* **E-Invoice HSN Summary (`/ext/einvoice/hsnsum`)**: Cached locally for **24 hours**.
 
 ### C. Persistent Auth & OTP Session Manager
-For authenticated actions (downloading GSTR data or uploading filings), the taxpayer must log in with their portal username via OTP:
+For authenticated actions (downloading GSTR data or uploading filings), the taxpayer logs in with their portal username via OTP:
 1. **Request OTP**: Service initiates OTP dispatch via GSP and returns a unique Transaction ID (`txn`).
 2. **Verify OTP**: The client submits the OTP and `txn`. The service retrieves the GSP bearer token.
-3. **Automatic Reuse**: The token is saved securely in the `ext_gstn_auth_sessions` table with a **6-hour expiry window**. Subsequent requests automatically fetch and attach this token backend-side, eliminating the need to prompt the taxpayer for an OTP on every interaction.
+3. **Automatic Reuse**: The token is saved securely in the `ext_gstn_auth_sessions` table with a **6-hour expiry window**. Subsequent requests automatically fetch and attach this token backend-side.
 
 ---
 
-## 4. Database Schema Structure
-The schema is built on **11 dedicated tables** inside PostgreSQL to ensure robust separation of records, history tracking, and strict multi-tenant security:
+## 4. Subsystem Routers & Endpoints
+
+### 1. GST Subsystem (`/ext/gst/*`)
+* `POST /ext/gst/clients`: Register client applications and generate keys.
+* `POST /ext/gst/clients/gstins`: Register taxpayer GSTIN credentials.
+* `GET /ext/gst/search`: Public taxpayer details search.
+* `GET /ext/gst/rettrack`: Public return filing history tracking.
+* `GET /ext/gst/preferences`: Public filing preferences fetch.
+* `POST /ext/gst/auth/otp-request`: OTP session initiation.
+* `POST /ext/gst/auth/verify-otp`: OTP verification.
+
+### 2. E-Invoice Subsystem (`/ext/einvoice/*`)
+* `POST /ext/einvoice/irn`: Generate E-Invoice (IRN, signed QR code, signed invoice payload) and store in database registry.
+* `GET /ext/einvoice/irn/:irn`: Retrieve E-Invoice registration details by 64-char IRN.
+* `POST /ext/einvoice/irn/cancel`: Cancel an active E-Invoice.
+* `GET /ext/einvoice/hsnsum`: Get HSN-wise summary records.
+
+### 3. E-Way Bill Subsystem (`/ext/ewaybill/*`)
+* `POST /ext/ewaybill`: Generate E-Way Bill, validate transit distances, and record Part-A details.
+* `GET /ext/ewaybill/:ewbNo`: Fetch details by 12-digit E-Way Bill Number.
+* `POST /ext/ewaybill/cancel`: Cancel an active E-Way Bill.
+* `POST /ext/ewaybill/vehicle`: Update vehicle details (Part B update) and log vehicle transition logs.
+
+---
+
+## 5. Database Schema Structure
+The schema is built on **12 dedicated tables** inside PostgreSQL to ensure robust separation of records, history tracking, and strict multi-tenant security:
 
 | Table | Category | Purpose |
 |---|---|---|
-| `ext_api_clients` | Client Management | Stores authorized apps, emails, API keys, and rate limits. |
+| `ext_api_clients` | Client Management | Stores authorized apps, API keys, rate limits, and allowed libraries. |
 | `ext_client_gstins` | Client Management | Links registered GSTINs & portal usernames to specific API clients. |
 | `ext_gstn_auth_sessions` | Authentication | Caches OTP sessions and active GSP bearer tokens per GSTIN. |
 | `ext_taxpayer_cache` | Shared Cache | Shared cache for public taxpayer details. |
 | `ext_return_track` | GSTR Cache | Filing history and status logs. |
+| `ext_preferences_cache` | Shared Cache | Filing frequency preferences cache (7 days TTL). |
 | `ext_gstr2b_data` | GSTR Cache | Full GSTR-2B JSON payloads per client. |
 | `ext_einvoice_irn` | E-Invoice | Registry for generated IRNs, signed QR codes, and values. |
 | `ext_einvoice_hsn_summary` | E-Invoice | HSN-wise summary records per tax period. |
@@ -83,11 +112,9 @@ The schema is built on **11 dedicated tables** inside PostgreSQL to ensure robus
 
 ---
 
-## 5. Verification & Testing Status
+## 6. Verification & Testing Status
 
-We successfully deployed the database schema, started the node service locally on port `3008`, and verified the system using live sandbox requests:
-* **Health Endpoint**: Status `UP`.
-* **API Key Security**: Blocks missing or tampered keys with `401 Unauthorized`.
-* **Taxpayer Search**: Real-time integration successfully returned official sandbox data (e.g. `WhiteBooks`, `Active` status, Tamil Nadu address) and cached it instantly.
-* **Filing History**: Successfully hit the GSP track returns backend.
-* **OTP Verification**: Dispatched OTP to mock taxpayer credentials successfully.
+We successfully verified the service using local integration tests:
+* **Decoupled Key Auth**: Verified security gateway blocks unauthorized library queries.
+* **Caching Performance**: Verified `X-Cache: HIT` for duplicate taxpayer search, filing preferences, and return tracking.
+* **E-Invoice / E-Way Bill Pipeline**: E-Invoice generation, cancellation, E-Way Bill generation, and vehicle update logging are fully functional and properly audited in the request log database.

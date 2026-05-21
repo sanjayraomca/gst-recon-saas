@@ -1,6 +1,6 @@
 const db = require('../../config/db');
 
-const CACHE_TTL_HOURS = 24; // Taxpayer details cached for 24 hours
+const CACHE_TTL_HOURS = 168; // Taxpayer details cached for 7 days (168 hours)
 
 /**
  * Get cached taxpayer by GSTIN
@@ -49,21 +49,22 @@ const upsertCache = async (gstin, data) => {
 };
 
 /**
- * Get cached return track
+ * Get cached return track (shared globally to minimize third-party API triggers)
  */
 const getCachedReturnTrack = async (clientId, gstin, financialYear, returnType) => {
     return await db('ext_return_track')
-        .where({ client_id: clientId, gstin, financial_year: financialYear, return_type: returnType || null })
+        .where({ gstin, financial_year: financialYear, return_type: returnType || null })
         .where('cached_until', '>', new Date())
+        .orderBy('created_at', 'desc')
         .first();
 };
 
 /**
- * Upsert return track cache
+ * Upsert return track cache (cache valid for 48 hours to minimize third-party API triggers)
  */
 const upsertReturnTrack = async (clientId, gstin, financialYear, returnType, data) => {
     const cachedUntil = new Date();
-    cachedUntil.setHours(cachedUntil.getHours() + 6); // Cache returns for 6 hours
+    cachedUntil.setHours(cachedUntil.getHours() + 48); // Cache returns for 48 hours
 
     const row = {
         client_id: clientId,
@@ -140,11 +141,44 @@ const getClientGstin = async (clientId, gstin) => {
         .first();
 };
 
+/**
+ * Get cached filing preferences by GSTIN & FY (shared globally)
+ */
+const getCachedPreferences = async (gstin, financialYear) => {
+    return await db('ext_preferences_cache')
+        .where({ gstin, financial_year: financialYear })
+        .where('cached_until', '>', new Date())
+        .first();
+};
+
+/**
+ * Upsert preferences cache (valid for 7 days)
+ */
+const upsertPreferences = async (gstin, financialYear, data) => {
+    const cachedUntil = new Date();
+    cachedUntil.setHours(cachedUntil.getHours() + 168); // Cache filing preferences for 7 days (168 hours)
+
+    const row = {
+        gstin,
+        financial_year: financialYear,
+        preferences_data: JSON.stringify(data),
+        cached_until: cachedUntil,
+        updated_at: new Date()
+    };
+
+    await db('ext_preferences_cache')
+        .insert({ ...row, created_at: new Date() })
+        .onConflict(['gstin', 'financial_year'])
+        .merge({ ...row });
+};
+
 module.exports = {
     getCached,
     upsertCache,
     getCachedReturnTrack,
     upsertReturnTrack,
+    getCachedPreferences,
+    upsertPreferences,
     getAuthSession,
     upsertAuthSession,
     saveOtpTxn,

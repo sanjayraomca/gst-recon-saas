@@ -134,6 +134,7 @@ const searchTaxpayer = async (req, res) => {
         const cached = await model.getCached(gstin);
         if (cached) {
             req.cacheHit = true;
+            res.set('X-Cache', 'HIT');
             return res.json({ success: true, source: 'cache', data: cached.raw_response });
         }
 
@@ -143,6 +144,7 @@ const searchTaxpayer = async (req, res) => {
         // 3. Save to cache
         await model.upsertCache(gstin, wbData);
 
+        res.set('X-Cache', 'MISS');
         return res.json({ success: true, source: 'live', data: wbData });
     } catch (error) {
         console.error('[searchTaxpayer]', error.message);
@@ -170,6 +172,7 @@ const trackReturns = async (req, res) => {
         const cached = await model.getCachedReturnTrack(clientId, gstin, fy, type || null);
         if (cached) {
             req.cacheHit = true;
+            res.set('X-Cache', 'HIT');
             return res.json({ success: true, source: 'cache', data: cached.returns_data });
         }
 
@@ -179,6 +182,7 @@ const trackReturns = async (req, res) => {
         // 3. Save to DB per client
         await model.upsertReturnTrack(clientId, gstin, fy, type || null, wbData);
 
+        res.set('X-Cache', 'MISS');
         return res.json({ success: true, source: 'live', data: wbData });
     } catch (error) {
         console.error('[trackReturns]', error.message);
@@ -190,7 +194,6 @@ const trackReturns = async (req, res) => {
     }
 };
 
-// ─────────────────────────────────────────────────────────────
 // GET /ext/gst/preferences?gstin=...&fy=... - Get Preferences
 // ─────────────────────────────────────────────────────────────
 const getPreferences = async (req, res) => {
@@ -202,11 +205,25 @@ const getPreferences = async (req, res) => {
             return res.status(400).json({ success: false, error: 'gstin and fy are required.' });
         }
 
+        // 1. Check cache first
+        const cached = await model.getCachedPreferences(gstin, fy);
+        if (cached) {
+            req.cacheHit = true;
+            res.set('X-Cache', 'HIT');
+            return res.json({ success: true, source: 'cache', data: cached.preferences_data });
+        }
+
         // Get state code from GSTIN prefix (first 2 digits)
         const stateCd = gstin.substring(0, 2);
 
+        // 2. Call White Book
         const wbData = await wb.getPreferences(gstin, fy, stateCd, ipAddress);
-        return res.json({ success: true, data: wbData });
+
+        // 3. Save to cache
+        await model.upsertPreferences(gstin, fy, wbData);
+
+        res.set('X-Cache', 'MISS');
+        return res.json({ success: true, source: 'live', data: wbData });
     } catch (error) {
         console.error('[getPreferences]', error.message);
         res.locals.errorMessage = error.message;
