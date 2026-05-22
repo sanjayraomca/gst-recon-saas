@@ -14,36 +14,86 @@ const getCached = async (gstin) => {
 };
 
 /**
+ * Sync taxpayer details directly to gstin_master
+ */
+const syncGstinMaster = async (gstin, data) => {
+    try {
+        const taxpayer = data.data || data || {};
+        const rawRegType = (taxpayer.dty || 'REGULAR').toUpperCase();
+        const allowedRegTypes = ['REGULAR', 'COMPOSITION', 'SEZ', 'UNREGISTERED', 'ISD', 'CASUAL'];
+        const regType = allowedRegTypes.includes(rawRegType) ? rawRegType : 'REGULAR';
+
+        const parseGspDate = (dateStr) => {
+            if (!dateStr) return null;
+            if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr;
+            const parts = dateStr.split('/');
+            if (parts.length === 3) {
+                return `${parts[2]}-${parts[1]}-${parts[0]}`;
+            }
+            return dateStr;
+        };
+
+        const gstinMasterRow = {
+            gstin,
+            legal_name: taxpayer.lgnm || taxpayer.legal_name || 'Unknown Taxpayer',
+            trade_name: taxpayer.tradeNam || taxpayer.trade_name || null,
+            registration_type: regType,
+            registration_date: parseGspDate(taxpayer.rgdt || null),
+            cancellation_date: parseGspDate(taxpayer.cxdt || null),
+            state_code: taxpayer.stj ? taxpayer.stj.substring(0, 2) : gstin.substring(0, 2),
+            center_jurisdiction: taxpayer.ctj || null,
+            state_jurisdiction: taxpayer.stj || null,
+            business_nature: taxpayer.nba ? (typeof taxpayer.nba === 'string' ? taxpayer.nba : JSON.stringify(taxpayer.nba)) : null,
+            address: taxpayer.pradr ? (typeof taxpayer.pradr === 'string' ? JSON.parse(taxpayer.pradr) : taxpayer.pradr) : null,
+            gstin_status: (taxpayer.sts || 'ACTIVE').toUpperCase(),
+            is_active: (taxpayer.sts || '').toUpperCase() === 'ACTIVE',
+            updated_at: new Date()
+        };
+
+        await db('gstin_master')
+            .insert({ ...gstinMasterRow, created_at: new Date() })
+            .onConflict('gstin')
+            .merge({ ...gstinMasterRow });
+    } catch (masterError) {
+        console.error('[syncGstinMaster] Failed to sync to gstin_master:', masterError.message);
+    }
+};
+
+/**
  * Upsert taxpayer cache
  */
 const upsertCache = async (gstin, data) => {
     const cachedUntil = new Date();
     cachedUntil.setHours(cachedUntil.getHours() + CACHE_TTL_HOURS);
 
+    const taxpayer = data.data || data || {};
+
     const row = {
         gstin,
-        legal_name: data.lgnm || data.legal_name || null,
-        trade_name: data.tradeNam || data.trade_name || null,
-        taxpayer_status: data.sts || null,
-        registration_type: data.dty || null,
-        registration_date: data.rgdt || null,
-        cancellation_date: data.cxdt || null,
-        state_code: data.stj ? data.stj.substring(0, 2) : (gstin.substring(0, 2)),
-        center_jurisdiction: data.ctj || null,
-        state_jurisdiction: data.stj || null,
-        business_nature: data.nba ? JSON.stringify(data.nba) : null,
-        principal_address: data.pradr ? JSON.stringify(data.pradr) : null,
+        legal_name: taxpayer.lgnm || taxpayer.legal_name || null,
+        trade_name: taxpayer.tradeNam || taxpayer.trade_name || null,
+        taxpayer_status: taxpayer.sts || null,
+        registration_type: taxpayer.dty || null,
+        registration_date: taxpayer.rgdt || null,
+        cancellation_date: taxpayer.cxdt || null,
+        state_code: taxpayer.stj ? taxpayer.stj.substring(0, 2) : (gstin.substring(0, 2)),
+        center_jurisdiction: taxpayer.ctj || null,
+        state_jurisdiction: taxpayer.stj || null,
+        business_nature: taxpayer.nba ? (typeof taxpayer.nba === 'string' ? taxpayer.nba : JSON.stringify(taxpayer.nba)) : null,
+        principal_address: taxpayer.pradr ? (typeof taxpayer.pradr === 'string' ? taxpayer.pradr : JSON.stringify(taxpayer.pradr)) : null,
         raw_response: JSON.stringify(data),
         cached_until: cachedUntil,
         updated_at: new Date()
     };
 
+    // 1. Update ext_taxpayer_cache
     await db('ext_taxpayer_cache')
         .insert({ ...row, created_at: new Date() })
         .onConflict('gstin')
-        .merge({
-            ...row
-        });
+        .merge({ ...row });
+
+    // 2. Sync to gstin_master
+    await syncGstinMaster(gstin, data);
 
     return await db('ext_taxpayer_cache').where({ gstin }).first();
 };
@@ -172,9 +222,51 @@ const upsertPreferences = async (gstin, financialYear, data) => {
         .merge({ ...row });
 };
 
+/**
+ * Ensure a GSTIN's taxpayer profile exists in gstin_master.
+ * If not present in gstin_master:
+ *  1. Checks cache (ext_taxpayer_cache).
+ *  2. If found in cache, syncs to gstin_master.
+ *  3. If not found in cache, does a live lookup from GSP (White Book), caches it, and syncs.
+ */
+const ensureGstinInMaster = async (gstin) => {
+    if (!gstin) return;
+    try {
+        // 1. Check gstin_master
+        const masterMatch = await db('gstin_master').where({ gstin }).first();
+        if (masterMatch) {
+            return; // Already exists
+        }
+
+        console.log(`[ensureGstinInMaster] GSTIN ${gstin} not found in gstin_master. Resolving...`);
+
+        // 2. Check taxpayer cache
+        const cached = await getCached(gstin);
+        if (cached) {
+            const responseData = typeof cached.raw_response === 'string' ? JSON.parse(cached.raw_response) : cached.raw_response;
+            await syncGstinMaster(gstin, responseData);
+            console.log(`[ensureGstinInMaster] Resolved ${gstin} from cache and synced to gstin_master.`);
+            return;
+        }
+
+        // 3. Fallback to GSP Live lookup
+        console.log(`[ensureGstinInMaster] Cache miss for ${gstin}. Performing live GSP lookup...`);
+        const wb = require('../services/whiteBookClient');
+        const wbData = await wb.searchTaxpayer(gstin);
+        if (wbData) {
+            await upsertCache(gstin, wbData);
+            console.log(`[ensureGstinInMaster] Live resolved ${gstin}, cached, and synced to gstin_master.`);
+        }
+    } catch (err) {
+        console.error(`[ensureGstinInMaster] Failed to ensure GSTIN ${gstin} in gstin_master:`, err.message);
+    }
+};
+
 module.exports = {
     getCached,
     upsertCache,
+    syncGstinMaster,
+    ensureGstinInMaster,
     getCachedReturnTrack,
     upsertReturnTrack,
     getCachedPreferences,

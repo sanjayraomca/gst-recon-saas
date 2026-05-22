@@ -22,7 +22,7 @@ const minioClient = new MinioClient({
 const bucketName = process.env.MINIO_BUCKET_NAME || 'gst-documents';
 
 const tablesToTruncate = [
-
+    'gstin_master',
     'gstr_import_master',
     'gstr_import_logs',
     'gstr_2b_b2b_invoices',
@@ -98,6 +98,29 @@ async function runCleanup() {
         await client.query(truncateSql);
 
         console.log("[DB] All requested tables successfully truncated.");
+
+        console.log("\n[DB] Re-seeding workspaces in gstin_master to maintain layout linkages...");
+        const workspacesRes = await client.query('SELECT name, gstn, gstin_id FROM workspaces');
+        for (const ws of workspacesRes.rows) {
+            if (ws.gstin_id && ws.gstn) {
+                const gstin = ws.gstn;
+                const name = ws.name;
+                const stateCode = gstin.substring(0, 2);
+                
+                await client.query(`
+                    INSERT INTO gstin_master (
+                        id, gstin, legal_name, trade_name, state_code, 
+                        registration_type, gstin_status, is_active, 
+                        created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+                    ON CONFLICT (gstin) DO UPDATE SET 
+                        legal_name = EXCLUDED.legal_name,
+                        updated_at = NOW()
+                `, [ws.gstin_id, gstin, name, name, stateCode, 'REGULAR', 'ACTIVE', true]);
+                
+                console.log(`[DB] Restored gstin_master entry for Workspace: ${name} (${gstin})`);
+            }
+        }
 
         console.log("\n[MinIO] Connecting to MinIO to clear files...");
         try {

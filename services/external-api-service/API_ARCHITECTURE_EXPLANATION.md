@@ -54,7 +54,7 @@ When a client application registers, they are assigned a secure `64-character AP
 
 ### B. Smart Caching Layer (Least API Trigger System)
 To prevent unnecessary API requests to the partner GSP, we implemented an optimized database caching architecture:
-* **Taxpayer details (`/ext/gst/search`)**: Cached automatically in PostgreSQL for **7 days (168 hours)**.
+* **Taxpayer details (`/ext/gst/search`)**: Cached automatically in PostgreSQL for **7 days (168 hours)**. Upon lookup, these details are also automatically synchronized and upserted into the shared master registry `gstin_master` to ensure consistent taxpayer information across the ERP.
 * **Return Trackings (`/ext/gst/rettrack`)**: Cached for **48 hours** and **shared globally across all clients**. If Client A queries a GSTIN, Client B's query resolves instantly from the cache, preventing duplicate partner calls.
 * **Filing Preferences (`/ext/gst/preferences`)**: Cached in PostgreSQL (`ext_preferences_cache`) for **7 days**.
 * **E-Invoice HSN Summary (`/ext/einvoice/hsnsum`)**: Cached locally for **24 hours**.

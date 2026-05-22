@@ -1,4 +1,5 @@
 const model = require('../model/ewaybillModel');
+const gstModel = require('../../gst-api/model/gstModel');
 
 /**
  * POST /ext/ewaybill - Generate E-Way Bill (Simulated Sandbox)
@@ -11,6 +12,9 @@ const generateEwb = async (req, res) => {
         if (!gstin || !doc_number || !doc_type || !doc_date || !consignee_gstin || !total_value || !trans_mode || !trans_distance) {
             return res.status(400).json({ success: false, error: 'Missing required parameters. gstin, doc_number, doc_type, doc_date, consignee_gstin, total_value, trans_mode, and trans_distance are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await gstModel.ensureGstinInMaster(gstin);
 
         // Generate mock 12-digit E-Way Bill Number
         const ewbNo = String(Math.floor(100000000000 + Math.random() * 900000000000));

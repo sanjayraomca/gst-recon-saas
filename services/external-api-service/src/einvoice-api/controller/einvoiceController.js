@@ -1,5 +1,6 @@
 const model = require('../model/einvoiceModel');
 const crypto = require('crypto');
+const gstModel = require('../../gst-api/model/gstModel');
 
 /**
  * POST /ext/einvoice/irn - Generate E-Invoice / IRN (Simulated Sandbox)
@@ -12,6 +13,9 @@ const generateIrn = async (req, res) => {
         if (!gstin || !doc_number || !doc_type || !doc_date || !buyer_gstin || !taxable_value || !total_invoice_value) {
             return res.status(400).json({ success: false, error: 'Missing required parameters. gstin, doc_number, doc_type, doc_date, buyer_gstin, taxable_value, and total_invoice_value are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await gstModel.ensureGstinInMaster(gstin);
 
         // Generate a unique IRN (64-character hex string)
         const irnSource = `${gstin}-${doc_type}-${doc_number}`;
@@ -153,6 +157,9 @@ const getHsnSummary = async (req, res) => {
         if (!gstin || !ret_period) {
             return res.status(400).json({ success: false, error: 'gstin and ret_period (MMYYYY) are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await gstModel.ensureGstinInMaster(gstin);
 
         // Check cache first
         const cached = await model.getCachedHsnSummary(clientId, gstin, ret_period);

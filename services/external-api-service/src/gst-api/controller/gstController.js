@@ -113,6 +113,9 @@ const registerClientGstin = async (req, res) => {
             })
             .returning(['id', 'gstin', 'gst_username', 'state_code', 'legal_name', 'created_at']);
 
+        // Ensure this GSTIN details are also present in gstin_master
+        await model.ensureGstinInMaster(gstin);
+
         return res.status(201).json({ success: true, message: 'GSTIN registered.', data: row });
     } catch (error) {
         console.error('[registerClientGstin]', error.message);
@@ -133,6 +136,14 @@ const searchTaxpayer = async (req, res) => {
         // 1. Check cache first
         const cached = await model.getCached(gstin);
         if (cached) {
+            // Always sync to gstin_master on cache hit to prevent database state drift
+            try {
+                const responseData = typeof cached.raw_response === 'string' ? JSON.parse(cached.raw_response) : cached.raw_response;
+                await model.syncGstinMaster(gstin, responseData);
+            } catch (syncErr) {
+                console.error('[searchTaxpayer] Failed to sync on cache hit:', syncErr.message);
+            }
+
             req.cacheHit = true;
             res.set('X-Cache', 'HIT');
             return res.json({ success: true, source: 'cache', data: cached.raw_response });
@@ -167,6 +178,9 @@ const trackReturns = async (req, res) => {
         if (!gstin || !fy) {
             return res.status(400).json({ success: false, error: 'gstin and fy are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await model.ensureGstinInMaster(gstin);
 
         // 1. Check cache
         const cached = await model.getCachedReturnTrack(clientId, gstin, fy, type || null);
@@ -204,6 +218,9 @@ const getPreferences = async (req, res) => {
         if (!gstin || !fy) {
             return res.status(400).json({ success: false, error: 'gstin and fy are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await model.ensureGstinInMaster(gstin);
 
         // 1. Check cache first
         const cached = await model.getCachedPreferences(gstin, fy);
@@ -245,6 +262,9 @@ const requestOtp = async (req, res) => {
             return res.status(400).json({ success: false, error: 'gstin and gst_username are required.' });
         }
 
+        // Ensure this GSTIN details are present in gstin_master
+        await model.ensureGstinInMaster(gstin);
+
         // Verify GSTIN is registered for this client
         const clientGstin = await model.getClientGstin(clientId, gstin);
         if (!clientGstin) {
@@ -282,6 +302,9 @@ const verifyOtp = async (req, res) => {
         if (!gstin || !gst_username || !otp || !txn) {
             return res.status(400).json({ success: false, error: 'gstin, gst_username, otp, and txn are required.' });
         }
+
+        // Ensure this GSTIN details are present in gstin_master
+        await model.ensureGstinInMaster(gstin);
 
         const clientGstin = await model.getClientGstin(clientId, gstin);
         if (!clientGstin) {
