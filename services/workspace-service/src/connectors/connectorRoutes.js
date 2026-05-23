@@ -38,6 +38,16 @@ router.post('/book-import/file', validateApiKeyMiddleware, uploadMiddleware, imp
 // The TARGET workspace is passed in body (POST/PATCH/DELETE) or query (GET)
 // — not derived from X-Workspace-ID header.
 router.use(verifyToken);
+
+// ── GSTN PORTAL DIRECT SYNC (JWT + workspace membership) ─────────────────────
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
+const gstnSyncController = require('./gstnSyncController');
+
+router.get('/gstn/session-status', authorizeWorkspace, gstnSyncController.getSessionStatus);
+router.post('/gstn/otp-request', authorizeWorkspace, gstnSyncController.requestOtp);
+router.post('/gstn/verify-otp', authorizeWorkspace, gstnSyncController.verifyOtp);
+router.post('/gstn/sync-gstr2b', authorizeWorkspace, gstnSyncController.syncGstr2b);
+
 router.use(requireSuperAdmin);
 
 /**
