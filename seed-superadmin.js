@@ -45,7 +45,7 @@ async function seed() {
     console.log("🚀 Starting SuperAdmin seeding...");
     
     // 1. Wait for services to be ready
-    let retries = 5; // Reduced for speed
+    let retries = 30; // Increased to allow Keycloak to initialize on clean DBs
     console.log("⏳ Waiting for Database and Keycloak to be ready...");
     
     while (retries > 0) {
