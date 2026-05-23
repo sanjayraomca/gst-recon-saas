@@ -40,7 +40,7 @@ const registerClient = async (req, res) => {
         }
 
         // 1. Check if API key already exists for this email + platform
-        const existing = await db('ext_api_clients')
+        const existing = await db('api_conn_access_key')
             .where({ contact_email, platform })
             .first();
         if (existing) {
@@ -51,25 +51,50 @@ const registerClient = async (req, res) => {
         }
 
         const resolvedClientName = client_name || contact_email.split('@')[0];
-        const apiKey = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, ''); // 64-char key
+        const appSecretKey = uuidv4().replace(/-/g, '');
+        const productionKey = uuidv4().replace(/-/g, '');
+        const sandboxKey = uuidv4().replace(/-/g, '');
 
-        const [client] = await db('ext_api_clients')
+        const [client] = await db('api_conn_access_key')
             .insert({
                 platform,
                 client_name: resolvedClientName,
                 contact_email,
-                api_key: apiKey,
-                user_id: user_id || null,
-                extra_info: extra_info || null,
-                is_active: true,
+                app_secret_key: appSecretKey,
+                production_key: productionKey,
+                sandbox_key: sandboxKey,
+                mode: 'PRODUCTION',
+                status: 'active',
+                metadata: extra_info ? JSON.stringify(extra_info) : null,
                 created_at: new Date(),
                 updated_at: new Date()
             })
-            .returning(['id', 'platform', 'client_name', 'contact_email', 'api_key', 'user_id', 'extra_info', 'created_at']);
+            .returning(['id', 'platform', 'client_name', 'contact_email', 'app_secret_key', 'production_key', 'sandbox_key', 'created_at']);
+
+        // Insert default access limits
+        await db('api_conn_allowed_access').insert({
+            api_key: productionKey,
+            service_gst: true,
+            total_gst_api_call: 1000,
+            consume_gst_api_call: 0,
+            remaining_gst_api_call: 1000,
+            service_eway_bill: true,
+            total_eway_bill_api_call: 1000,
+            consume_eway_bill_api_call: 0,
+            remaining_eway_bill_api_call: 1000,
+            service_einvoice: true,
+            total_einvoice_api_call: 1000,
+            consume_einvoice_api_call: 0,
+            remaining_einvoice_api_call: 1000,
+            status: 'active',
+            subscription_end_date: new Date(new Date().setFullYear(new Date().getFullYear() + 1)), // 1 year expiry
+            created_at: new Date(),
+            updated_at: new Date()
+        });
 
         return res.status(201).json({
             success: true,
-            message: 'API client registered. Store your api_key safely — it will not be shown again.',
+            message: 'API client registered. Store your production_key safely — it will act as your x-api-key.',
             data: client
         });
     } catch (error) {
@@ -84,7 +109,7 @@ const registerClient = async (req, res) => {
 const registerClientGstin = async (req, res) => {
     try {
         const { gstin, gst_username, state_code, legal_name } = req.body;
-        const clientId = req.apiClient.id;
+        const platform = req.apiClient.platform;
 
         if (!gstin || !gst_username || !state_code) {
             return res.status(400).json({ success: false, error: 'gstin, gst_username, and state_code are required.' });
@@ -95,23 +120,23 @@ const registerClientGstin = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid GSTIN format.' });
         }
 
-        const existing = await model.getClientGstin(clientId, gstin);
+        const existing = await model.getClientGstin(platform, gstin);
         if (existing) {
-            return res.status(409).json({ success: false, error: 'This GSTIN is already registered for your account.' });
+            return res.status(409).json({ success: false, error: 'This GSTIN is already registered for your platform.' });
         }
 
-        const [row] = await db('ext_client_gstins')
+        const [row] = await db('api_conn_gst_master')
             .insert({
-                client_id: clientId,
-                gstin,
-                gst_username,
-                state_code,
+                platform: platform,
+                gstn: gstin,
+                gst_user_name: gst_username,
+                state_code: state_code,
                 legal_name: legal_name || null,
                 is_active: true,
                 created_at: new Date(),
                 updated_at: new Date()
             })
-            .returning(['id', 'gstin', 'gst_username', 'state_code', 'legal_name', 'created_at']);
+            .returning(['id', 'gstn as gstin', 'gst_user_name', 'state_code', 'legal_name', 'created_at']);
 
         // Ensure this GSTIN details are also present in gstin_master
         await model.ensureGstinInMaster(gstin);
@@ -265,10 +290,10 @@ const requestOtp = async (req, res) => {
         // Ensure this GSTIN details are present in gstin_master
         await model.ensureGstinInMaster(gstin);
 
-        // Verify GSTIN is registered for this client
-        const clientGstin = await model.getClientGstin(clientId, gstin);
+        // Verify GSTIN is registered for this client's platform
+        const clientGstin = await model.getClientGstin(req.apiClient.platform, gstin);
         if (!clientGstin) {
-            return res.status(403).json({ success: false, error: 'This GSTIN is not registered for your API key. Register it first via POST /ext/gst/clients/gstins' });
+            return res.status(403).json({ success: false, error: 'This GSTIN is not registered for your API platform. Register it first via POST /ext/gst/clients/gstins' });
         }
 
         const stateCd = gstin.substring(0, 2);
@@ -306,9 +331,9 @@ const verifyOtp = async (req, res) => {
         // Ensure this GSTIN details are present in gstin_master
         await model.ensureGstinInMaster(gstin);
 
-        const clientGstin = await model.getClientGstin(clientId, gstin);
+        const clientGstin = await model.getClientGstin(req.apiClient.platform, gstin);
         if (!clientGstin) {
-            return res.status(403).json({ success: false, error: 'GSTIN not registered for this API key.' });
+            return res.status(403).json({ success: false, error: 'GSTIN not registered for this API platform.' });
         }
 
         const stateCd = gstin.substring(0, 2);

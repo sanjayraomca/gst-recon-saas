@@ -3,10 +3,14 @@ const express = require('express');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3008;
+const PORT = process.env.PORT || 3015;
 
 app.use(cors());
 app.use(express.json());
+
+// ─── Global Security ─────────────────────────────────────────
+const { globalIpLimiter } = require('./middleware/rateLimiter');
+app.use(globalIpLimiter);
 
 // ─── Health Check ────────────────────────────────────────────
 app.get('/health', (req, res) => {

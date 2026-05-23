@@ -208,7 +208,9 @@ CREATE TABLE gstin_master (
     next_filing_due_date DATE,
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    gst_last_fetch_at TIMESTAMPTZ DEFAULT NULL,
+    plateform VARCHAR(100) DEFAULT NULL,
 );
 
 CREATE TABLE supplier_master (

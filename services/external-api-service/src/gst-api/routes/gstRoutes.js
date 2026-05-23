@@ -3,7 +3,7 @@ const router = express.Router();
 const controller = require('../controller/gstController');
 const apiKeyAuth = require('../../middleware/apiKeyAuth');
 const auditLogger = require('../../middleware/auditLogger');
-const rateLimiter = require('../../middleware/rateLimiter');
+const { clientLimiter } = require('../../middleware/rateLimiter');
 
 // Apply audit logging to all GST routes
 router.use(auditLogger('GST'));
@@ -22,7 +22,7 @@ router.post('/clients', controller.registerClient);
 // All routes below require a valid API key and library authorization
 // ─────────────────────────────────────────────────────────────
 router.use(apiKeyAuth('GST'));
-router.use(rateLimiter);
+router.use(clientLimiter);
 
 /**
  * POST /ext/gst/clients/gstins

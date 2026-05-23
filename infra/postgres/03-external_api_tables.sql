@@ -6,70 +6,128 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "btree_gin";
 
-
--- ARCHITECTURE:
---   - You own ONE White Book account (client_id, client_secret, email stored in .env)
---   - Users register with your service and receive an API key
---   - Users link their GSTINs (with their GST portal username/password)
---   - Your service uses your White Book credentials to call GSP on their behalf
---   - All data fetched is stored and linked to the user who requested it
+-- =========================================================================
+-- SECTION 1: CORE CLIENT & ACCESS MANAGEMENT
+-- Based on the new structure from Adesk-Menu.xlsx
 -- =========================================================================
 
--- =========================================================================
--- SECTION 1: API KEY MANAGEMENT
--- Users (other software / devs) register here and get API keys
--- =========================================================================
-
--- 1.1 API Clients (Your customers / other accounting softwares)
-CREATE TABLE IF NOT EXISTS ext_api_clients (
-    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    platform        VARCHAR(255) NOT NULL,              -- e.g. "White Books", "Tally" (software name/link)
-    client_name     VARCHAR(200) NOT NULL,              -- e.g. "My Billing App", "ERP System"
-    contact_email   VARCHAR(255) NOT NULL,
-    api_key         VARCHAR(64)  UNIQUE NOT NULL,       -- Generated key given to the user
-    is_active       BOOLEAN DEFAULT TRUE,
-    rate_limit_per_minute INTEGER DEFAULT 60,          -- Request throttle per client
-    allowed_libs    TEXT[] DEFAULT ARRAY['GST'],        -- GST, EINVOICE, EWAYBILL
-    user_id         UUID        REFERENCES users(id) ON DELETE SET NULL DEFAULT NULL,
-    extra_info      JSONB       DEFAULT NULL,
-    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT ext_api_clients_email_platform_key UNIQUE (contact_email, platform)
+-- 1.1 Access Keys (Third-party clients / platforms)
+CREATE TABLE IF NOT EXISTS api_conn_access_key (
+    id                      UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    platform                VARCHAR(50),
+    client_name             VARCHAR(200),
+    contact_email           VARCHAR(255),
+    third_party_unique_id   VARCHAR(100),
+    app_secret_key          VARCHAR(255) UNIQUE,
+    production_key          VARCHAR(255) UNIQUE,
+    sandbox_key             VARCHAR(255) UNIQUE,
+    mode                    VARCHAR(20),       -- e.g., SANDBOX / PRODUCTION
+    status                  VARCHAR(50),       -- active / inactive
+    metadata                JSONB,
+    created_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_ext_api_clients_key ON ext_api_clients(api_key);
 
--- 1.2 GSTINs registered by each API client
--- Each client can register multiple GSTINs they want to access
-CREATE TABLE IF NOT EXISTS ext_client_gstins (
-    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id       UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
-    gstin           CHAR(15)    NOT NULL,
-    gst_username    VARCHAR(50) NOT NULL,               -- Their GST portal username
-    gstn_password_encrypted TEXT,                      -- Their GST portal password (encrypted)
-    state_code      CHAR(2)     NOT NULL,
-    legal_name      VARCHAR(500),
-    is_active       BOOLEAN DEFAULT TRUE,
-    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (client_id, gstin)
+-- 1.2 GST Master (GSTINs registered by clients)
+CREATE TABLE IF NOT EXISTS api_conn_gst_master (
+    id                      UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    gstn                    VARCHAR(15) NOT NULL,
+    legal_name              VARCHAR(500),
+    gst_user_name           VARCHAR(50),
+    trade_name              VARCHAR(500),
+    registration_type       VARCHAR(50),
+    registration_date       DATE,
+    cancellation_date       DATE,
+    state_code              VARCHAR(2),
+    center_jurisdiction     VARCHAR(200),
+    state_jurisdiction      VARCHAR(200),
+    business_nature         VARCHAR(255),
+    contact_person          VARCHAR(100),
+    contact_email           VARCHAR(255),
+    contact_phone           VARCHAR(20),
+    address                 JSONB,
+    gstin_pwd_encrypted     TEXT,
+    password_updated_at     TIMESTAMPTZ,
+    gstin_status            VARCHAR(50),
+    is_active               BOOLEAN DEFAULT TRUE,
+    compliance_score        NUMERIC,
+    last_filing_date        DATE,
+    next_filing_due_date    DATE,
+    metadata                JSONB,
+    platform                VARCHAR(50),
+    gst_last_fetch_at       TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_ext_client_gstins_client ON ext_client_gstins(client_id);
-CREATE INDEX IF NOT EXISTS idx_ext_client_gstins_gstin  ON ext_client_gstins(gstin);
+
+-- 1.3 Allowed Access (API limits & service flags)
+CREATE TABLE IF NOT EXISTS api_conn_allowed_access (
+    id                              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    api_key                         VARCHAR(255),
+    service_gst                     BOOLEAN DEFAULT FALSE,
+    total_gst_api_call              INTEGER DEFAULT 0,
+    consume_gst_api_call            INTEGER DEFAULT 0,
+    remaining_gst_api_call          INTEGER DEFAULT 0,
+    service_eway_bill               BOOLEAN DEFAULT FALSE,
+    total_eway_bill_api_call        INTEGER DEFAULT 0,
+    consume_eway_bill_api_call      INTEGER DEFAULT 0,
+    remaining_eway_bill_api_call    INTEGER DEFAULT 0,
+    service_einvoice                BOOLEAN DEFAULT FALSE,
+    total_einvoice_api_call         INTEGER DEFAULT 0,
+    consume_einvoice_api_call       INTEGER DEFAULT 0,
+    remaining_einvoice_api_call     INTEGER DEFAULT 0,
+    status                          VARCHAR(50),
+    subscription_end_date           TIMESTAMPTZ,
+    created_at                      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at                      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 1.4 API Access Log
+CREATE TABLE IF NOT EXISTS api_conn_api_access_log (
+    id                              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    api_conn_allowed_access_id      UUID        REFERENCES api_conn_allowed_access(id) ON DELETE SET NULL,
+    api_key                         VARCHAR(255),
+    server_ip                       VARCHAR(45),
+    api_name                        VARCHAR(100),
+    api_cat                         VARCHAR(50),
+    request_params                  JSONB,
+    resposne_params                 JSONB,
+    status                          VARCHAR(50),
+    request_header                  JSONB,
+    action_by                       VARCHAR(100),
+    metadata                        JSONB,
+    platform                        VARCHAR(50),
+    added_at                        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at                      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 1.5 Subscription Log
+CREATE TABLE IF NOT EXISTS api_conn_subscription_log (
+    id                              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_name                     VARCHAR(200),
+    contact_email                   VARCHAR(255),
+    platform                        VARCHAR(50),
+    start_date                      TIMESTAMPTZ,
+    end_date                        TIMESTAMPTZ,
+    status                          VARCHAR(50),
+    subscription_type               VARCHAR(50),
+    api_cat                         VARCHAR(50),
+    created_at                      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at                      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =========================================================================
 -- SECTION 2: GST PORTAL AUTH SESSION (OTP Flow per GSTIN)
--- After OTP is verified, the auth_token is stored here and reused
--- This is PER GSTIN, not per API client
 -- =========================================================================
 
 CREATE TABLE IF NOT EXISTS ext_gstn_auth_sessions (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_gstin_id UUID        NOT NULL REFERENCES ext_client_gstins(id) ON DELETE CASCADE,
+    gst_master_id   UUID        NOT NULL REFERENCES api_conn_gst_master(id) ON DELETE CASCADE,
     gstin           CHAR(15)    NOT NULL,
     gst_username    VARCHAR(50) NOT NULL,
-    otp_txn         VARCHAR(200),                      -- Transaction ID from OTP request
+    otp_txn         VARCHAR(200),
     otp_requested_at TIMESTAMPTZ,
-    auth_token      TEXT,                              -- Bearer token after OTP verify
+    auth_token      TEXT,
     token_expiry    TIMESTAMPTZ,
     is_active       BOOLEAN DEFAULT TRUE,
     created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -81,8 +139,6 @@ CREATE INDEX IF NOT EXISTS idx_ext_gstn_auth_expiry ON ext_gstn_auth_sessions(to
 
 -- =========================================================================
 -- SECTION 3: PUBLIC TAXPAYER SEARCH CACHE (/public/search)
--- No auth token needed. Cached centrally - if any client searches a GSTIN,
--- all other clients benefit from the cache
 -- =========================================================================
 
 CREATE TABLE IF NOT EXISTS ext_taxpayer_cache (
@@ -106,14 +162,12 @@ CREATE TABLE IF NOT EXISTS ext_taxpayer_cache (
 
 -- =========================================================================
 -- SECTION 4: GST DATA FETCHED PER CLIENT+GSTIN
--- Stores actual GSTR data fetched on behalf of each client
--- Covers: /public/rettrack, /gstr2b/*, /gstr1/einvoice, etc.
 -- =========================================================================
 
 -- 4.1 Return Tracking (/public/rettrack)
 CREATE TABLE IF NOT EXISTS ext_return_track (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id       UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
+    client_id       UUID        NOT NULL REFERENCES api_conn_access_key(id) ON DELETE CASCADE,
     gstin           CHAR(15)    NOT NULL,
     financial_year  CHAR(7)     NOT NULL,             -- YYYY-YY e.g. "2023-24"
     return_type     VARCHAR(20),                       -- R1, 3B, IFF, etc. NULL = all
@@ -128,7 +182,7 @@ CREATE INDEX IF NOT EXISTS idx_ext_return_track_lookup ON ext_return_track(clien
 -- 4.2 GSTR2B Data per Client (/gstr2b/get2b)
 CREATE TABLE IF NOT EXISTS ext_gstr2b_data (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id       UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
+    client_id       UUID        NOT NULL REFERENCES api_conn_access_key(id) ON DELETE CASCADE,
     gstin           CHAR(15)    NOT NULL,
     return_period   CHAR(6)     NOT NULL,             -- MMYYYY
     gen_date        DATE,                              -- GSTR2B file generation date
@@ -142,14 +196,12 @@ CREATE INDEX IF NOT EXISTS idx_ext_gstr2b_lookup ON ext_gstr2b_data(client_id, g
 
 -- =========================================================================
 -- SECTION 5: E-INVOICE DATA PER CLIENT+GSTIN
--- Covers: /gst/einvoice/irnlist, /gst/einvoice/irndtl,
---         /gst/einvoice/hsnsum, /gstr1/einvoice
 -- =========================================================================
 
 -- 5.1 IRN Registry - stores every IRN fetched for a client's GSTIN
 CREATE TABLE IF NOT EXISTS ext_einvoice_irn (
     id                   UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id            UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
+    client_id            UUID        NOT NULL REFERENCES api_conn_access_key(id) ON DELETE CASCADE,
     gstin                CHAR(15)    NOT NULL,
     irn                  CHAR(64)    NOT NULL,         -- 64-char IRN
     ack_number           BIGINT,
@@ -190,7 +242,7 @@ CREATE INDEX IF NOT EXISTS idx_ext_einvoice_period    ON ext_einvoice_irn(client
 -- 5.2 E-Invoice HSN Summary per client (/gst/einvoice/hsnsum)
 CREATE TABLE IF NOT EXISTS ext_einvoice_hsn_summary (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id       UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
+    client_id       UUID        NOT NULL REFERENCES api_conn_access_key(id) ON DELETE CASCADE,
     gstin           CHAR(15)    NOT NULL,
     ret_period      CHAR(6)     NOT NULL,
     hsn_data        JSONB       NOT NULL,
@@ -207,7 +259,7 @@ CREATE TABLE IF NOT EXISTS ext_einvoice_hsn_summary (
 -- 6.1 E-Way Bill Registry
 CREATE TABLE IF NOT EXISTS ext_ewaybill (
     id                   UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id            UUID        NOT NULL REFERENCES ext_api_clients(id) ON DELETE CASCADE,
+    client_id            UUID        NOT NULL REFERENCES api_conn_access_key(id) ON DELETE CASCADE,
     gstin                CHAR(15)    NOT NULL,
     ewaybill_number      VARCHAR(15) NOT NULL,          -- 12-digit EWB number
     ewaybill_date        TIMESTAMPTZ,
@@ -274,29 +326,6 @@ CREATE TABLE IF NOT EXISTS ext_ewaybill_vehicle_log (
 );
 
 -- =========================================================================
--- SECTION 7: API REQUEST AUDIT LOG
--- Every single API call from every client is logged here
--- =========================================================================
-
-CREATE TABLE IF NOT EXISTS ext_api_request_log (
-    id               UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    client_id        UUID        REFERENCES ext_api_clients(id) ON DELETE SET NULL,
-    api_key_used     VARCHAR(64),                        -- The key used in the request
-    library          VARCHAR(20)  NOT NULL,              -- GST, EINVOICE, EWAYBILL
-    endpoint         VARCHAR(150) NOT NULL,              -- e.g. /gst/einvoice/irnlist
-    gstin            CHAR(15),
-    return_period    CHAR(6),
-    http_status      SMALLINT     NOT NULL,
-    is_cache_hit     BOOLEAN DEFAULT FALSE,
-    response_ms      INTEGER,
-    error_message    TEXT,
-    created_at       TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_ext_req_log_client  ON ext_api_request_log(client_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_ext_req_log_date    ON ext_api_request_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_ext_req_log_gstin   ON ext_api_request_log(gstin);
-
--- =========================================================================
 -- SECTION 8: FILING PREFERENCES CACHE
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS ext_preferences_cache (
@@ -308,4 +337,3 @@ CREATE TABLE IF NOT EXISTS ext_preferences_cache (
     updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (gstin, financial_year)
 );
-

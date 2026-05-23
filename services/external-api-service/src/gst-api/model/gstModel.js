@@ -110,11 +110,27 @@ const getCachedReturnTrack = async (clientId, gstin, financialYear, returnType) 
 };
 
 /**
- * Upsert return track cache (cache valid for 48 hours to minimize third-party API triggers)
+ * Upsert return track cache (smart TTL based on Financial Year)
  */
 const upsertReturnTrack = async (clientId, gstin, financialYear, returnType, data) => {
     const cachedUntil = new Date();
-    cachedUntil.setHours(cachedUntil.getHours() + 48); // Cache returns for 48 hours
+
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+    let currentFyStartYear = currentMonth <= 3 ? currentYear - 1 : currentYear;
+
+    let requestedFyStartYear = currentFyStartYear;
+    if (financialYear && financialYear.includes('-')) {
+        requestedFyStartYear = parseInt(financialYear.split('-')[0], 10);
+    }
+
+    if (requestedFyStartYear < currentFyStartYear) {
+        // Requested FY is in the past. It will never change. Cache for 1 year (8760 hours).
+        cachedUntil.setHours(cachedUntil.getHours() + 8760); 
+    } else {
+        // Current FY might still be updated. Cache for 48 hours.
+        cachedUntil.setHours(cachedUntil.getHours() + 48); 
+    }
 
     const row = {
         client_id: clientId,
@@ -145,12 +161,12 @@ const getAuthSession = async (gstin, gstUsername) => {
 /**
  * Upsert auth session
  */
-const upsertAuthSession = async (clientGstinId, gstin, gstUsername, data) => {
+const upsertAuthSession = async (gstMasterId, gstin, gstUsername, data) => {
     const tokenExpiry = new Date();
     tokenExpiry.setHours(tokenExpiry.getHours() + 6); // GSP tokens valid ~6 hours
 
     const row = {
-        client_gstin_id: clientGstinId,
+        gst_master_id: gstMasterId,
         gstin,
         gst_username: gstUsername,
         auth_token: data.auth_token || data.authToken || null,
@@ -185,9 +201,9 @@ const saveOtpTxn = async (gstin, gstUsername, txn) => {
 /**
  * Get client's registered GSTIN record
  */
-const getClientGstin = async (clientId, gstin) => {
-    return await db('ext_client_gstins')
-        .where({ client_id: clientId, gstin, is_active: true })
+const getClientGstin = async (platform, gstin) => {
+    return await db('api_conn_gst_master')
+        .where({ platform, gstn: gstin, is_active: true })
         .first();
 };
 
