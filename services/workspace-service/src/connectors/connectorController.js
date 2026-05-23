@@ -21,26 +21,50 @@ const getRequestingUserId = (req) => {
     return req.user?.db_id || req.user?.id || req.user?.sub;
 };
 
-// ── Helper: global SUPER_ADMIN check ─────────────────────────────────────────
-// A Super Admin has role='SUPER_ADMIN' in workspace_users for ANY workspace.
-// This is a system-level role, not tied to a specific organization.
-const isSuperAdmin = async (userId) => {
+// ── Helper: global SUPER_ADMIN or Tenant Admin check ─────────────────────────
+const isAuthorizedForWorkspace = async (userId, workspaceId) => {
     if (!userId) return false;
-    // Guard: workspace_users.user_id is a UUID column — reject non-UUID values to avoid DB crash
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) return false;
-    const record = await knex('workspace_users')
+
+    // 1. System Super Admin
+    const superAdminRecord = await knex('workspace_users')
         .where({ user_id: userId, role: 'SUPER_ADMIN' })
         .select('id')
         .first();
-    return !!record;
+    if (superAdminRecord) return true;
+
+    // 2. Tenant Admin for this specific workspace (only allowed if superadmin enabled it)
+    if (workspaceId && uuidRegex.test(workspaceId)) {
+        const workspace = await knex('workspaces')
+            .where({ id: workspaceId })
+            .select('settings')
+            .first();
+        if (workspace) {
+            const settings = typeof workspace.settings === 'string'
+                ? JSON.parse(workspace.settings)
+                : (workspace.settings || {});
+            
+            if (settings.allow_tenant_api_keys === true) {
+                const tenantAdminRecord = await knex('workspace_users')
+                    .where({ user_id: userId, workspace_id: workspaceId })
+                    .whereIn('role', ['TENANT_ADMIN', 'Tenant Admin'])
+                    .select('id')
+                    .first();
+                if (tenantAdminRecord) return true;
+            }
+        }
+    }
+
+    return false;
 };
 
-// ── Middleware: guard all routes — SUPER_ADMIN only ──────────────────────────
+// ── Middleware: guard all routes ─────────────────────────────────────────────
 const requireSuperAdmin = async (req, res, next) => {
     const userId = getRequestingUserId(req);
-    if (!await isSuperAdmin(userId)) {
-        return errorResponse(res, 'Forbidden — only SUPER_ADMIN can manage API keys', 403);
+    const workspaceId = req.query.workspace_id || req.body.workspace_id;
+    if (!await isAuthorizedForWorkspace(userId, workspaceId)) {
+        return errorResponse(res, 'Forbidden — only SUPER_ADMIN or Tenant Admin of this organization can manage API keys', 403);
     }
     next();
 };

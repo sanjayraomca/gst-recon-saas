@@ -8,9 +8,155 @@ const crypto = require('crypto');
  */
 
 // ── Key generation ────────────────────────────────────────────────────────────
-const generateKey = (prefix) => {
-    const secret = crypto.randomBytes(32).toString('hex'); // 64-char hex
-    return `${prefix}_${secret}`;
+// ── Key generation ────────────────────────────────────────────────────────────
+const generateKey = () => {
+    return crypto.randomBytes(16).toString('hex'); // exactly 32 hex characters
+};
+
+// ── Secondary Connection for GSP Provider Database ───────────────────────────
+const gspDb = require('knex')({
+    client: 'pg',
+    connection: {
+        host: process.env.GSP_DB_HOST || 'gsp_api_db',
+        port: parseInt(process.env.GSP_DB_PORT || '5432', 10),
+        database: process.env.GSP_DB_NAME || 'gsp_api_db',
+        user: process.env.GSP_DB_USER || 'root',
+        password: process.env.GSP_DB_PASSWORD || 'rootpassword',
+    },
+    pool: { min: 2, max: 10 }
+});
+
+/**
+ * Synchronize generated/rotated/updated API keys to both the Main DB external tables
+ * and GSP API DB tables so they mirror in real-time.
+ */
+const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey, status = 'active', mode = 'live') => {
+    try {
+        const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+        const clientName = workspace ? workspace.name : `Workspace ${workspaceId}`;
+        const email = workspace?.settings?.email || `${workspaceId}@saas.com`;
+        const mappedStatus = status === 'active' ? 'active' : 'inactive';
+
+        const dbs = [
+            { name: 'Main DB', client: knex },
+            { name: 'GSP DB', client: gspDb }
+        ];
+
+        for (const db of dbs) {
+            try {
+                // Find existing access key by third_party_unique_id
+                const existing = await db.client('api_conn_access_key')
+                    .where({ third_party_unique_id: workspaceId })
+                    .first();
+
+                let clientRecordId;
+
+                if (existing) {
+                    clientRecordId = existing.id;
+                    // Delete old allowed accesses
+                    await db.client('api_conn_allowed_access')
+                        .whereIn('api_key', [existing.production_key, existing.sandbox_key])
+                        .delete();
+
+                    // Update access key
+                    await db.client('api_conn_access_key')
+                        .where({ id: clientRecordId })
+                        .update({
+                            client_name: clientName,
+                            contact_email: email,
+                            production_key: productionKey,
+                            sandbox_key: sandboxKey,
+                            status: mappedStatus,
+                            mode: 'PRODUCTION',
+                            updated_at: db.client.fn.now()
+                        });
+                } else {
+                    const id = crypto.randomUUID ? crypto.randomUUID() : require('uuid').v4();
+                    const [inserted] = await db.client('api_conn_access_key')
+                        .insert({
+                            id,
+                            platform: 'TENANT_PORTAL',
+                            client_name: clientName,
+                            contact_email: email,
+                            third_party_unique_id: workspaceId,
+                            production_key: productionKey,
+                            sandbox_key: sandboxKey,
+                            status: mappedStatus,
+                            mode: 'PRODUCTION',
+                            created_at: db.client.fn.now(),
+                            updated_at: db.client.fn.now()
+                        })
+                        .returning('id');
+                    clientRecordId = inserted?.id || id;
+                }
+
+                // Insert allowed accesses
+                const allowedAccessRecords = [
+                    {
+                        api_key: productionKey,
+                        service_gst: true,
+                        total_gst_api_call: 100000,
+                        remaining_gst_api_call: 100000,
+                        service_eway_bill: true,
+                        total_eway_bill_api_call: 100000,
+                        remaining_eway_bill_api_call: 100000,
+                        service_einvoice: true,
+                        total_einvoice_api_call: 100000,
+                        remaining_einvoice_api_call: 100000,
+                        status: mappedStatus
+                    },
+                    {
+                        api_key: sandboxKey,
+                        service_gst: true,
+                        total_gst_api_call: 100000,
+                        remaining_gst_api_call: 100000,
+                        service_eway_bill: true,
+                        total_eway_bill_api_call: 100000,
+                        remaining_eway_bill_api_call: 100000,
+                        service_einvoice: true,
+                        total_einvoice_api_call: 100000,
+                        remaining_einvoice_api_call: 100000,
+                        status: mappedStatus
+                    }
+                ];
+
+                await db.client('api_conn_allowed_access').insert(allowedAccessRecords);
+                console.log(`[Sync] Synced keys to ${db.name} for workspace ${workspaceId}`);
+            } catch (err) {
+                console.error(`[Sync] Failed sync to ${db.name} for workspace ${workspaceId}:`, err.message);
+            }
+        }
+    } catch (globalErr) {
+        console.error(`[Sync Error] Sync failed for workspace ${workspaceId}:`, globalErr.message);
+    }
+};
+
+const deleteSyncKeys = async (workspaceId) => {
+    const dbs = [
+        { name: 'Main DB', client: knex },
+        { name: 'GSP DB', client: gspDb }
+    ];
+
+    for (const db of dbs) {
+        try {
+            const existing = await db.client('api_conn_access_key')
+                .where({ third_party_unique_id: workspaceId })
+                .first();
+
+            if (existing) {
+                await db.client('api_conn_allowed_access')
+                    .whereIn('api_key', [existing.production_key, existing.sandbox_key])
+                    .delete();
+
+                await db.client('api_conn_access_key')
+                    .where({ id: existing.id })
+                    .delete();
+            }
+            console.log(`[Sync Delete] Cleaned up synced keys from ${db.name} for workspace ${workspaceId}`);
+        } catch (err) {
+            console.error(`[Sync Delete] Failed sync cleanup for ${db.name}:`, err.message);
+        }
+    }
 };
 
 /**
@@ -28,8 +174,8 @@ const getByWorkspace = async (workspaceId, tenantId) => {
  * Generates both production_key and sandbox_key.
  */
 const createKeys = async (workspaceId, tenantId) => {
-    const productionKey = generateKey('prod');
-    const sandboxKey    = generateKey('sand');
+    const productionKey = generateKey();
+    const sandboxKey    = generateKey();
 
     const [record] = await knex('workspace_api_keys')
         .insert({
@@ -41,6 +187,8 @@ const createKeys = async (workspaceId, tenantId) => {
             mode:           'live'
         })
         .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'created_at']);
+
+    await syncKeysToAllDbs(workspaceId, tenantId, productionKey, sandboxKey, 'active', 'live');
 
     return record;
 };
@@ -58,6 +206,10 @@ const updateKeys = async (workspaceId, tenantId, { status, mode }) => {
         .update(updates)
         .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'updated_at']);
 
+    if (updated) {
+        await syncKeysToAllDbs(workspaceId, tenantId, updated.production_key, updated.sandbox_key, updated.status, updated.mode);
+    }
+
     return updated || null;
 };
 
@@ -66,17 +218,29 @@ const updateKeys = async (workspaceId, tenantId, { status, mode }) => {
  */
 const regenerateKeys = async (workspaceId, tenantId, which = 'both') => {
     const updates = { updated_at: knex.fn.now() };
+    
+    // We fetch current record to preserve the key that is not being regenerated
+    const current = await getByWorkspace(workspaceId, tenantId);
+    let productionKey = current?.production_key;
+    let sandboxKey = current?.sandbox_key;
+
     if (which === 'both' || which === 'production') {
-        updates.production_key = generateKey('prod');
+        productionKey = generateKey();
+        updates.production_key = productionKey;
     }
     if (which === 'both' || which === 'sandbox') {
-        updates.sandbox_key = generateKey('sand');
+        sandboxKey = generateKey();
+        updates.sandbox_key = sandboxKey;
     }
 
     const [updated] = await knex('workspace_api_keys')
         .where({ workspace_id: workspaceId, tenant_id: tenantId })
         .update(updates)
         .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'updated_at']);
+
+    if (updated) {
+        await syncKeysToAllDbs(workspaceId, tenantId, updated.production_key, updated.sandbox_key, updated.status, updated.mode);
+    }
 
     return updated || null;
 };
@@ -85,9 +249,13 @@ const regenerateKeys = async (workspaceId, tenantId, which = 'both') => {
  * Delete the API key record for a workspace entirely.
  */
 const deleteKeys = async (workspaceId, tenantId) => {
-    return knex('workspace_api_keys')
+    const count = await knex('workspace_api_keys')
         .where({ workspace_id: workspaceId, tenant_id: tenantId })
         .delete();
+
+    await deleteSyncKeys(workspaceId);
+
+    return count;
 };
 
 /**
