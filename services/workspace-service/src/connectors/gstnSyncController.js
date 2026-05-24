@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const ConnectorModel = require('./connectorModel');
 
-const EXT_API_URL = process.env.EXT_API_URL || 'http://gst-external-api-service:3008';
+const EXT_API_URL = process.env.EXT_API_URL || 'http://gsp_api_app:3015';
 
 /**
  * Ensures workspace has a valid API key (production_key) generated.
@@ -66,12 +66,8 @@ const getSessionStatus = async (req, res) => {
             return successResponse(res, { active: false, gstin, message: 'GST username not configured' });
         }
 
-        // Check active session
-        const session = await knex('ext_gstn_auth_sessions')
-            .where({ gstin, gst_username, is_active: true })
-            .andWhere('token_expiry', '>', new Date())
-            .orderBy('created_at', 'desc')
-            .first();
+        // Check active session on isolated GSP DB
+        const session = await ConnectorModel.getGspSession(gstin, gst_username);
 
         if (session) {
             return successResponse(res, {
@@ -148,32 +144,29 @@ const requestOtp = async (req, res) => {
         const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
         const apiKey = keyRecord.production_key;
 
-        // Ensure registered in GSP master
-        const existingGspGstin = await knex('api_conn_gst_master')
-            .where({ platform: 'TENANT_PORTAL', gstn: gstin })
-            .first();
-
-        if (!existingGspGstin) {
-            await knex('api_conn_gst_master').insert({
-                id: crypto.randomUUID(),
-                gstn: gstin,
-                legal_name: workspace.legal_name || workspace.name,
-                gst_user_name: usernameToUse,
-                platform: 'TENANT_PORTAL',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
+        // Ensure registered in standalone GSP master via API call (catch 409 if already registered)
+        console.log(`[GSTN Sync] Ensuring GSTIN ${gstin} is registered with GSP Provider API...`);
+        try {
+            await axios.post(`${EXT_API_URL}/ext/gst/clients/gstins`, {
+                gstin,
+                gst_username: usernameToUse,
+                state_code: gstin.substring(0, 2),
+                legal_name: workspace.legal_name || workspace.name
+            }, {
+                headers: {
+                    'X-API-Key': apiKey,
+                    'Content-Type': 'application/json'
+                }
             });
-        } else if (existingGspGstin.gst_user_name !== usernameToUse) {
-            await knex('api_conn_gst_master')
-                .where({ id: existingGspGstin.id })
-                .update({
-                    gst_user_name: usernameToUse,
-                    updated_at: new Date()
-                });
+            console.log(`[GSTN Sync] GSTIN ${gstin} registered successfully with GSP Provider API.`);
+        } catch (regErr) {
+            if (regErr.response?.status !== 409) {
+                console.error('[GSTN Sync] Failed to register GSTIN with GSP Provider API:', regErr.response?.data || regErr.message);
+                throw regErr;
+            }
         }
 
-        // Call external-api-service
+        // Call standalone GSP API
         console.log(`[GSTN Sync] Dispatched OTP Request to ${EXT_API_URL}/ext/gst/auth/otp-request`);
         const response = await axios.post(`${EXT_API_URL}/ext/gst/auth/otp-request`, {
             gstin,
@@ -228,7 +221,7 @@ const verifyOtp = async (req, res) => {
         const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
         const apiKey = keyRecord.production_key;
 
-        // Call external-api-service
+        // Call standalone GSP API
         const response = await axios.post(`${EXT_API_URL}/ext/gst/auth/verify-otp`, {
             gstin,
             gst_username,

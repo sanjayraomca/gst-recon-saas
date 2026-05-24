@@ -38,7 +38,6 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
         const mappedStatus = status === 'active' ? 'active' : 'inactive';
 
         const dbs = [
-            { name: 'Main DB', client: knex },
             { name: 'GSP DB', client: gspDb }
         ];
 
@@ -133,7 +132,6 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
 
 const deleteSyncKeys = async (workspaceId) => {
     const dbs = [
-        { name: 'Main DB', client: knex },
         { name: 'GSP DB', client: gspDb }
     ];
 
@@ -286,4 +284,17 @@ const validateKey = async (inboundKey) => {
     };
 };
 
-module.exports = { getByWorkspace, createKeys, updateKeys, regenerateKeys, deleteKeys, validateKey };
+const getGspSession = async (gstin, gstUsername) => {
+    try {
+        return await gspDb('ext_gstn_auth_sessions')
+            .where({ gstin, gst_username: gstUsername, is_active: true })
+            .where('token_expiry', '>', new Date())
+            .orderBy('created_at', 'desc')
+            .first();
+    } catch (err) {
+        console.error('[getGspSession] Failed to fetch GSP session:', err.message);
+        return null;
+    }
+};
+
+module.exports = { getByWorkspace, createKeys, updateKeys, regenerateKeys, deleteKeys, validateKey, syncKeysToAllDbs, getGspSession };

@@ -11,7 +11,7 @@ async function test() {
         console.log('--- Starting GSTN Portal direct sync flow verification ---');
 
         // 1. Get user and workspace context
-        const user = await knex('users').first();
+        const user = await knex('users').where({ email: 'superadmin.dev@gmail.com' }).first();
         if (!user) {
             console.error('No user found in database!');
             process.exit(1);
