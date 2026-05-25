@@ -1,18 +1,35 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
+
+// Inject host-specific mappings for direct process run (Postgres main container port 5435)
+process.env.DB_HOST = '127.0.0.1';
+process.env.DB_PORT = '5435';
+process.env.DB_USER = process.env.POSTGRES_MAIN_USER || 'gstadmin';
+process.env.DB_PASSWORD = process.env.POSTGRES_MAIN_PASSWORD || 'GstAdmin123';
+process.env.DB_NAME = process.env.POSTGRES_MAIN_DB || 'gst_recon';
+
+// Inject GSP Database host port connection specs (GSP PG container port 5438)
+process.env.GSP_DB_HOST = '127.0.0.1';
+process.env.GSP_DB_PORT = '5438';
+process.env.GSP_DB_NAME = 'gsp_api_db';
+process.env.GSP_DB_USER = 'root';
+process.env.GSP_DB_PASSWORD = 'rootpassword';
+
 const connectorModel = require('../src/connectors/connectorModel');
 const knex = require('../../shared/src/db/connection');
 const gspDb = require('knex')({
     client: 'pg',
     connection: {
-        host: 'gsp_api_db',
-        port: 5432,
-        database: 'gsp_api_db',
-        user: 'root',
-        password: 'rootpassword',
+        host: process.env.GSP_DB_HOST,
+        port: parseInt(process.env.GSP_DB_PORT, 10),
+        database: process.env.GSP_DB_NAME,
+        user: process.env.GSP_DB_USER,
+        password: process.env.GSP_DB_PASSWORD
     }
 });
 
-const workspaceId = 'a5045bfa-f33f-42f4-87ef-c51ce0009f2f';
-const tenantId = '0044210a-9d5e-452f-903e-65dc3f74cf2a';
+const workspaceId = '5cd828ca-d518-4fa2-bfac-91940c0fae69';
+const tenantId = 'beb799a7-adb9-4495-b322-935d847f238d';
 
 async function verify() {
     console.log('=== STARTING SYNC FLOW VERIFICATION ===');
@@ -37,17 +54,13 @@ async function verify() {
 
         // Verify in main DB
         console.log('Verifying in Main DB...');
-        const mainAccess = await knex('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
+        const mainAccess = await knex('workspace_api_keys').where({ workspace_id: workspaceId }).first();
         if (!mainAccess) throw new Error('No access key row found in Main DB!');
         console.log('Main DB access key found:', {
             production_key: mainAccess.production_key,
             sandbox_key: mainAccess.sandbox_key,
             status: mainAccess.status
         });
-
-        const mainAllowedProd = await knex('api_conn_allowed_access').where({ api_key: record.production_key }).first();
-        if (!mainAllowedProd) throw new Error('No production allowed access found in Main DB!');
-        console.log('Main DB allowed access (production) verified.');
 
         // Verify in GSP DB
         console.log('Verifying in GSP DB...');
@@ -70,7 +83,7 @@ async function verify() {
         console.log('Preserved sandbox key:', regRecord.sandbox_key);
 
         // Check if DBs updated
-        const mainAccessReg = await knex('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
+        const mainAccessReg = await knex('workspace_api_keys').where({ workspace_id: workspaceId }).first();
         const gspAccessReg = await gspDb('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
 
         if (mainAccessReg.production_key !== regRecord.production_key || gspAccessReg.production_key !== regRecord.production_key) {
@@ -78,19 +91,18 @@ async function verify() {
         }
         console.log('SUCCESS! Regenerated key propagated to both databases.');
 
-        // Check allowed access for regenerated key
-        const mainAllowedProdReg = await knex('api_conn_allowed_access').where({ api_key: regRecord.production_key }).first();
+        // Check allowed access for regenerated key in GSP DB
         const gspAllowedProdReg = await gspDb('api_conn_allowed_access').where({ api_key: regRecord.production_key }).first();
-        if (!mainAllowedProdReg || !gspAllowedProdReg) {
-            throw new Error('Regenerated allowed access records not found in databases!');
+        if (!gspAllowedProdReg) {
+            throw new Error('Regenerated allowed access records not found in GSP DB!');
         }
-        console.log('Allowed access records successfully synced for regenerated key.');
+        console.log('Allowed access records successfully synced for regenerated key in GSP DB.');
 
         // 4. Update Keys Status
         console.log('\n[4/5] Disabling API keys (updating status to inactive)...');
         await connectorModel.updateKeys(workspaceId, tenantId, { status: 'inactive' });
 
-        const mainAccessDisabled = await knex('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
+        const mainAccessDisabled = await knex('workspace_api_keys').where({ workspace_id: workspaceId }).first();
         const gspAccessDisabled = await gspDb('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
         if (mainAccessDisabled.status !== 'inactive' || gspAccessDisabled.status !== 'inactive') {
             throw new Error('Status update to inactive failed to propagate!');
@@ -102,7 +114,7 @@ async function verify() {
         await connectorModel.deleteKeys(workspaceId, tenantId);
 
         // Verify deletion
-        const mainAccessDel = await knex('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
+        const mainAccessDel = await knex('workspace_api_keys').where({ workspace_id: workspaceId }).first();
         const gspAccessDel = await gspDb('api_conn_access_key').where({ third_party_unique_id: workspaceId }).first();
         if (mainAccessDel || gspAccessDel) {
             throw new Error('Keys were not successfully cleaned up on deletion!');

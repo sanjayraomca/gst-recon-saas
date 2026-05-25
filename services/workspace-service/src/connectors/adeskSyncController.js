@@ -322,12 +322,12 @@ const mockAdeskServer = async (req, res) => {
 
         const [tenantUuid, orgUuid, orgGstn] = parts;
 
-        // Perform strict validation: must be valid UUIDs and GSTIN
-        if (!uuidRegex.test(tenantUuid)) {
-            return res.status(400).json({ success: 0, message: `Invalid tenant UUID format: "${tenantUuid}"` });
+        // Perform validation: must be valid non-empty string codes and valid GSTIN
+        if (!tenantUuid || tenantUuid.trim() === '') {
+            return res.status(400).json({ success: 0, message: `Invalid tenant UUID or project code: "${tenantUuid}"` });
         }
-        if (!uuidRegex.test(orgUuid)) {
-            return res.status(400).json({ success: 0, message: `Invalid organization/workspace UUID format: "${orgUuid}"` });
+        if (!orgUuid || orgUuid.trim() === '') {
+            return res.status(400).json({ success: 0, message: `Invalid organization UUID or org code: "${orgUuid}"` });
         }
         if (!isValidGSTIN(orgGstn)) {
             return res.status(400).json({ success: 0, message: `Invalid GSTIN format: "${orgGstn}"` });
@@ -355,7 +355,7 @@ const mockAdeskServer = async (req, res) => {
 
         const orgState = orgGstn.substring(0, 2);
 
-        // Dynamic high-fidelity mock suppliers matching requested date range
+        // Dynamic high-fidelity mock suppliers fallback matching requested date range
         const suppliers = [
             { name: 'Tata Steel Ltd', gstin: `${orgState}AAAAA1111A1Z1` }, // Intrastate
             { name: 'Reliance Petroleum', gstin: `${orgState === '27' ? '29' : '27'}BBBBB2222B1Z2` }, // Interstate
@@ -366,61 +366,172 @@ const mockAdeskServer = async (req, res) => {
         const records = [];
         const start = new Date(start_date);
         const end = new Date(end_date);
-        const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
 
-        for (let i = 1; i <= 6; i++) {
-            const invoiceDateOffset = Math.floor(i * (diffDays / 8));
-            const invoiceDate = new Date(start);
-            invoiceDate.setDate(start.getDate() + invoiceDateOffset);
-            const dateStr = invoiceDate.toISOString().split('T')[0];
+        // Parse real transaction logs from the local CSV book data
+        try {
+            const fs = require('fs');
+            const csvPath = '/home/tanvir/Desktop/gsttool_project/A1B_DATA/purchase/a1b_purchase_book_data_fy2025_2026.csv';
 
-            const supplier = suppliers[(i - 1) % suppliers.length];
-            const supplierState = supplier.gstin.substring(0, 2);
-            const isInterstate = orgState !== supplierState;
+            if (fs.existsSync(csvPath)) {
+                const content = fs.readFileSync(csvPath, 'utf8');
+                const lines = content.split('\n');
+                if (lines.length > 1) {
+                    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
 
-            const netAmount = 10000 * i + 500 * (i % 3);
-            const taxable = parseFloat((netAmount / 1.18).toFixed(2));
-            const tax = parseFloat((netAmount - taxable).toFixed(2));
+                    for (let i = 1; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
 
-            let cgst = 0, sgst = 0, igst = 0;
-            if (isInterstate) {
-                igst = tax;
-            } else {
-                cgst = parseFloat((tax / 2).toFixed(2));
-                sgst = parseFloat((tax / 2).toFixed(2));
-            }
+                        // Parse quoted CSV columns reliably
+                        const values = [];
+                        let inQuotes = false;
+                        let currentValue = '';
 
-            records.push({
-                vchr_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
-                supplier_invoice_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
-                supplier_invoice_date: dateStr,
-                supplier_name: supplier.name,
-                supplier_gstin: supplier.gstin,
-                taxable_value: taxable,
-                total_value: netAmount,
-                net_amount: netAmount,
-                cgst,
-                sgst,
-                igst,
-                is_interstate: isInterstate,
-                book_type: 'PA',
-                voucher_type: 'PURCHASE',
-                items: [
-                    {
-                        hsn_code: '998412',
-                        description: 'Cloud Accounting Subscription Vouchers',
-                        quantity: 1,
-                        uom: 'NOS',
-                        unit_rate: taxable,
-                        taxable_amount: taxable,
-                        tax_per: 18,
-                        igst_amount: igst,
-                        cgst_amount: cgst,
-                        sgst_amount: sgst,
-                        total_amount_with_tax: netAmount
+                        for (let c = 0; c < line.length; c++) {
+                            const char = line[c];
+                            if (char === '"') {
+                                inQuotes = !inQuotes;
+                            } else if (char === ',' && !inQuotes) {
+                                values.push(currentValue.trim());
+                                currentValue = '';
+                            } else {
+                                currentValue += char;
+                            }
+                        }
+                        values.push(currentValue.trim());
+
+                        const row = {};
+                        headers.forEach((header, idx) => {
+                            row[header] = values[idx] || '';
+                        });
+
+                        // Filter strictly by the requested dates
+                        const vchrDateStr = row.vchr_date;
+                        if (!vchrDateStr) continue;
+
+                        const dateParts = vchrDateStr.split('-');
+                        if (dateParts.length === 3) {
+                            let mm = parseInt(dateParts[0], 10) - 1;
+                            let dd = parseInt(dateParts[1], 10);
+                            let yy = parseInt(dateParts[2], 10);
+                            if (yy < 100) yy += 2000;
+
+                            const vDate = new Date(yy, mm, dd);
+                            if (vDate >= start && vDate <= end) {
+                                const supplierGstn = String(row.party_gstn_no || '').trim().toUpperCase();
+
+                                // Return only records containing formatted valid GSTINs
+                                if (supplierGstn && isValidGSTIN(supplierGstn)) {
+                                    const isoDateStr = vDate.toISOString().split('T')[0];
+                                    const netAmount = parseFloat(row.invoice_amount || row.row_wise_total_amount) || 0;
+                                    const taxable = parseFloat(row.total_taxable_amount) || 0;
+                                    const cgst = parseFloat(row.total_cgst_tax_amount) || 0;
+                                    const sgst = parseFloat(row.total_sgst_tax_amount) || 0;
+                                    const igst = parseFloat(row.total_igst_tax_amount) || 0;
+                                    const cess = parseFloat(row.total_cess_tax_amount) || 0;
+                                    const taxPer = parseFloat(row.tax_per) || 0;
+
+                                    records.push({
+                                        vchr_no: String(row.vchr_full_number || row.vchr_no || '').trim(),
+                                        supplier_invoice_no: String(row.ref_vchr_full_number || row.ref_vchr_no || row.vchr_full_number || row.vchr_no || '').trim(),
+                                        supplier_invoice_date: isoDateStr,
+                                        supplier_name: String(row.party_name || 'Generic Supplier').trim(),
+                                        supplier_gstin: supplierGstn,
+                                        taxable_value: taxable,
+                                        total_value: netAmount,
+                                        net_amount: netAmount,
+                                        cgst,
+                                        sgst,
+                                        igst,
+                                        cess,
+                                        is_interstate: row.inter_state === 'Yes',
+                                        book_type: String(row.vchr_prefix || 'PA').trim(),
+                                        voucher_type: String(row.vchr_type || 'PURCHASE').trim(),
+                                        items: [
+                                            {
+                                                hsn_code: '998412',
+                                                description: String(row.description || 'Real accounting voucher details').trim(),
+                                                quantity: 1,
+                                                uom: 'NOS',
+                                                unit_rate: taxable,
+                                                taxable_amount: taxable,
+                                                tax_per: taxPer,
+                                                igst_amount: igst,
+                                                cgst_amount: cgst,
+                                                sgst_amount: sgst,
+                                                cess_amount: cess,
+                                                total_amount_with_tax: netAmount
+                                            }
+                                        ]
+                                    });
+                                }
+                            }
+                        }
                     }
-                ]
-            });
+                }
+            }
+        } catch (csvErr) {
+            console.error('Error parsing real CSV data inside mock server:', csvErr.message);
+        }
+
+        // Fallback to high-fidelity mock if no CSV records matched
+        if (records.length === 0) {
+            console.log('No CSV records matched date filter, generating dynamic mock records...');
+            const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+            for (let i = 1; i <= 6; i++) {
+                const invoiceDateOffset = Math.floor(i * (diffDays / 8));
+                const invoiceDate = new Date(start);
+                invoiceDate.setDate(start.getDate() + invoiceDateOffset);
+                const dateStr = invoiceDate.toISOString().split('T')[0];
+
+                const supplier = suppliers[(i - 1) % suppliers.length];
+                const supplierState = supplier.gstin.substring(0, 2);
+                const isInterstate = orgState !== supplierState;
+
+                const netAmount = 10000 * i + 500 * (i % 3);
+                const taxable = parseFloat((netAmount / 1.18).toFixed(2));
+                const tax = parseFloat((netAmount - taxable).toFixed(2));
+
+                let cgst = 0, sgst = 0, igst = 0;
+                if (isInterstate) {
+                    igst = tax;
+                } else {
+                    cgst = parseFloat((tax / 2).toFixed(2));
+                    sgst = parseFloat((tax / 2).toFixed(2));
+                }
+
+                records.push({
+                    vchr_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
+                    supplier_invoice_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
+                    supplier_invoice_date: dateStr,
+                    supplier_name: supplier.name,
+                    supplier_gstin: supplier.gstin,
+                    taxable_value: taxable,
+                    total_value: netAmount,
+                    net_amount: netAmount,
+                    cgst,
+                    sgst,
+                    igst,
+                    is_interstate: isInterstate,
+                    book_type: 'PA',
+                    voucher_type: 'PURCHASE',
+                    items: [
+                        {
+                            hsn_code: '998412',
+                            description: 'Cloud Accounting Subscription Vouchers',
+                            quantity: 1,
+                            uom: 'NOS',
+                            unit_rate: taxable,
+                            taxable_amount: taxable,
+                            tax_per: 18,
+                            igst_amount: igst,
+                            cgst_amount: cgst,
+                            sgst_amount: sgst,
+                            total_amount_with_tax: netAmount
+                        }
+                    ]
+                });
+            }
         }
 
         return res.status(200).json({

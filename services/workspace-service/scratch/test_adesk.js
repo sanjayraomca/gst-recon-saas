@@ -58,15 +58,23 @@ const runAllTests = async () => {
         "ping"
     );
 
-    // 3. Failure: Invalid UUID
+    // 3. Success path: standard project and org codes instead of UUIDs
     await runTest(
-        "Invalid Tenant UUID Format",
-        "invalid-uuid-1234",
+        "Standard Adesk Project/Org Codes (Success Path)",
+        "my_project_code",
+        "my_org_code",
+        "27ABCDE1234F1Z1"
+    );
+
+    // 4. Failure: Empty API Key segment
+    await runTest(
+        "Empty Project Code Format",
+        " ",
         "28ce58a7-3f22-4f95-9a7d-aa6546e9a84a",
         "27ABCDE1234F1Z1"
     );
 
-    // 4. Failure: Invalid GSTIN
+    // 5. Failure: Invalid GSTIN
     await runTest(
         "Invalid GSTIN Format",
         "a0e7f7bb-c12b-42fa-a6e5-429949666ca0",
