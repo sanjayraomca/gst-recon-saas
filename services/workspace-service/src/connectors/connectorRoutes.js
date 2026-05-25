@@ -17,8 +17,10 @@ const { uploadMiddleware, importBookFile } = require('./bookFileImportConnectorC
 
 // ── PUBLIC ───────────────────────────────────────────────────────────────────
 // No JWT — called directly by ERP connectors (Tally, Zoho, SAP, QuickBooks)
-// to authenticate an inbound Purchase/Sales register push.
 router.post('/validate-key', validateApiKey);
+
+// Mock Adesk Accounting Server endpoint (Public - authenticates via base64 API key)
+router.post('/mock-adesk', require('./adeskSyncController').mockAdeskServer);
 
 // ── ERP DATA PUSH (X-API-Key authentication — no JWT) ────────────────────────
 // The ERP connector uses the API key issued by SuperAdmin.
@@ -47,6 +49,10 @@ router.get('/gstn/session-status', authorizeWorkspace, gstnSyncController.getSes
 router.post('/gstn/otp-request', authorizeWorkspace, gstnSyncController.requestOtp);
 router.post('/gstn/verify-otp', authorizeWorkspace, gstnSyncController.verifyOtp);
 router.post('/gstn/sync-gstr2b', authorizeWorkspace, gstnSyncController.syncGstr2b);
+
+// Pull purchase data from Adesk Accounting Cloud connector
+router.post('/adesk/pull-purchase', authorizeWorkspace, require('./adeskSyncController').pullPurchaseData);
+router.post('/adesk/test-connection', authorizeWorkspace, require('./adeskSyncController').testConnection);
 
 router.use(requireSuperAdmin);
 
