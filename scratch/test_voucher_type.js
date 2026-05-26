@@ -182,6 +182,53 @@ async function main() {
             }
         }
 
+        // 6.5. Send JSON file upload POST request via Connector to `/book-import/file`
+        // We will reset net_amount to 1000 and voucher_type to NULL manually first
+        console.log('\n📥 Manually resetting initial voucher with voucher_type = NULL...');
+        await client.query(
+            "UPDATE purchase_vouchers SET voucher_type = NULL, net_amount = 1000.00 WHERE book_vchr_no = $1 AND workspace_id = $2",
+            [testVoucher, workspace.id]
+        );
+
+        console.log(`\n🚀 Sending Connector File Upload POST request with JSON file (expected to conflict and update)...`);
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', Buffer.from(JSON.stringify(payload.records)), {
+            filename: 'vouchers.json',
+            contentType: 'application/json'
+        });
+        form.append('type', 'purchase_register');
+        form.append('return_period', period);
+
+        const fileResponse = await fetch('http://localhost:3002/connectors/book-import/file', {
+            method: 'POST',
+            headers: {
+                ...form.getHeaders(),
+                'X-API-Key': testApiKey
+            },
+            body: form
+        });
+
+        const fileResBody = await fileResponse.json();
+        console.log('📥 File Upload Response Status:', fileResponse.status);
+        console.log('📥 File Upload Response Body:', JSON.stringify(fileResBody, null, 2));
+
+        // Verify final state in DB
+        dbCheck = await client.query(
+            "SELECT book_vchr_no, voucher_type, book_type, net_amount FROM purchase_vouchers WHERE book_vchr_no = $1 AND workspace_id = $2",
+            [testVoucher, workspace.id]
+        );
+        console.log('🎉 DB Records (After Connector File Upload Conflict):');
+        console.table(dbCheck.rows);
+
+        const fileFinalRow = dbCheck.rows[0];
+        if (fileFinalRow && fileFinalRow.voucher_type === 'PURCHASE' && parseFloat(fileFinalRow.net_amount) === 1200.00) {
+            console.log(`\n✅ SUCCESS: voucher_type and net_amount are updated perfectly using JSON file upload!`);
+        } else {
+            console.error(`\n❌ FAILURE: voucher_type or net_amount was not updated properly using JSON file upload.`);
+        }
+
+
         // 7. Cleanup Database
         console.log(`\n🧹 Cleaning up generated test data...`);
         await client.query("DELETE FROM purchase_vouchers WHERE book_vchr_no = $1 AND workspace_id = $2", [testVoucher, workspace.id]);
