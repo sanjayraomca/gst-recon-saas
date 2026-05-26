@@ -145,7 +145,7 @@ const getApiKeys = async (req, res) => {
 const createApiKeys = async (req, res) => {
     try {
         const userId = getRequestingUserId(req);
-        const { tenant_id, workspace_id } = req.body;
+        const { tenant_id, workspace_id, third_party_name, extrainfo } = req.body;
 
         if (!tenant_id || !workspace_id) {
             return errorResponse(res, 'Body must include tenant_id and workspace_id', 400);
@@ -167,7 +167,7 @@ const createApiKeys = async (req, res) => {
             );
         }
 
-        const record = await ConnectorModel.createKeys(workspace_id, tenant_id);
+        const record = await ConnectorModel.createKeys(workspace_id, tenant_id, third_party_name, extrainfo);
 
         await logActivity({
             userId,
@@ -175,7 +175,7 @@ const createApiKeys = async (req, res) => {
             workspaceId: workspace_id,
             actionType:  'CREATE_API_KEYS',
             entityType:  'CONNECTOR',
-            details:     { workspace_name: workspace.name, key_id: record.id },
+            details:     { workspace_name: workspace.name, key_id: record.id, third_party_name: record.third_party_name },
             req
         });
 
@@ -193,18 +193,18 @@ const createApiKeys = async (req, res) => {
  * Update status (active/inactive) or mode (live/demo) for a specific organization.
  * SUPER_ADMIN only.
  *
- * Body: { tenant_id, workspace_id, status?, mode? }
+ * Body: { tenant_id, workspace_id, status?, mode?, third_party_name?, extrainfo? }
  */
 const updateApiKeys = async (req, res) => {
     try {
         const userId = getRequestingUserId(req);
-        const { tenant_id, workspace_id, status, mode } = req.body;
+        const { tenant_id, workspace_id, status, mode, third_party_name, extrainfo } = req.body;
 
         if (!tenant_id || !workspace_id) {
             return errorResponse(res, 'Body must include tenant_id and workspace_id', 400);
         }
-        if (!status && !mode) {
-            return errorResponse(res, 'Provide at least one field to update: status or mode', 400);
+        if (!status && !mode && third_party_name === undefined && extrainfo === undefined) {
+            return errorResponse(res, 'Provide at least one field to update: status, mode, third_party_name, or extrainfo', 400);
         }
         if (status && !['active', 'inactive'].includes(status)) {
             return errorResponse(res, 'status must be "active" or "inactive"', 400);
@@ -218,7 +218,7 @@ const updateApiKeys = async (req, res) => {
             return errorResponse(res, 'Workspace not found or does not belong to the specified tenant', 404);
         }
 
-        const updated = await ConnectorModel.updateKeys(workspace_id, tenant_id, { status, mode });
+        const updated = await ConnectorModel.updateKeys(workspace_id, tenant_id, { status, mode, third_party_name, extrainfo });
         if (!updated) return errorResponse(res, 'No API keys found for this workspace', 404);
 
         await logActivity({
@@ -227,7 +227,7 @@ const updateApiKeys = async (req, res) => {
             workspaceId: workspace_id,
             actionType:  'UPDATE_API_KEYS',
             entityType:  'CONNECTOR',
-            details:     { workspace_name: workspace.name, status, mode },
+            details:     { workspace_name: workspace.name, status, mode, third_party_name, extrainfo },
             req
         });
 

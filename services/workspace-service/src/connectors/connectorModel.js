@@ -163,7 +163,7 @@ const deleteSyncKeys = async (workspaceId) => {
 const getByWorkspace = async (workspaceId, tenantId) => {
     return knex('workspace_api_keys')
         .where({ workspace_id: workspaceId, tenant_id: tenantId })
-        .select(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'created_at', 'updated_at'])
+        .select(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'third_party_name', 'extrainfo', 'created_at', 'updated_at'])
         .first();
 };
 
@@ -171,20 +171,22 @@ const getByWorkspace = async (workspaceId, tenantId) => {
  * Create API keys for a workspace (one-time setup, SUPER_ADMIN only).
  * Generates both production_key and sandbox_key.
  */
-const createKeys = async (workspaceId, tenantId) => {
+const createKeys = async (workspaceId, tenantId, thirdPartyName = null, extraInfo = null) => {
     const productionKey = generateKey();
     const sandboxKey    = generateKey();
 
     const [record] = await knex('workspace_api_keys')
         .insert({
-            workspace_id:   workspaceId,
-            tenant_id:      tenantId,
-            production_key: productionKey,
-            sandbox_key:    sandboxKey,
-            status:         'active',
-            mode:           'live'
+            workspace_id:      workspaceId,
+            tenant_id:         tenantId,
+            production_key:    productionKey,
+            sandbox_key:       sandboxKey,
+            status:            'active',
+            mode:              'live',
+            third_party_name:  thirdPartyName,
+            extrainfo:         extraInfo ? (typeof extraInfo === 'object' ? JSON.stringify(extraInfo) : extraInfo) : null
         })
-        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'created_at']);
+        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'third_party_name', 'extrainfo', 'created_at']);
 
     await syncKeysToAllDbs(workspaceId, tenantId, productionKey, sandboxKey, 'active', 'live');
 
@@ -194,15 +196,17 @@ const createKeys = async (workspaceId, tenantId) => {
 /**
  * Update status (active/inactive) or mode (live/demo).
  */
-const updateKeys = async (workspaceId, tenantId, { status, mode }) => {
+const updateKeys = async (workspaceId, tenantId, { status, mode, third_party_name, extrainfo }) => {
     const updates = { updated_at: knex.fn.now() };
     if (status !== undefined) updates.status = status;
     if (mode   !== undefined) updates.mode   = mode;
+    if (third_party_name !== undefined) updates.third_party_name = third_party_name;
+    if (extrainfo !== undefined) updates.extrainfo = extrainfo ? (typeof extrainfo === 'object' ? JSON.stringify(extrainfo) : extrainfo) : null;
 
     const [updated] = await knex('workspace_api_keys')
         .where({ workspace_id: workspaceId, tenant_id: tenantId })
         .update(updates)
-        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'updated_at']);
+        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'third_party_name', 'extrainfo', 'updated_at']);
 
     if (updated) {
         await syncKeysToAllDbs(workspaceId, tenantId, updated.production_key, updated.sandbox_key, updated.status, updated.mode);
@@ -234,7 +238,7 @@ const regenerateKeys = async (workspaceId, tenantId, which = 'both') => {
     const [updated] = await knex('workspace_api_keys')
         .where({ workspace_id: workspaceId, tenant_id: tenantId })
         .update(updates)
-        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'updated_at']);
+        .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'third_party_name', 'extrainfo', 'updated_at']);
 
     if (updated) {
         await syncKeysToAllDbs(workspaceId, tenantId, updated.production_key, updated.sandbox_key, updated.status, updated.mode);

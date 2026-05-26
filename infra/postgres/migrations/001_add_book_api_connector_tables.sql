@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS workspace_api_keys (
     mode            VARCHAR(20) NOT NULL DEFAULT 'live'
                         CHECK (mode IN ('live', 'demo')),
 
+    -- Integration Metadata
+    third_party_name VARCHAR(100),
+    extrainfo       JSONB,
+
     -- Audit
     created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
