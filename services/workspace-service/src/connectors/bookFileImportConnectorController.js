@@ -38,10 +38,10 @@ const upload = multer({
     limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
     fileFilter: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
-        if (['.csv', '.xlsx', '.xls'].includes(ext)) {
+        if (['.csv', '.xlsx', '.xls', '.json'].includes(ext)) {
             cb(null, true);
         } else {
-            cb(new Error('Only .csv, .xlsx, and .xls files are allowed'), false);
+            cb(new Error('Only .csv, .xlsx, .xls, and .json files are allowed'), false);
         }
     }
 });
@@ -100,13 +100,44 @@ const forwardToUploadService = (fileBuffer, filename, mimetype, fields, contextH
     });
 };
 
+const { importBookData } = require('./bookImportConnectorController');
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 const importBookFile = async (req, res) => {
     try {
         const { workspaceId, tenantId, mode, keyType } = req.connectorContext;
 
+        // Check if this is a raw JSON payload request or a JSON file upload
+        const isJsonRequest = req.headers['content-type']?.includes('application/json');
+        const isJsonFile = req.file && path.extname(req.file.originalname).toLowerCase() === '.json';
+
+        if (isJsonRequest || isJsonFile) {
+            if (isJsonFile) {
+                try {
+                    const fileContent = req.file.buffer.toString('utf8');
+                    const parsed = JSON.parse(fileContent);
+                    
+                    // Merge fields parsed from JSON file into req.body dynamically
+                    if (parsed) {
+                        if (Array.isArray(parsed)) {
+                            req.body.records = parsed;
+                        } else {
+                            if (parsed.records) req.body.records = parsed.records;
+                            if (parsed.type) req.body.type = parsed.type;
+                            if (parsed.return_period) req.body.return_period = parsed.return_period;
+                        }
+                    }
+                } catch (parseErr) {
+                    return errorResponse(res, `Failed to parse uploaded JSON file: ${parseErr.message}`, 400);
+                }
+            }
+
+            // Delegate dynamically to importBookData to leverage its robust schema validation, DB ingestion, and activity logs!
+            return await importBookData(req, res);
+        }
+
         if (!req.file) {
-            return errorResponse(res, 'No file uploaded. Send file as form-data with field name "file"', 400);
+            return errorResponse(res, 'No file uploaded. Send file as form-data with field name "file" or send a valid JSON request.', 400);
         }
 
         const { type, return_period } = req.body;
