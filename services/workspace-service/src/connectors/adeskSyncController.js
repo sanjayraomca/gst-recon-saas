@@ -66,74 +66,132 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
     const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
     const returnPeriod = vchrDate ? getPeriodFromDate(vchrDate) : defaultReturnPeriod;
 
+    // Support both custom mock keys and real Adesk response keys
+    const supplierInvoiceNo = String(record.supplier_invoice_no || record.vchr_full_number || record.vchr_no || '').trim();
+    const bookVchrNo = String(record.book_vchr_no || record.vchr_full_number || record.vchr_no || '').trim();
+    const supplierGstin = String(record.supplier_gstin || record.party_gstn_no || '').trim().toUpperCase();
+    const supplierName = String(record.supplier_name || record.party_name || 'Generic Supplier').trim();
+
+    let bookType = (record.book_type || record.vchr_prefix || 'PA').trim().toUpperCase();
+    let voucherType = (record.voucher_type || record.vchr_type || 'PURCHASE').trim().toUpperCase();
+
+    // Translate abbreviations to satisfy PostgreSQL database Check Constraints
+    if (voucherType === 'EXP' || voucherType === 'EXPENSE') {
+        voucherType = 'EXPENSE';
+    } else if (voucherType === 'PUR' || voucherType === 'PURCHASE') {
+        voucherType = 'PURCHASE';
+    } else if (voucherType === 'DN' || voucherType === 'DEBIT_NOTE') {
+        voucherType = 'DEBIT_NOTE';
+    } else if (voucherType === 'CN' || voucherType === 'CREDIT_NOTE') {
+        voucherType = 'CREDIT_NOTE';
+    }
+
+    if (bookType === 'PURCHASE' || bookType === 'PUR') {
+        bookType = 'PA';
+    } else if (bookType === 'EXPENSE') {
+        bookType = 'EXP';
+    }
+
     // Validation checks matching book data import
-    if (!record.supplier_invoice_no && !record.vchr_no) {
+    if (!supplierInvoiceNo) {
         throw new Error('Validation Error: Missing supplier invoice / voucher number');
     }
-    if (!record.supplier_gstin) {
+
+    // Enforce GSTIN validation only for registered purchase books (not expenses), or if a GSTIN is supplied
+    const isExpense = (bookType === 'EXP' || voucherType === 'EXPENSE');
+    if (!isExpense && !supplierGstin) {
         throw new Error('Validation Error: Missing supplier GSTIN');
     }
-    if (!isValidGSTIN(record.supplier_gstin)) {
-        throw new Error(`Validation Error: Invalid Supplier GSTIN format "${record.supplier_gstin}"`);
+    if (supplierGstin && !isValidGSTIN(supplierGstin)) {
+        throw new Error(`Validation Error: Invalid Supplier GSTIN format "${supplierGstin}"`);
     }
 
+    // Derive financials using both custom mock schema and real Adesk schema keys
+    const taxableTotal = parseFloat(record.taxable_value || record.taxable_amount || record.total_taxable_amount || 0);
+    const netAmount = parseFloat(record.net_amount || record.total_value || record.invoice_amount || record.row_wise_total_amount || 0);
+    const totalIgstAmount = parseFloat(record.igst || record.igst_amount || record.total_igst_tax_amount || 0);
+    const totalCgstAmount = parseFloat(record.cgst || record.cgst_amount || record.total_cgst_tax_amount || 0);
+    const totalSgstAmount = parseFloat(record.sgst || record.sgst_amount || record.total_sgst_tax_amount || 0);
+    const totalCessAmount = parseFloat(record.cess || record.cess_amount || record.total_cess_tax_amount || 0);
+
     const header = {
-        tenant_id:              tenantId,
-        workspace_id:           workspaceId,
+        tenant_id: tenantId,
+        workspace_id: workspaceId,
 
         // Invoice identity
-        supplier_invoice_no:    String(record.supplier_invoice_no || record.vchr_no || '').trim(),
-        supplier_invoice_date:  vchrDate,
-        book_vchr_no:           String(record.book_vchr_no || record.vchr_no || '').trim(),
-        book_vchr_date:         record.book_vchr_date || vchrDate,
+        supplier_invoice_no: supplierInvoiceNo,
+        supplier_invoice_date: vchrDate,
+        book_vchr_no: bookVchrNo,
+        book_vchr_date: record.book_vchr_date || vchrDate,
 
         // Supplier
-        supplier_name:          String(record.supplier_name || 'Generic Supplier').trim(),
-        supplier_gstin:         String(record.supplier_gstin || '').trim().toUpperCase(),
+        supplier_name: supplierName,
+        supplier_gstin: supplierGstin,
 
         // Financials
-        taxable_total:           parseFloat(record.taxable_value || record.taxable_amount || 0),
-        net_amount:              parseFloat(record.net_amount || record.total_value || 0),
-        total_igst_amount:       parseFloat(record.igst || record.igst_amount || 0),
-        total_cgst_amount:       parseFloat(record.cgst || record.cgst_amount || 0),
-        total_sgst_amount:       parseFloat(record.sgst || record.sgst_amount || 0),
-        total_cess_amount:       parseFloat(record.cess || record.cess_amount || 0),
-        round_off:               parseFloat(record.round_off || 0),
-        discount:                parseFloat(record.discount || 0),
-        total_qty:               parseFloat(record.total_qty || 0),
+        taxable_total: taxableTotal,
+        net_amount: netAmount,
+        total_igst_amount: totalIgstAmount,
+        total_cgst_amount: totalCgstAmount,
+        total_sgst_amount: totalSgstAmount,
+        total_cess_amount: totalCessAmount,
+        round_off: parseFloat(record.round_off || record.round_off_amount || 0),
+        discount: parseFloat(record.discount || 0),
+        total_qty: parseFloat(record.total_qty || 0),
 
         // GST Fields
-        place_of_supply:         record.place_of_supply || null,
-        is_interstate:           record.is_interstate || false,
-        is_rcm:                  record.is_rcm || false,
-        voucher_type:            record.voucher_type || 'PURCHASE',
-        book_type:               record.book_type || 'PA',
-        status:                  record.status || 'DRAFT',
-        remarks:                 record.remarks || null,
+        place_of_supply: record.place_of_supply || null,
+        is_interstate: record.is_interstate || (record.inter_state === 'Yes') || false,
+        is_rcm: record.is_rcm || (record.reverse_charge === 'Yes') || false,
+        voucher_type: voucherType,
+        book_type: bookType,
+        gstr_category: record.gstr_category || 'NONGST',
+        status: record.status || 'DRAFT',
+        remarks: record.remarks || null,
 
         // Period
-        filing_period:           returnPeriod,
-        return_period:           returnPeriod,
-        tax_period_id:           null,
+        filing_period: returnPeriod,
+        return_period: returnPeriod,
+        tax_period_id: null,
 
         t_extra_info: { source: 'adesk_cloud_connector', connector_ref: record.connector_ref || null }
     };
 
-    const items = (record.items || []).map(item => ({
-        hsn_code:               String(item.hsn_code || '').trim() || null,
-        description:            item.description || null,
-        quantity:               parseFloat(item.quantity || 0),
-        uom:                    item.uom || null,
-        unit_rate:              parseFloat(item.unit_rate || 0),
-        taxable_amount:         parseFloat(item.taxable_amount || 0),
-        tax_per:                parseFloat(item.tax_per || 0),
-        igst_amount:            parseFloat(item.igst_amount || 0),
-        cgst_amount:            parseFloat(item.cgst_amount || 0),
-        sgst_amount:            parseFloat(item.sgst_amount || 0),
-        cess_amount:            parseFloat(item.cess_amount || 0),
-        total_amount_with_tax:  parseFloat(item.total_amount_with_tax || 0),
-        t_extra_info: {}
-    }));
+    // If item array is not provided (standard in raw Adesk API), construct a single virtual item line
+    let items = [];
+    if (record.items && record.items.length > 0) {
+        items = record.items.map(item => ({
+            hsn_code: String(item.hsn_code || '').trim() || null,
+            description: item.description || null,
+            quantity: parseFloat(item.quantity || 0),
+            uom: item.uom || null,
+            unit_rate: parseFloat(item.unit_rate || 0),
+            taxable_amount: parseFloat(item.taxable_amount || 0),
+            tax_per: parseFloat(item.tax_per || 0),
+            igst_amount: parseFloat(item.igst_amount || 0),
+            cgst_amount: parseFloat(item.cgst_amount || 0),
+            sgst_amount: parseFloat(item.sgst_amount || 0),
+            cess_amount: parseFloat(item.cess_amount || 0),
+            total_amount_with_tax: parseFloat(item.total_amount_with_tax || 0),
+            t_extra_info: {}
+        }));
+    } else {
+        items = [{
+            hsn_code: null,
+            description: record.description || 'Voucher details',
+            quantity: 1,
+            uom: 'NOS',
+            unit_rate: taxableTotal,
+            taxable_amount: taxableTotal,
+            tax_per: parseFloat(record.tax_per || 0),
+            igst_amount: totalIgstAmount,
+            cgst_amount: totalCgstAmount,
+            sgst_amount: totalSgstAmount,
+            cess_amount: totalCessAmount,
+            total_amount_with_tax: netAmount,
+            t_extra_info: {}
+        }];
+    }
 
     return { header, items };
 };
@@ -186,7 +244,8 @@ const pullPurchaseData = async (req, res) => {
             'api_key': encodedKey,
             'x-api-key': encodedKey,
             'Authorization': `Bearer ${apiToken}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'x-adesk-sync-source': 'saas-orchestrator'
         };
 
         // Query Adesk external server
@@ -203,6 +262,7 @@ const pullPurchaseData = async (req, res) => {
         }
 
         const adeskRes = response.data;
+        console.log('DEBUG [pullPurchaseData] adeskRes:', adeskRes);
         if (!adeskRes || adeskRes.success !== 1 || !Array.isArray(adeskRes.data)) {
             return errorResponse(res, adeskRes.message || 'Invalid response received from Adesk Accounting Server', 502);
         }
@@ -239,13 +299,13 @@ const pullPurchaseData = async (req, res) => {
 
         // Track and insert
         const importRecord = await ConnectorImportModel.createImportRecord({
-            tenantUuid:     workspace.tenant_id,
-            workspaceId:    workspace.id,
-            returnPeriod:   defaultReturnPeriod,
-            financialYear:  year,
-            importType:     'PURCHASE_REGISTER',
-            extraInfo:      { source: 'adesk_cloud_connector', records_count: records.length, year, quarter, month, validation_failures: validationFailures },
-            userEmail:      'connector@adesk-cloud'
+            tenantUuid: workspace.tenant_id,
+            workspaceId: workspace.id,
+            returnPeriod: defaultReturnPeriod,
+            financialYear: year,
+            importType: 'PURCHASE_REGISTER',
+            extraInfo: { source: 'adesk_cloud_connector', records_count: records.length, year, quarter, month, validation_failures: validationFailures },
+            userEmail: 'connector@adesk-cloud'
         });
 
         const result = await ConnectorImportModel.bulkInsertPurchase(documents);
@@ -262,7 +322,7 @@ const pullPurchaseData = async (req, res) => {
             'Completed',
             result.inserted,
             {
-                added_invoices:     result.addedInvoices,
+                added_invoices: result.addedInvoices,
                 duplicate_invoices: result.duplicateInvoices,
                 skipped_validation: validationFailures
             }
@@ -271,10 +331,10 @@ const pullPurchaseData = async (req, res) => {
         // Trigger NATS reconciliation
         try {
             await publishMessage('book-data-imported', JSON.stringify({
-                tenant_id:     workspace.tenant_id,
-                workspace_id:  workspace.id,
+                tenant_id: workspace.tenant_id,
+                workspace_id: workspace.id,
                 return_period: defaultReturnPeriod,
-                import_type:   'api_connector_purchases'
+                import_type: 'api_connector_purchases'
             }));
         } catch (natsErr) {
             console.error('Failed to publish reconciliation event to NATS:', natsErr.message);
@@ -353,190 +413,99 @@ const mockAdeskServer = async (req, res) => {
             return res.status(400).json({ success: 0, message: 'This connector currently only supports "purchase" registers' });
         }
 
-        const orgState = orgGstn.substring(0, 2);
-
-        // Dynamic high-fidelity mock suppliers fallback matching requested date range
-        const suppliers = [
-            { name: 'Tata Steel Ltd', gstin: `${orgState}AAAAA1111A1Z1` }, // Intrastate
-            { name: 'Reliance Petroleum', gstin: `${orgState === '27' ? '29' : '27'}BBBBB2222B1Z2` }, // Interstate
-            { name: 'Infosys Enterprises', gstin: `${orgState === '29' ? '27' : '29'}CCCCC3333C1Z3` }, // Interstate
-            { name: 'Airtel Business Solutions', gstin: `${orgState}DDDDD4444D1Z4` } // Intrastate
-        ];
-
-        const records = [];
         const start = new Date(start_date);
         const end = new Date(end_date);
 
-        // Parse real transaction logs from the local CSV book data
-        try {
-            const fs = require('fs');
-            const csvPath = '/home/tanvir/Desktop/gsttool_project/A1B_DATA/purchase/a1b_purchase_book_data_fy2025_2026.csv';
+        const path = require('path');
+        const fs = require('fs');
+        const jsonPath = path.join(__dirname, 'mock-adesk-data.json');
 
-            if (fs.existsSync(csvPath)) {
-                const content = fs.readFileSync(csvPath, 'utf8');
-                const lines = content.split('\n');
-                if (lines.length > 1) {
-                    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        let records = [];
 
-                    for (let i = 1; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
+        if (fs.existsSync(jsonPath)) {
+            try {
+                const rawData = fs.readFileSync(jsonPath, 'utf8');
+                let allMockRecords = JSON.parse(rawData);
 
-                        // Parse quoted CSV columns reliably
-                        const values = [];
-                        let inQuotes = false;
-                        let currentValue = '';
-
-                        for (let c = 0; c < line.length; c++) {
-                            const char = line[c];
-                            if (char === '"') {
-                                inQuotes = !inQuotes;
-                            } else if (char === ',' && !inQuotes) {
-                                values.push(currentValue.trim());
-                                currentValue = '';
-                            } else {
-                                currentValue += char;
-                            }
-                        }
-                        values.push(currentValue.trim());
-
-                        const row = {};
-                        headers.forEach((header, idx) => {
-                            row[header] = values[idx] || '';
-                        });
-
-                        // Filter strictly by the requested dates
-                        const vchrDateStr = row.vchr_date;
-                        if (!vchrDateStr) continue;
-
-                        const dateParts = vchrDateStr.split('-');
-                        if (dateParts.length === 3) {
-                            let mm = parseInt(dateParts[0], 10) - 1;
-                            let dd = parseInt(dateParts[1], 10);
-                            let yy = parseInt(dateParts[2], 10);
-                            if (yy < 100) yy += 2000;
-
-                            const vDate = new Date(yy, mm, dd);
-                            if (vDate >= start && vDate <= end) {
-                                const supplierGstn = String(row.party_gstn_no || '').trim().toUpperCase();
-
-                                // Return only records containing formatted valid GSTINs
-                                if (supplierGstn && isValidGSTIN(supplierGstn)) {
-                                    const isoDateStr = vDate.toISOString().split('T')[0];
-                                    const netAmount = parseFloat(row.invoice_amount || row.row_wise_total_amount) || 0;
-                                    const taxable = parseFloat(row.total_taxable_amount) || 0;
-                                    const cgst = parseFloat(row.total_cgst_tax_amount) || 0;
-                                    const sgst = parseFloat(row.total_sgst_tax_amount) || 0;
-                                    const igst = parseFloat(row.total_igst_tax_amount) || 0;
-                                    const cess = parseFloat(row.total_cess_tax_amount) || 0;
-                                    const taxPer = parseFloat(row.tax_per) || 0;
-
-                                    records.push({
-                                        vchr_no: String(row.vchr_full_number || row.vchr_no || '').trim(),
-                                        supplier_invoice_no: String(row.ref_vchr_full_number || row.ref_vchr_no || row.vchr_full_number || row.vchr_no || '').trim(),
-                                        supplier_invoice_date: isoDateStr,
-                                        supplier_name: String(row.party_name || 'Generic Supplier').trim(),
-                                        supplier_gstin: supplierGstn,
-                                        taxable_value: taxable,
-                                        total_value: netAmount,
-                                        net_amount: netAmount,
-                                        cgst,
-                                        sgst,
-                                        igst,
-                                        cess,
-                                        is_interstate: row.inter_state === 'Yes',
-                                        book_type: String(row.vchr_prefix || 'PA').trim(),
-                                        voucher_type: String(row.vchr_type || 'PURCHASE').trim(),
-                                        items: [
-                                            {
-                                                hsn_code: '998412',
-                                                description: String(row.description || 'Real accounting voucher details').trim(),
-                                                quantity: 1,
-                                                uom: 'NOS',
-                                                unit_rate: taxable,
-                                                taxable_amount: taxable,
-                                                tax_per: taxPer,
-                                                igst_amount: igst,
-                                                cgst_amount: cgst,
-                                                sgst_amount: sgst,
-                                                cess_amount: cess,
-                                                total_amount_with_tax: netAmount
-                                            }
-                                        ]
-                                    });
-                                }
-                            }
-                        }
-                    }
+                // If a single object is provided instead of an array, wrap it in an array
+                if (!Array.isArray(allMockRecords)) {
+                    allMockRecords = [allMockRecords];
                 }
+
+                // Filter strictly by the requested dates
+                records = allMockRecords.filter(row => {
+                    const invoiceDateStr = row.supplier_invoice_date || row.vchr_date;
+                    if (!invoiceDateStr) return false;
+
+                    const vDate = new Date(invoiceDateStr);
+                    return vDate >= start && vDate <= end;
+                });
+            } catch (jsonErr) {
+                console.error('Error reading mock Adesk JSON data:', jsonErr.message);
             }
-        } catch (csvErr) {
-            console.error('Error parsing real CSV data inside mock server:', csvErr.message);
+        } else {
+            console.warn(`Mock data file not found at: ${jsonPath}`);
         }
 
-        // Fallback to high-fidelity mock if no CSV records matched
-        if (records.length === 0) {
-            console.log('No CSV records matched date filter, generating dynamic mock records...');
-            const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-            for (let i = 1; i <= 6; i++) {
-                const invoiceDateOffset = Math.floor(i * (diffDays / 8));
-                const invoiceDate = new Date(start);
-                invoiceDate.setDate(start.getDate() + invoiceDateOffset);
-                const dateStr = invoiceDate.toISOString().split('T')[0];
-
-                const supplier = suppliers[(i - 1) % suppliers.length];
-                const supplierState = supplier.gstin.substring(0, 2);
-                const isInterstate = orgState !== supplierState;
-
-                const netAmount = 10000 * i + 500 * (i % 3);
-                const taxable = parseFloat((netAmount / 1.18).toFixed(2));
-                const tax = parseFloat((netAmount - taxable).toFixed(2));
-
-                let cgst = 0, sgst = 0, igst = 0;
-                if (isInterstate) {
-                    igst = tax;
-                } else {
-                    cgst = parseFloat((tax / 2).toFixed(2));
-                    sgst = parseFloat((tax / 2).toFixed(2));
+        // Write the fetched records directly into the local PostgreSQL database for a zero-friction developer experience
+        const isInternalOrchestrator = req.headers['x-adesk-sync-source'] === 'saas-orchestrator';
+        if (records.length > 0 && !isInternalOrchestrator) {
+            try {
+                // Resolve the actual, valid tenant_id from the database based on the orgUuid (workspace ID) to prevent foreign key constraint violations
+                let resolvedTenantUuid = tenantUuid;
+                try {
+                    const dbWorkspace = await knex('workspaces')
+                        .where({ id: orgUuid })
+                        .select('tenant_id')
+                        .first();
+                    if (dbWorkspace) {
+                        resolvedTenantUuid = dbWorkspace.tenant_id;
+                    }
+                } catch (lookupErr) {
+                    console.warn('[Mock Server] Failed to lookup workspace tenant_id:', lookupErr.message);
                 }
 
-                records.push({
-                    vchr_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
-                    supplier_invoice_no: `ADSK/${start.getFullYear()}-${String(start.getFullYear() + 1).substring(2)}/PUR/10${i}`,
-                    supplier_invoice_date: dateStr,
-                    supplier_name: supplier.name,
-                    supplier_gstin: supplier.gstin,
-                    taxable_value: taxable,
-                    total_value: netAmount,
-                    net_amount: netAmount,
-                    cgst,
-                    sgst,
-                    igst,
-                    is_interstate: isInterstate,
-                    book_type: 'PA',
-                    voucher_type: 'PURCHASE',
-                    items: [
-                        {
-                            hsn_code: '998412',
-                            description: 'Cloud Accounting Subscription Vouchers',
-                            quantity: 1,
-                            uom: 'NOS',
-                            unit_rate: taxable,
-                            taxable_amount: taxable,
-                            tax_per: 18,
-                            igst_amount: igst,
-                            cgst_amount: cgst,
-                            sgst_amount: sgst,
-                            total_amount_with_tax: netAmount
-                        }
-                    ]
-                });
+                // Ensure the tax period and financial year exist for mapping
+                const defaultReturnPeriod = getPeriodFromDate(start_date);
+                const documents = [];
+
+                for (const record of records) {
+                    try {
+                        const doc = mapPurchaseRecord(record, resolvedTenantUuid, orgUuid, defaultReturnPeriod);
+                        documents.push(doc);
+                    } catch (valErr) {
+                        console.warn('[Mock Direct Ingest Warning] Skipped invalid voucher:', valErr.message);
+                    }
+                }
+
+                if (documents.length > 0) {
+                    const startYear = start.getFullYear();
+                    const endYearAbbr = (startYear + 1).toString().slice(-2);
+                    const financialYear = `${startYear}-${endYearAbbr}`;
+
+                    // Create database import log entry
+                    await ConnectorImportModel.createImportRecord({
+                        tenantUuid: resolvedTenantUuid,
+                        workspaceId: orgUuid,
+                        returnPeriod: defaultReturnPeriod,
+                        financialYear: financialYear,
+                        importType: 'PURCHASE_REGISTER',
+                        extraInfo: { source: 'adesk_direct_mock_postman_push', records_count: records.length },
+                        userEmail: 'connector@adesk-postman'
+                    });
+
+                    // Bulk insert documents directly into database, ignoring duplicates
+                    await ConnectorImportModel.bulkInsertPurchase(documents);
+                    console.log(`[Mock Server] Direct Ingested ${documents.length} purchase vouchers into database successfully.`);
+                }
+            } catch (dbErr) {
+                console.error('[Mock Server] Direct database ingestion failed:', dbErr.message);
             }
         }
 
         return res.status(200).json({
             success: 1,
-            message: 'record found',
+            message: 'record found and directly synchronized in database',
             data: records
         });
 
