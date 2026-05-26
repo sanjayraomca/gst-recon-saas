@@ -305,10 +305,6 @@ const importBookData = async (req, res) => {
             await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'type is required or invalid' });
             return errorResponse(res, `type is required. Valid values: ${VALID_TYPES.join(', ')}`, 400);
         }
-        if (!return_period) {
-            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'return_period is required' });
-            return errorResponse(res, 'return_period is required (format: MMYYYY, e.g. "042026")', 400);
-        }
         if (!records || !Array.isArray(records) || records.length === 0) {
             await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'records array is required and must not be empty' });
             return errorResponse(res, 'records array is required and must not be empty', 400);
@@ -318,6 +314,31 @@ const importBookData = async (req, res) => {
             return errorResponse(res, 'Maximum 5000 records per request. Split into multiple batches.', 400);
         }
 
+        // Dynamically resolve return_period if missing (derive MMYYYY format from first record's voucher date)
+        let resolvedReturnPeriod = return_period;
+        if (!resolvedReturnPeriod && records && records.length > 0) {
+            const firstRec = records[0];
+            const dateStr = firstRec.vchr_date || firstRec.voucher_date || firstRec.supplier_invoice_date || firstRec.invoice_date;
+            if (dateStr && String(dateStr).includes('-')) {
+                const parts = String(dateStr).split('-');
+                if (parts.length >= 2) {
+                    const year = parts[0].length === 4 ? parts[0] : parts[2];
+                    const month = parts[1];
+                    if (month && year && month.length === 2 && year.length === 4) {
+                        resolvedReturnPeriod = `${month}${year}`;
+                    }
+                }
+            }
+        }
+
+        // Final fallback to current period in MMYYYY format if resolving failed
+        if (!resolvedReturnPeriod) {
+            const now = new Date();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const yyyy = now.getFullYear();
+            resolvedReturnPeriod = `${mm}${yyyy}`;
+        }
+
         const bookType    = TYPE_TO_BOOK[type];
         const importType  = TYPE_TO_IMPORT_TYPE[type];
         const isSales     = bookType === 'SALES' || bookType === 'SALES_RETURN';
@@ -325,16 +346,16 @@ const importBookData = async (req, res) => {
         // ── Map incoming JSON → BookModel format ───────────────────────────
         const documents = records.map(record =>
             isSales
-                ? mapSalesRecord(record, tenantId, workspaceId, return_period)
-                : mapPurchaseRecord(record, tenantId, workspaceId, return_period)
+                ? mapSalesRecord(record, tenantId, workspaceId, resolvedReturnPeriod)
+                : mapPurchaseRecord(record, tenantId, workspaceId, resolvedReturnPeriod)
         );
 
         // ── Create import tracking record ──────────────────────────────
         const importRecord = await ConnectorImportModel.createImportRecord({
             tenantUuid:   tenantId,
             workspaceId,
-            returnPeriod: return_period,
-            financialYear: TaxPeriodService.calculateFinancialYear(return_period),
+            returnPeriod: resolvedReturnPeriod,
+            financialYear: TaxPeriodService.calculateFinancialYear(resolvedReturnPeriod),
             importType,
             extraInfo:    { source: 'api_connector', mode, keyType, record_count: records.length },
             userEmail:    'connector@api'
