@@ -2265,3 +2265,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_status_2a_gstr ON reconciliation_stat
 -- Standard indexes for performance
 CREATE INDEX IF NOT EXISTS idx_recon_status_2a_ws ON reconciliation_status_gst2a_vs_book (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_recon_status_2a_recon ON reconciliation_status_gst2a_vs_book (recon_status);
+
+-- ============================================================
+-- workspace_api_keys table
+-- ============================================================
+CREATE TABLE IF NOT EXISTS workspace_api_keys (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+
+    -- Key Values (stored as generated tokens — treat as sensitive)
+    production_key  TEXT NOT NULL UNIQUE,           -- Used for live/real data pushes
+    sandbox_key     TEXT NOT NULL UNIQUE,           -- Used for testing/demo
+
+    -- State
+    status          VARCHAR(20) NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'inactive')),
+    mode            VARCHAR(20) NOT NULL DEFAULT 'live'
+                        CHECK (mode IN ('live', 'demo')),
+
+    -- Integration Metadata
+    third_party_name VARCHAR(100),
+    extrainfo       JSONB,
+
+    -- Audit
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Only one API key record per workspace
+    CONSTRAINT uq_workspace_api_key UNIQUE (workspace_id)
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_api_keys_workspace    ON workspace_api_keys (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant       ON workspace_api_keys (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_status       ON workspace_api_keys (status);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prod_key     ON workspace_api_keys (production_key);
+CREATE INDEX IF NOT EXISTS idx_api_keys_sand_key     ON workspace_api_keys (sandbox_key);
+
