@@ -250,12 +250,23 @@ const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
 // Main Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Helper: Log push sync actions (both success and fail) in activity_logs
- */
 const logBookActivity = async (req, status, actionType, details) => {
     try {
         const context = req.connectorContext || {};
+        const apiKey = req.headers['x-api-key'] || req.headers['api_key'] || (req.body && req.body.api_key) || null;
+        let keyExcerpt = null;
+        if (apiKey) {
+            keyExcerpt = apiKey.length > 8 ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : '***';
+        }
+
+        // Capture data they wanted to add (all records or request body)
+        let requestedData = null;
+        if (req.body && req.body.records) {
+            requestedData = req.body.records;
+        } else if (req.body) {
+            requestedData = req.body;
+        }
+
         await logActivity({
             userId: null,
             tenantId: context.tenantId || null,
@@ -264,10 +275,14 @@ const logBookActivity = async (req, status, actionType, details) => {
             entityType: 'BookData',
             details: {
                 status,
+                path: req.originalUrl || req.path,
+                error: (details && details.error) || null,
+                key_excerpt: keyExcerpt,
                 type: req.body ? req.body.type : null,
                 return_period: req.body ? req.body.return_period : null,
                 mode: context.mode || null,
                 key_type: context.keyType || null,
+                requested_data: requestedData,
                 ...details
             },
             req

@@ -3,6 +3,7 @@ const path = require('path');
 const FormData = require('form-data');
 const http = require('http');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 /**
  * bookFileImportConnectorController
@@ -102,6 +103,46 @@ const forwardToUploadService = (fileBuffer, filename, mimetype, fields, contextH
 
 const { importBookData } = require('./bookImportConnectorController');
 
+const logBookActivity = async (req, status, actionType, details) => {
+    try {
+        const context = req.connectorContext || {};
+        const apiKey = req.headers['x-api-key'] || req.headers['api_key'] || null;
+        let keyExcerpt = null;
+        if (apiKey) {
+            keyExcerpt = apiKey.length > 8 ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : '***';
+        }
+
+        const fileInfo = req.file ? {
+            originalname: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        } : null;
+
+        await logActivity({
+            userId: null,
+            tenantId: context.tenantId || null,
+            workspaceId: context.workspaceId || null,
+            actionType,
+            entityType: 'BookDataFile',
+            details: {
+                status,
+                path: req.originalUrl || req.path,
+                error: (details && details.error) || null,
+                key_excerpt: keyExcerpt,
+                type: req.body ? req.body.type : null,
+                return_period: req.body ? req.body.return_period : null,
+                mode: context.mode || null,
+                key_type: context.keyType || null,
+                file_info: fileInfo,
+                ...details
+            },
+            req
+        });
+    } catch (e) {
+        console.error('[logBookActivity] Failed to log activity:', e.message);
+    }
+};
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 const importBookFile = async (req, res) => {
     try {
@@ -128,6 +169,7 @@ const importBookFile = async (req, res) => {
                         }
                     }
                 } catch (parseErr) {
+                    await logBookActivity(req, 'Failed', 'CONNECTOR_FILE_IMPORT_PARSE_ERROR', { error: `Failed to parse uploaded JSON file: ${parseErr.message}` });
                     return errorResponse(res, `Failed to parse uploaded JSON file: ${parseErr.message}`, 400);
                 }
             }
@@ -137,6 +179,7 @@ const importBookFile = async (req, res) => {
         }
 
         if (!req.file) {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_FILE_IMPORT_MISSING_FILE', { error: 'No file uploaded' });
             return errorResponse(res, 'No file uploaded. Send file as form-data with field name "file" or send a valid JSON request.', 400);
         }
 
@@ -167,11 +210,24 @@ const importBookFile = async (req, res) => {
             }
         );
 
+        // Log result of proxy forwarding
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+            await logBookActivity(req, 'Success', 'CONNECTOR_FILE_IMPORT_SUCCESS', {
+                upload_service_response: result.body
+            });
+        } else {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_FILE_IMPORT_SERVICE_ERROR', {
+                statusCode: result.statusCode,
+                error: result.body
+            });
+        }
+
         // Pass upload-service response straight back to the ERP caller
         return res.status(result.statusCode).json(result.body);
 
     } catch (err) {
         console.error('[ConnectorProxy.importBookFile]', err.message);
+        await logBookActivity(req, 'Failed', 'CONNECTOR_FILE_IMPORT_EXCEPTION', { error: err.message });
         return errorResponse(res, `Failed to forward request to import service: ${err.message}`, 502);
     }
 };
