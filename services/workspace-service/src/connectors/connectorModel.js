@@ -172,8 +172,28 @@ const getByWorkspace = async (workspaceId, tenantId) => {
  * Generates both production_key and sandbox_key.
  */
 const createKeys = async (workspaceId, tenantId, thirdPartyName = null, extraInfo = null) => {
-    const productionKey = generateKey();
-    const sandboxKey    = generateKey();
+    const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+    const gstin = workspace ? workspace.gstn : '';
+
+    let productionKey, sandboxKey;
+    let resolvedExtraInfo = extraInfo;
+
+    if (thirdPartyName && thirdPartyName.toLowerCase().includes('adesk')) {
+        const extra = extraInfo ? (typeof extraInfo === 'string' ? JSON.parse(extraInfo) : extraInfo) : {};
+        const projectCode = extra.project_code || extra.projectCode || tenantId;
+        const orgCode = extra.org_code || extra.orgCode || workspaceId;
+        
+        productionKey = Buffer.from(`${projectCode}@@${orgCode}@@${gstin}`).toString('base64');
+        sandboxKey    = Buffer.from(`${projectCode}@@${orgCode}@@${gstin}_sandbox`).toString('base64');
+
+        extra.project_code = projectCode;
+        extra.org_code = orgCode;
+        extra.adesk_api_key = productionKey;
+        resolvedExtraInfo = extra;
+    } else {
+        productionKey = generateKey();
+        sandboxKey    = generateKey();
+    }
 
     const [record] = await knex('workspace_api_keys')
         .insert({
@@ -184,7 +204,7 @@ const createKeys = async (workspaceId, tenantId, thirdPartyName = null, extraInf
             status:            'active',
             mode:              'live',
             third_party_name:  thirdPartyName,
-            extrainfo:         extraInfo ? (typeof extraInfo === 'object' ? JSON.stringify(extraInfo) : extraInfo) : null
+            extrainfo:         resolvedExtraInfo ? (typeof resolvedExtraInfo === 'object' ? JSON.stringify(resolvedExtraInfo) : resolvedExtraInfo) : null
         })
         .returning(['id', 'tenant_id', 'workspace_id', 'status', 'mode', 'production_key', 'sandbox_key', 'third_party_name', 'extrainfo', 'created_at']);
 
@@ -226,13 +246,41 @@ const regenerateKeys = async (workspaceId, tenantId, which = 'both') => {
     let productionKey = current?.production_key;
     let sandboxKey = current?.sandbox_key;
 
+    const thirdPartyName = current?.third_party_name;
+    const extraInfo = current?.extrainfo;
+    const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+    const gstin = workspace ? workspace.gstn : '';
+
+    const generateKeyForWorkspace = (isSandbox = false) => {
+        if (thirdPartyName && thirdPartyName.toLowerCase().includes('adesk')) {
+            const extra = extraInfo ? (typeof extraInfo === 'string' ? JSON.parse(extraInfo) : extraInfo) : {};
+            const projectCode = extra.project_code || extra.projectCode || tenantId;
+            const orgCode = extra.org_code || extra.orgCode || workspaceId;
+            const suffix = isSandbox ? '_sandbox' : '';
+            return Buffer.from(`${projectCode}@@${orgCode}@@${gstin}${suffix}`).toString('base64');
+        }
+        return generateKey();
+    };
+
+    let extra = null;
+    if (thirdPartyName && thirdPartyName.toLowerCase().includes('adesk')) {
+        extra = extraInfo ? (typeof extraInfo === 'string' ? JSON.parse(extraInfo) : extraInfo) : {};
+    }
+
     if (which === 'both' || which === 'production') {
-        productionKey = generateKey();
+        productionKey = generateKeyForWorkspace(false);
         updates.production_key = productionKey;
+        if (extra) {
+            extra.adesk_api_key = productionKey;
+        }
     }
     if (which === 'both' || which === 'sandbox') {
-        sandboxKey = generateKey();
+        sandboxKey = generateKeyForWorkspace(true);
         updates.sandbox_key = sandboxKey;
+    }
+
+    if (extra) {
+        updates.extrainfo = JSON.stringify(extra);
     }
 
     const [updated] = await knex('workspace_api_keys')
@@ -300,17 +348,29 @@ const validateKey = async (inboundKey) => {
         const parts = decoded.split('@@');
         if (parts.length === 3) {
             const [tenantId, workspaceId, gstin] = parts;
-            const keyRecord = await knex('workspace_api_keys')
+            let keyRecord = await knex('workspace_api_keys')
                 .where({ workspace_id: workspaceId, tenant_id: tenantId, status: 'active' })
                 .first();
 
+            if (!keyRecord) {
+                // Check if tenantId matches project_code and workspaceId matches org_code inside extrainfo JSONB
+                keyRecord = await knex('workspace_api_keys')
+                    .where({ status: 'active' })
+                    .andWhere(function() {
+                        this.whereRaw("extrainfo->>'project_code' = ?", [tenantId])
+                            .andWhereRaw("extrainfo->>'org_code' = ?", [workspaceId]);
+                    })
+                    .first();
+            }
+
             if (keyRecord) {
+                const isProduction = !decoded.endsWith('_sandbox');
                 return {
                     keyId:       keyRecord.id,
                     workspaceId: keyRecord.workspace_id,
                     tenantId:    keyRecord.tenant_id,
                     mode:        keyRecord.mode === 'live' ? 'live' : 'demo',
-                    keyType:     'production'
+                    keyType:     isProduction ? 'production' : 'sandbox'
                 };
             }
         }

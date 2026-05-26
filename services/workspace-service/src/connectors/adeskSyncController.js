@@ -500,15 +500,37 @@ const mockAdeskServer = async (req, res) => {
         const isInternalOrchestrator = req.headers['x-adesk-sync-source'] === 'saas-orchestrator';
         if (records.length > 0 && !isInternalOrchestrator) {
             try {
-                // Resolve the actual, valid tenant_id from the database based on the orgUuid (workspace ID) to prevent foreign key constraint violations
+                // Resolve the actual, valid tenant_id and workspace_id from the database to prevent foreign key constraint violations
                 let resolvedTenantUuid = tenantUuid;
+                let resolvedWorkspaceId = orgUuid;
+
                 try {
-                    const dbWorkspace = await knex('workspaces')
-                        .where({ id: orgUuid })
-                        .select('tenant_id')
-                        .first();
+                    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgUuid);
+                    let dbWorkspace;
+                    if (isUuid) {
+                        dbWorkspace = await knex('workspaces')
+                            .where({ id: orgUuid })
+                            .select('id', 'tenant_id')
+                            .first();
+                    } else {
+                        dbWorkspace = await knex('workspaces')
+                            .where({ workspace_code: orgUuid })
+                            .select('id', 'tenant_id')
+                            .first();
+                    }
+
                     if (dbWorkspace) {
                         resolvedTenantUuid = dbWorkspace.tenant_id;
+                        resolvedWorkspaceId = dbWorkspace.id;
+                    } else {
+                        const keyRec = await knex('workspace_api_keys')
+                            .whereRaw("extrainfo->>'project_code' = ?", [tenantUuid])
+                            .andWhereRaw("extrainfo->>'org_code' = ?", [orgUuid])
+                            .first();
+                        if (keyRec) {
+                            resolvedTenantUuid = keyRec.tenant_id;
+                            resolvedWorkspaceId = keyRec.workspace_id;
+                        }
                     }
                 } catch (lookupErr) {
                     console.warn('[Mock Server] Failed to lookup workspace tenant_id:', lookupErr.message);
@@ -520,7 +542,7 @@ const mockAdeskServer = async (req, res) => {
 
                 for (const record of records) {
                     try {
-                        const doc = mapPurchaseRecord(record, resolvedTenantUuid, orgUuid, defaultReturnPeriod);
+                        const doc = mapPurchaseRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod);
                         documents.push(doc);
                     } catch (valErr) {
                         console.warn('[Mock Direct Ingest Warning] Skipped invalid voucher:', valErr.message);
@@ -535,7 +557,7 @@ const mockAdeskServer = async (req, res) => {
                     // Create database import log entry
                     await ConnectorImportModel.createImportRecord({
                         tenantUuid: resolvedTenantUuid,
-                        workspaceId: orgUuid,
+                        workspaceId: resolvedWorkspaceId,
                         returnPeriod: defaultReturnPeriod,
                         financialYear: financialYear,
                         importType: 'PURCHASE_REGISTER',

@@ -133,7 +133,7 @@ const createWorkspace = async (req, res) => {
                 }
             }
 
-             await trx('gstin_master').insert({
+            await trx('gstin_master').insert({
                 id: gstinId,
                 gstin: gstin,
                 legal_name: legal_name || name,
@@ -270,7 +270,7 @@ const createWorkspace = async (req, res) => {
 
                 // Update user's tenant_id if not set (First Org scenario)
                 if (!localUser.tenant_id) {
-                    await trx('users').where({ id: localUser.id }).update({ 
+                    await trx('users').where({ id: localUser.id }).update({
                         tenant_id: targetTenantId,
                         updated_at: new Date()
                     });
@@ -279,13 +279,13 @@ const createWorkspace = async (req, res) => {
 
                 // Resolve permissions from Tenant-level policy if available
                 let permissions = { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true };
-                
+
                 const tenantRecord = await trx('tenants').where({ id: targetTenantId }).first();
                 if (tenantRecord && tenantRecord.metadata && tenantRecord.metadata.role_policies) {
-                    const policies = typeof tenantRecord.metadata.role_policies === 'string' 
-                        ? JSON.parse(tenantRecord.metadata.role_policies) 
+                    const policies = typeof tenantRecord.metadata.role_policies === 'string'
+                        ? JSON.parse(tenantRecord.metadata.role_policies)
                         : tenantRecord.metadata.role_policies;
-                    
+
                     if (policies[userRole]) {
                         permissions = policies[userRole];
                         console.log(`Applied tenant-level permissions for ${userRole}`);
@@ -530,9 +530,9 @@ const listWorkspaces = async (req, res) => {
 
         let workspaces = [];
         if (effectiveTenantId) {
-            const isSuperAdmin = localUser.email === 'superadmin.dev@gmail.com' || 
-                               req.user.role === 'SUPER_ADMIN' || 
-                               (req.user.groups && req.user.groups.includes('super-admin'));
+            const isSuperAdmin = localUser.email === 'superadmin.dev@gmail.com' ||
+                req.user.role === 'SUPER_ADMIN' ||
+                (req.user.groups && req.user.groups.includes('super-admin'));
 
             // Only perform the tenant mismatch check if the user HAS a tenant_id assigned
             // and it's different from the requested one. If they have NO tenant_id (null),
@@ -776,7 +776,7 @@ const getDataDateRange = async (req, res) => {
                     knex.raw('MAX(document_date) as max_date')
                 )
                 .first();
-            
+
             // If we are looking for generic 'gstr' or 'recon', also check the other table if first was empty
             if ((!type || type === 'gstr' || type === 'recon') && !gstrRange?.min_date) {
                 const otherTable = gstrTable === 'normalized_gstr2b_invoices' ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
@@ -835,6 +835,70 @@ const updateWorkspace = async (req, res) => {
                     ...currentSettings,
                     ...settings
                 };
+
+                // Sync/Upsert Adesk API key in workspace_api_keys if present in settings
+                const adeskConfig = settings.adeskCloudConnector;
+                if (adeskConfig && adeskConfig.apiToken) {
+                    try {
+                        const token = adeskConfig.apiToken;
+                        let decoded = token;
+                        if (!token.includes('@@')) {
+                            try {
+                                decoded = Buffer.from(token, 'base64').toString('ascii');
+                            } catch (e) {
+                                // Ignore decode error
+                            }
+                        }
+                        const parts = decoded.split('@@');
+                        if (parts.length === 3) {
+                            const [projectCode, orgCode, gstin] = parts;
+
+                            const isSandbox = decoded.endsWith('_sandbox');
+                            const productionKeyVal = isSandbox ? Buffer.from(`${projectCode}@@${orgCode}@@${gstin.replace('_sandbox', '')}`).toString('base64') : token;
+
+                            const extraInfo = {
+                                project_code: projectCode,
+                                org_code: orgCode,
+                                adesk_api_key: productionKeyVal
+                            };
+
+                            // Check if a key already exists for this workspace
+                            const existingKey = await trx('workspace_api_keys')
+                                .where({ workspace_id: id })
+                                .first();
+
+                            const sandboxKey = isSandbox ? token : Buffer.from(`${projectCode}@@${orgCode}@@${gstin}_sandbox`).toString('base64');
+
+                            if (existingKey) {
+                                await trx('workspace_api_keys')
+                                    .where({ id: existingKey.id })
+                                    .update({
+                                        third_party_name: 'Adesk',
+                                        extrainfo: JSON.stringify(extraInfo),
+                                        updated_at: new Date()
+                                    });
+                            } else {
+                                await trx('workspace_api_keys')
+                                    .insert({
+                                        id: uuidv4(),
+                                        workspace_id: id,
+                                        tenant_id: workspace.tenant_id,
+                                        production_key: productionKeyVal,
+                                        sandbox_key: sandboxKey,
+                                        status: 'active',
+                                        mode: 'live',
+                                        third_party_name: 'Adesk',
+                                        extrainfo: JSON.stringify(extraInfo),
+                                        created_at: new Date(),
+                                        updated_at: new Date()
+                                    });
+                            }
+                            console.log(`[Workspace Update] Successfully synced Adesk API key for workspace ${id} to workspace_api_keys.`);
+                        }
+                    } catch (syncErr) {
+                        console.error('[Workspace Update] Failed to sync Adesk API key:', syncErr.message);
+                    }
+                }
             }
 
             const [updatedWorkspace] = await trx('workspaces')
