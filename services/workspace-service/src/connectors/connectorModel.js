@@ -263,6 +263,7 @@ const deleteKeys = async (workspaceId, tenantId) => {
 const validateKey = async (inboundKey) => {
     if (!inboundKey) return null;
 
+    // 1. Try to validate as Hexadecimal key first
     const record = await knex('workspace_api_keys')
         .where(function () {
             this.where('production_key', inboundKey).orWhere('sandbox_key', inboundKey);
@@ -271,17 +272,42 @@ const validateKey = async (inboundKey) => {
         .select(['id', 'workspace_id', 'tenant_id', 'mode', 'production_key'])
         .first();
 
-    if (!record) return null;
+    if (record) {
+        const isProduction = record.production_key === inboundKey;
+        return {
+            keyId:       record.id,
+            workspaceId: record.workspace_id,
+            tenantId:    record.tenant_id,
+            mode:        isProduction ? 'live' : 'demo',
+            keyType:     isProduction ? 'production' : 'sandbox'
+        };
+    }
 
-    const isProduction = record.production_key === inboundKey;
+    // 2. Try to validate as Base64 encoded key (tenant_id@@workspace_id@@gstin) from UI dashboard
+    try {
+        const decoded = Buffer.from(inboundKey, 'base64').toString('ascii');
+        const parts = decoded.split('@@');
+        if (parts.length === 3) {
+            const [tenantId, workspaceId, gstin] = parts;
+            const keyRecord = await knex('workspace_api_keys')
+                .where({ workspace_id: workspaceId, tenant_id: tenantId, status: 'active' })
+                .first();
 
-    return {
-        keyId:       record.id,
-        workspaceId: record.workspace_id,
-        tenantId:    record.tenant_id,
-        mode:        isProduction ? 'live' : 'demo',
-        keyType:     isProduction ? 'production' : 'sandbox'
-    };
+            if (keyRecord) {
+                return {
+                    keyId:       keyRecord.id,
+                    workspaceId: keyRecord.workspace_id,
+                    tenantId:    keyRecord.tenant_id,
+                    mode:        keyRecord.mode === 'live' ? 'live' : 'demo',
+                    keyType:     'production'
+                };
+            }
+        }
+    } catch (e) {
+        // Not a valid base64 key or query failed
+    }
+
+    return null;
 };
 
 const getGspSession = async (gstin, gstUsername) => {

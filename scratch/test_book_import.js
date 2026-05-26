@@ -2,7 +2,7 @@ const http = require('http');
 const { Client } = require('pg');
 require('dotenv').config();
 
-const apiKey = '4e6ee85d9f3dad6bd4c40cef8f7408ca'; // Production key for workspace a0fbb739-7ce5-473b-943b-a6c5ec782af1
+const apiKey = 'NmRhNDg3ZWEtM2QyNi00ZDQ5LTgwOGItODZlYmY3ZTMxNWIwQEBhMGZiYjczOS03Y2U1LTQ3M2ItOTQzYi1hNmM1ZWM3ODJhZjFAQDI0QUFMRkE5Nzg5SzFaTw=='; // Base64 key from screenshot
 
 async function testErpPush() {
     console.log('🚀 Triggering ERP JSON push to /connectors/book-import using native HTTP...');
