@@ -57,15 +57,19 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
     // Determine the voucher number: prefer vchr_full_number first, then vchr_no, voucher_no
     const vchrNo = String(record.vchr_full_number || record.vchr_no || record.voucher_no || '').trim();
 
-    // Map voucher_type to valid column values: 'PURCHASE', 'DEBIT_NOTE', 'CREDIT_NOTE', or null
-    let dbVoucherType = null;
+    // Map voucher_type to valid column values: 'PURCHASE', 'EXPENSE', 'DEBIT_NOTE', 'CREDIT_NOTE', or null
+    let dbVoucherType = 'PURCHASE';
     const incomingVType = String(record.vchr_type || record.voucher_type || '').toUpperCase();
     if (incomingVType.startsWith('PUR')) {
         dbVoucherType = 'PURCHASE';
+    } else if (incomingVType === 'EXP' || incomingVType.includes('EXPENSE')) {
+        dbVoucherType = 'EXPENSE';
     } else if (incomingVType === 'DN' || incomingVType.includes('DEBIT')) {
         dbVoucherType = 'DEBIT_NOTE';
     } else if (incomingVType === 'CN' || incomingVType.includes('CREDIT')) {
         dbVoucherType = 'CREDIT_NOTE';
+    } else if (!incomingVType) {
+        dbVoucherType = 'PURCHASE';
     }
 
     // Map book_type: valid values: 'PA' (purchase), 'EXP' (expense), 'CN', 'DN'
