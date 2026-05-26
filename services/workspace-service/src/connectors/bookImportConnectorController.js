@@ -54,40 +54,62 @@ const TYPE_TO_IMPORT_TYPE = {
  * that BookModel.bulkInsertPurchase() expects.
  */
 const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
+    // Determine the voucher number: prefer vchr_full_number first, then vchr_no, voucher_no
+    const vchrNo = String(record.vchr_full_number || record.vchr_no || record.voucher_no || '').trim();
+
+    // Map voucher_type to valid column values: 'PURCHASE', 'DEBIT_NOTE', 'CREDIT_NOTE', or null
+    let dbVoucherType = null;
+    const incomingVType = String(record.vchr_type || record.voucher_type || '').toUpperCase();
+    if (incomingVType.startsWith('PUR')) {
+        dbVoucherType = 'PURCHASE';
+    } else if (incomingVType === 'DN' || incomingVType.includes('DEBIT')) {
+        dbVoucherType = 'DEBIT_NOTE';
+    } else if (incomingVType === 'CN' || incomingVType.includes('CREDIT')) {
+        dbVoucherType = 'CREDIT_NOTE';
+    }
+
+    // Map book_type: valid values: 'PA' (purchase), 'EXP' (expense), 'CN', 'DN'
+    let dbBookType = 'PA';
+    if (incomingVType === 'EXP' || incomingVType.includes('EXPENSE')) {
+        dbBookType = 'EXP';
+    } else if (incomingVType === 'DN' || incomingVType.includes('DEBIT')) {
+        dbBookType = 'DN';
+    } else if (incomingVType === 'CN' || incomingVType.includes('CREDIT')) {
+        dbBookType = 'CN';
+    }
+
     const header = {
         tenant_id:               tenantId,
         workspace_id:            workspaceId,
 
         // Voucher identity
-        book_vchr_no:            String(record.vchr_no || record.voucher_no || '').trim(),
+        book_vchr_no:            vchrNo,
         book_vchr_date:          record.vchr_date || record.voucher_date || null,
 
         // Supplier
-        supplier_name:           String(record.supplier_name || record.party_name || '').trim(),
-        supplier_gstin:          String(record.supplier_gstin || record.party_gstin || '').trim().toUpperCase() || null,
-        // supplier_invoice_no is NOT NULL in purchase_vouchers — fall back to vchr_no if not separately supplied
-        supplier_invoice_no:     String(record.supplier_invoice_no || record.vchr_no || record.voucher_no || '').trim(),
+        supplier_name:           String(record.party_name || record.supplier_name || '').trim(),
+        supplier_gstin:          String(record.party_gstn_no || record.supplier_gstin || record.party_gstin || '').trim().toUpperCase() || null,
+        // supplier_invoice_no is NOT NULL in purchase_vouchers — fall back to vchrNo
+        supplier_invoice_no:     String(record.supplier_invoice_no || vchrNo || '').trim(),
         supplier_invoice_date:   record.supplier_invoice_date || record.vchr_date || null,
 
         // Tax amounts
-        taxable_total:           parseFloat(record.taxable_value || record.taxable_amount || 0),
-        total_igst_amount:       parseFloat(record.igst || record.igst_amount || 0),
-        total_cgst_amount:       parseFloat(record.cgst || record.cgst_amount || 0),
-        total_sgst_amount:       parseFloat(record.sgst || record.sgst_amount || 0),
-        total_cess_amount:       parseFloat(record.cess || record.cess_amount || 0),
-        net_amount:              parseFloat(record.total_value || record.net_amount || record.invoice_value || 0),
-        round_off:               parseFloat(record.round_off || 0),
+        taxable_total:           parseFloat(record.total_taxable_amount || record.taxable_value || record.taxable_amount || 0),
+        total_igst_amount:       parseFloat(record.total_igst_tax_amount || record.igst || record.igst_amount || 0),
+        total_cgst_amount:       parseFloat(record.total_cgst_tax_amount || record.cgst || record.cgst_amount || 0),
+        total_sgst_amount:       parseFloat(record.total_sgst_tax_amount || record.sgst || record.sgst_amount || 0),
+        total_cess_amount:       parseFloat(record.total_cess_tax_amount || record.cess || record.cess_amount || 0),
+        net_amount:              parseFloat(record.invoice_amount || record.row_wise_total_amount || record.total_value || record.net_amount || record.invoice_value || 0),
+        round_off:               parseFloat(record.round_off_amount || record.round_off || 0),
         discount:                parseFloat(record.discount || 0),
         total_qty:               parseFloat(record.total_qty || 0),
 
         // GST fields
         place_of_supply:         record.place_of_supply || null,
-        is_interstate:           record.is_interstate ? 'Yes' : 'No',
-        is_rcm:                  record.is_rcm || false,
-        voucher_type:            record.voucher_type || null,
-        // Valid book_type values in purchase_vouchers: 'PA' (purchase), 'EXP' (expense), 'CN', 'DN'
-        // purchase_return maps to 'DN' (debit note) as the nearest equivalent
-        book_type:               record.book_type || 'PA',
+        is_interstate:           record.inter_state || (record.is_interstate ? 'Yes' : 'No'),
+        is_rcm:                  record.reverse_charge ? (record.reverse_charge.toLowerCase() === 'yes') : (record.is_rcm || false),
+        voucher_type:            dbVoucherType,
+        book_type:               dbBookType,
         gstr_category:           record.gstr_category || null,
         source_section:          record.source_section || null,
         status:                  record.status || 'DRAFT',
@@ -101,7 +123,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
         tax_period_id:           null, // resolved dynamically by BookModel
 
         // Amendment fields
-        is_amendment:            record.is_amendment || false,
+        is_amendment:            record.is_amendment ? (record.is_amendment.toLowerCase() === 'yes') : (record.is_amendment || false),
         original_supplier_invoice_no:   record.original_supplier_invoice_no || null,
         original_supplier_invoice_date: record.original_supplier_invoice_date || null,
         original_book_vchr_no:          record.original_book_vchr_no || null,

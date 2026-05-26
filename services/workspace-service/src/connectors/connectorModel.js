@@ -283,9 +283,16 @@ const validateKey = async (inboundKey) => {
         };
     }
 
-    // 2. Try to validate as Base64 encoded key (tenant_id@@workspace_id@@gstin) from UI dashboard
+    // 2. Try to validate as raw or Base64 encoded key (tenant_id@@workspace_id@@gstin)
     try {
-        const decoded = Buffer.from(inboundKey, 'base64').toString('ascii');
+        let decoded = inboundKey;
+        if (!inboundKey.includes('@@')) {
+            try {
+                decoded = Buffer.from(inboundKey, 'base64').toString('ascii');
+            } catch (err) {
+                // Not valid base64
+            }
+        }
         const parts = decoded.split('@@');
         if (parts.length === 3) {
             const [tenantId, workspaceId, gstin] = parts;
@@ -304,7 +311,7 @@ const validateKey = async (inboundKey) => {
             }
         }
     } catch (e) {
-        // Not a valid base64 key or query failed
+        // Query failed
     }
 
     return null;
