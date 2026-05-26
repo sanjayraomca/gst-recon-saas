@@ -225,6 +225,33 @@ const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Helper: Log push sync actions (both success and fail) in activity_logs
+ */
+const logBookActivity = async (req, status, actionType, details) => {
+    try {
+        const context = req.connectorContext || {};
+        await logActivity({
+            userId: null,
+            tenantId: context.tenantId || null,
+            workspaceId: context.workspaceId || null,
+            actionType,
+            entityType: 'BookData',
+            details: {
+                status,
+                type: req.body ? req.body.type : null,
+                return_period: req.body ? req.body.return_period : null,
+                mode: context.mode || null,
+                key_type: context.keyType || null,
+                ...details
+            },
+            req
+        });
+    } catch (e) {
+        console.error('[logBookActivity] Failed to log activity:', e.message);
+    }
+};
+
+/**
  * POST /connectors/book-import
  *
  * Accepts JSON book data from an ERP connector and imports it into the system.
@@ -246,21 +273,26 @@ const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
 const importBookData = async (req, res) => {
     try {
         // Context resolved by apiKeyMiddleware
-        const { workspaceId, tenantId, mode, keyType } = req.connectorContext;
+        const context = req.connectorContext || {};
+        const { workspaceId, tenantId, mode, keyType } = context;
 
         const { type, return_period, records } = req.body;
 
         // ── Validate inputs ────────────────────────────────────────────────
         if (!type || !VALID_TYPES.includes(type)) {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'type is required or invalid' });
             return errorResponse(res, `type is required. Valid values: ${VALID_TYPES.join(', ')}`, 400);
         }
         if (!return_period) {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'return_period is required' });
             return errorResponse(res, 'return_period is required (format: MMYYYY, e.g. "042026")', 400);
         }
         if (!records || !Array.isArray(records) || records.length === 0) {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'records array is required and must not be empty' });
             return errorResponse(res, 'records array is required and must not be empty', 400);
         }
         if (records.length > 5000) {
+            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'Maximum 5000 records per request exceeded', count: records.length });
             return errorResponse(res, 'Maximum 5000 records per request. Split into multiple batches.', 400);
         }
 
@@ -299,6 +331,7 @@ const importBookData = async (req, res) => {
             await ConnectorImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {
                 reason: 'No valid records found in payload'
             });
+            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_EMPTY_RESULT', { error: 'No valid records found in payload', records_received: records.length, import_id: importRecord.import_filing_id });
             return errorResponse(res, 'No valid records found in the submitted payload. Check field names and values.', 400);
         }
 
@@ -329,23 +362,11 @@ const importBookData = async (req, res) => {
         }
 
         // ── Activity log ───────────────────────────────────────────────────
-        await logActivity({
-            userId:      null,
-            tenantId:    tenantId,
-            workspaceId: workspaceId,
-            actionType:  `CONNECTOR_${bookType}_IMPORT`,
-            entityType:  'BookData',
-            details: {
-                type,
-                return_period,
-                mode,
-                key_type:         keyType,
-                records_received: records.length,
-                records_inserted: result.inserted,
-                records_skipped:  result.duplicateInvoices.length,
-                import_id:        importRecord.import_filing_id
-            },
-            req
+        await logBookActivity(req, 'Success', `CONNECTOR_${bookType}_IMPORT`, {
+            records_received: records.length,
+            records_inserted: result.inserted,
+            records_skipped:  result.duplicateInvoices.length,
+            import_id:        importRecord.import_filing_id
         });
 
         return successResponse(res, {
@@ -362,6 +383,7 @@ const importBookData = async (req, res) => {
 
     } catch (error) {
         console.error('[ConnectorBookImport.importBookData]', error);
+        await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_ERROR', { error: error.message });
         return errorResponse(res, error.message, 500);
     }
 };

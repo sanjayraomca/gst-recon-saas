@@ -200,24 +200,56 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
  * POST /connectors/adesk/pull-purchase
  * Trigger manual pull request to the Adesk Cloud API Server.
  */
-const pullPurchaseData = async (req, res) => {
+/**
+ * Helper: Log pull sync actions (both success and fail) in activity_logs
+ */
+const logPullActivity = async (req, workspace, status, actionType, details) => {
     try {
-        const { workspace_id, year, quarter, month } = req.body;
+        await logActivity({
+            userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+            tenantId: workspace ? workspace.tenant_id : null,
+            workspaceId: workspace ? workspace.id : (req.body ? req.body.workspace_id : null),
+            actionType: actionType,
+            entityType: 'ConnectorSync',
+            details: {
+                status,
+                year: req.body ? req.body.year : null,
+                quarter: req.body ? req.body.quarter : null,
+                month: req.body ? req.body.month : null,
+                ...details
+            },
+            req
+        });
+    } catch (e) {
+        console.error('[logPullActivity] Failed to log pull activity:', e.message);
+    }
+};
 
+/**
+ * POST /connectors/adesk/pull-purchase
+ * Trigger manual pull request to the Adesk Cloud API Server.
+ */
+const pullPurchaseData = async (req, res) => {
+    let workspace = null;
+    const { workspace_id, year, quarter, month } = req.body;
+    try {
         if (!workspace_id) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_INPUT', { error: 'workspace_id is required' });
             return errorResponse(res, 'workspace_id is required', 400);
         }
         if (!year || !quarter || !month) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_INPUT', { error: 'year, quarter, and month are required' });
             return errorResponse(res, 'year, quarter, and month are required', 400);
         }
 
         // Fetch workspace details
-        const workspace = await knex('workspaces')
+        workspace = await knex('workspaces')
             .where({ id: workspace_id })
             .select('id', 'tenant_id', 'gstn', 'name', 'settings')
             .first();
 
         if (!workspace) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_WORKSPACE_NOT_FOUND', { error: 'Workspace not found' });
             return errorResponse(res, 'Workspace not found', 404);
         }
 
@@ -230,6 +262,7 @@ const pullPurchaseData = async (req, res) => {
         const apiToken = adeskConfig.apiToken;
 
         if (!apiToken) {
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk API Auth Token is missing' });
             return errorResponse(res, 'Adesk API Auth Token is missing. Configure it in Setup first.', 400);
         }
 
@@ -258,22 +291,26 @@ const pullPurchaseData = async (req, res) => {
             }, { headers, timeout: 5000 });
         } catch (apiErr) {
             console.error('Error connecting to Adesk Cloud API Server:', apiErr.message);
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cloudUrl });
             return errorResponse(res, `Failed to reach Adesk Cloud API Server at ${cloudUrl}. Check configuration or verify mock server is running.`, 502);
         }
 
         const adeskRes = response.data;
         console.log('DEBUG [pullPurchaseData] adeskRes:', adeskRes);
         if (!adeskRes || adeskRes.success !== 1 || !Array.isArray(adeskRes.data)) {
-            return errorResponse(res, adeskRes.message || 'Invalid response received from Adesk Accounting Server', 502);
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: adeskRes ? adeskRes.message : 'Invalid response' });
+            return errorResponse(res, adeskRes ? adeskRes.message : 'Invalid response received from Adesk Accounting Server', 502);
         }
 
         const records = adeskRes.data;
         if (records.length === 0) {
+            const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
+            await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', { records_received: 0, return_period: defaultReturnPeriod });
             return successResponse(res, {
                 records_received: 0,
                 records_inserted: 0,
                 records_skipped: 0,
-                return_period: month === 'all' ? '042026' : `${month}${year.split('-')[0]}`
+                return_period: defaultReturnPeriod
             }, 'No purchase data records found for the requested period on Adesk server');
         }
 
@@ -294,6 +331,7 @@ const pullPurchaseData = async (req, res) => {
         }
 
         if (documents.length === 0) {
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_VALIDATION_FAILED', { error: 'All records failed validation', validationFailures, records_received: records.length });
             return errorResponse(res, `All returned records (${validationFailures}) failed data validation checks (invalid GSTIN or missing fields)`, 400);
         }
 
@@ -314,6 +352,7 @@ const pullPurchaseData = async (req, res) => {
             await ConnectorImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {
                 reason: 'All records rejected as duplicates'
             });
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_DUPLICATES', { error: 'All records rejected as duplicates', records_received: records.length, import_id: importRecord.import_filing_id });
             return errorResponse(res, 'All returned invoices were already registered in the system (duplicates skipped)', 400);
         }
 
@@ -340,6 +379,15 @@ const pullPurchaseData = async (req, res) => {
             console.error('Failed to publish reconciliation event to NATS:', natsErr.message);
         }
 
+        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_SUCCESS', {
+            records_received: records.length,
+            records_inserted: result.inserted,
+            records_skipped: result.duplicateInvoices.length + validationFailures,
+            validation_failures: validationFailures,
+            return_period: defaultReturnPeriod,
+            import_id: importRecord.import_filing_id
+        });
+
         return successResponse(res, {
             records_received: records.length,
             records_inserted: result.inserted,
@@ -350,6 +398,7 @@ const pullPurchaseData = async (req, res) => {
 
     } catch (err) {
         console.error('Adesk sync pull process failed:', err);
+        await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_ERROR', { error: err.message });
         return errorResponse(res, err.message || 'An unexpected error occurred during manual sync pull.', 500);
     }
 };
@@ -520,23 +569,27 @@ const mockAdeskServer = async (req, res) => {
  * Pings the configured Adesk Cloud API Server to verify reachability and credentials.
  */
 const testConnection = async (req, res) => {
+    let workspace = null;
     try {
         const { workspace_id, cloudUrl, apiToken } = req.body;
 
         if (!workspace_id) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_TEST_INVALID_INPUT', { error: 'workspace_id is required' });
             return errorResponse(res, 'workspace_id is required', 400);
         }
         if (!cloudUrl || !apiToken) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_TEST_INVALID_INPUT', { error: 'cloudUrl and apiToken are required' });
             return errorResponse(res, 'cloudUrl and apiToken are required', 400);
         }
 
         // Fetch workspace details to get tenant_id and gstin for base64 key
-        const workspace = await knex('workspaces')
+        workspace = await knex('workspaces')
             .where({ id: workspace_id })
             .select('id', 'tenant_id', 'gstn')
             .first();
 
         if (!workspace) {
+            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_TEST_WORKSPACE_NOT_FOUND', { error: 'Workspace not found' });
             return errorResponse(res, 'Workspace not found', 404);
         }
 
@@ -560,18 +613,22 @@ const testConnection = async (req, res) => {
         } catch (apiErr) {
             if (apiErr.response) {
                 if (apiErr.response.status === 401 || apiErr.response.status === 403) {
+                    await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_AUTH_FAILED', { error: 'Authentication failed', cloudUrl });
                     return errorResponse(res, `Authentication failed. Adesk Cloud returned status ${apiErr.response.status}. Verify your API Auth Token.`, 401);
                 }
+                await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Adesk Server reachable (Status ${apiErr.response.status})`, cloudUrl });
                 return successResponse(res, {
                     status: 'operational',
                     latency: '15ms',
                     message: `Adesk Server is reachable (Response status ${apiErr.response.status})`
                 }, 'Adesk Cloud API Server is reachable!');
             }
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_CONNECTION_FAILED', { error: apiErr.message, cloudUrl });
             return errorResponse(res, `Failed to reach Adesk Cloud API Server at ${cloudUrl}. Error: ${apiErr.message}`, 502);
         }
 
         const data = response.data;
+        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency: '12ms', apiVersion: data.apiVersion });
         return successResponse(res, {
             status: data.status || 'operational',
             latency: '12ms',
@@ -582,6 +639,7 @@ const testConnection = async (req, res) => {
 
     } catch (err) {
         console.error('Adesk connection test failed:', err);
+        await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_ERROR', { error: err.message });
         return errorResponse(res, err.message || 'An unexpected error occurred during connection check.', 500);
     }
 };

@@ -27,14 +27,14 @@ const logActivity = async ({
         let userAgent = null;
 
         if (req) {
-            ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-            userAgent = req.headers['user-agent'];
+            ipAddress = (req.headers && req.headers['x-forwarded-for']) || (req.socket && req.socket.remoteAddress);
+            userAgent = req.headers && req.headers['user-agent'];
 
             // Automatically extract IDs from request context if not provided
             if (req.user) {
                 if (!userId) userId = req.user.db_id || req.user.id || req.user.sub;
                 if (!tenantId) tenantId = req.user.tenantId || req.user.tenant_id;
-                if (!workspaceId) workspaceId = req.user.workspaceId || req.user.workspace_id || req.headers['x-workspace-id'];
+                if (!workspaceId) workspaceId = req.user.workspaceId || req.user.workspace_id || (req.headers && req.headers['x-workspace-id']);
             }
         }
 

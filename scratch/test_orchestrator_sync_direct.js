@@ -1,6 +1,15 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
+// Map host DB variables for local execution
+process.env.DB_HOST = '127.0.0.1';
+process.env.DB_PORT = '5435';
+process.env.DB_USER = process.env.POSTGRES_MAIN_USER || 'gstadmin';
+process.env.DB_PASSWORD = process.env.POSTGRES_MAIN_PASSWORD || 'GstAdmin123';
+process.env.DB_NAME = process.env.POSTGRES_MAIN_DB || 'gst_recon';
+
 const { pullPurchaseData } = require('../services/workspace-service/src/connectors/adeskSyncController');
 const { Client } = require('pg');
-require('dotenv').config();
 
 const workspaceId = 'a0fbb739-7ce5-473b-943b-a6c5ec782af1';
 
@@ -12,7 +21,7 @@ async function testDirectOrchestratorCall() {
             workspace_id: workspaceId,
             year: '2025-26',
             quarter: 'Q1',
-            month: 'April'
+            month: '04'
         }
     };
 
