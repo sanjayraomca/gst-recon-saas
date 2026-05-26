@@ -258,7 +258,7 @@ const pullPurchaseData = async (req, res) => {
             : (workspace.settings || {});
 
         const adeskConfig = settings.adeskCloudConnector || {};
-        const cloudUrl = adeskConfig.cloudUrl || 'http://localhost:3002/connectors/mock-adesk';
+        const cloudUrl = adeskConfig.cloudUrl || process.env.ADESK_MOCK_SERVER_URL || `http://localhost:${process.env.PORT || 3002}/connectors/mock-adesk`;
         const apiToken = adeskConfig.apiToken;
 
         if (!apiToken) {
@@ -606,20 +606,22 @@ const testConnection = async (req, res) => {
 
         // Query Adesk external server with a quick ping
         let response;
+        const startTime = Date.now();
         try {
             response = await axios.post(cloudUrl, {
                 type: 'ping'
             }, { headers, timeout: 3000 });
         } catch (apiErr) {
+            const latency = `${Date.now() - startTime}ms`;
             if (apiErr.response) {
                 if (apiErr.response.status === 401 || apiErr.response.status === 403) {
                     await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_AUTH_FAILED', { error: 'Authentication failed', cloudUrl });
                     return errorResponse(res, `Authentication failed. Adesk Cloud returned status ${apiErr.response.status}. Verify your API Auth Token.`, 401);
                 }
-                await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Adesk Server reachable (Status ${apiErr.response.status})`, cloudUrl });
+                await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Adesk Server reachable (Status ${apiErr.response.status})`, cloudUrl, latency });
                 return successResponse(res, {
                     status: 'operational',
-                    latency: '15ms',
+                    latency,
                     message: `Adesk Server is reachable (Response status ${apiErr.response.status})`
                 }, 'Adesk Cloud API Server is reachable!');
             }
@@ -627,11 +629,12 @@ const testConnection = async (req, res) => {
             return errorResponse(res, `Failed to reach Adesk Cloud API Server at ${cloudUrl}. Error: ${apiErr.message}`, 502);
         }
 
+        const latency = `${Date.now() - startTime}ms`;
         const data = response.data;
-        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency: '12ms', apiVersion: data.apiVersion });
+        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency, apiVersion: data.apiVersion });
         return successResponse(res, {
             status: data.status || 'operational',
-            latency: '12ms',
+            latency,
             apiVersion: data.apiVersion || 'v1.4.12',
             environment: data.environment || 'production',
             message: data.message || 'Mock Adesk Cloud Server connected successfully!'
