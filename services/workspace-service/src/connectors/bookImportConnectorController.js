@@ -304,11 +304,6 @@ const importBookData = async (req, res) => {
 
         const { type, return_period, records } = req.body;
 
-        // ── Validate inputs ────────────────────────────────────────────────
-        if (!type || !VALID_TYPES.includes(type)) {
-            await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'type is required or invalid' });
-            return errorResponse(res, `type is required. Valid values: ${VALID_TYPES.join(', ')}`, 400);
-        }
         if (!records || !Array.isArray(records) || records.length === 0) {
             await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'records array is required and must not be empty' });
             return errorResponse(res, 'records array is required and must not be empty', 400);
@@ -316,6 +311,21 @@ const importBookData = async (req, res) => {
         if (records.length > 5000) {
             await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'Maximum 5000 records per request exceeded', count: records.length });
             return errorResponse(res, 'Maximum 5000 records per request. Split into multiple batches.', 400);
+        }
+
+        // Dynamically resolve type if missing or invalid (fall back to purchase_register)
+        let resolvedType = type;
+        if (!resolvedType || !VALID_TYPES.includes(resolvedType)) {
+            const firstRec = records[0];
+            if (firstRec.invoice_no || firstRec.invoice_number || firstRec.customer_name) {
+                if (firstRec.supplier_name || firstRec.supplier_gstin) {
+                    resolvedType = 'purchase_register';
+                } else {
+                    resolvedType = 'sales_register';
+                }
+            } else {
+                resolvedType = 'purchase_register';
+            }
         }
 
         // Dynamically resolve return_period if missing (derive MMYYYY format from first record's voucher date)
@@ -343,8 +353,8 @@ const importBookData = async (req, res) => {
             resolvedReturnPeriod = `${mm}${yyyy}`;
         }
 
-        const bookType    = TYPE_TO_BOOK[type];
-        const importType  = TYPE_TO_IMPORT_TYPE[type];
+        const bookType    = TYPE_TO_BOOK[resolvedType];
+        const importType  = TYPE_TO_IMPORT_TYPE[resolvedType];
         const isSales     = bookType === 'SALES' || bookType === 'SALES_RETURN';
 
         // ── Map incoming JSON → BookModel format ───────────────────────────

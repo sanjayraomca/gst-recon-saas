@@ -140,16 +140,13 @@ const importBookFile = async (req, res) => {
             return errorResponse(res, 'No file uploaded. Send file as form-data with field name "file" or send a valid JSON request.', 400);
         }
 
-        const { type, return_period } = req.body;
+        const rawType = req.body.type || 'purchase_register';
+        const uploadType = TYPE_MAP[rawType.toLowerCase()] || 'PURCHASE';
 
-        if (!type || !TYPE_MAP[type.toLowerCase()]) {
-            return errorResponse(res, `type must be one of: ${Object.keys(TYPE_MAP).join(', ')}`, 400);
-        }
-        if (!return_period) {
-            return errorResponse(res, 'return_period is required (MMYYYY format, e.g. 042025)', 400);
-        }
-
-        const uploadType = TYPE_MAP[type.toLowerCase()];
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const resolvedPeriod = req.body.return_period || `${mm}${yyyy}`;
 
         console.log(`[ConnectorProxy] Forwarding ${req.file.originalname} (${req.file.size} bytes) → upload-service as type=${uploadType}`);
 
@@ -160,7 +157,7 @@ const importBookFile = async (req, res) => {
             req.file.mimetype,
             {
                 type:          uploadType,
-                return_period: return_period.toString()
+                return_period: resolvedPeriod.toString()
             },
             {
                 'x-tenant-id':          tenantId,

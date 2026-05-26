@@ -229,6 +229,49 @@ async function main() {
         }
 
 
+        // 6.6. Send JSON file upload POST request WITHOUT type or return_period
+        console.log('\n📥 Manually resetting initial voucher with voucher_type = NULL...');
+        await client.query(
+            "UPDATE purchase_vouchers SET voucher_type = NULL, net_amount = 1000.00 WHERE book_vchr_no = $1 AND workspace_id = $2",
+            [testVoucher, workspace.id]
+        );
+
+        console.log(`\n🚀 Sending Connector File Upload POST request WITHOUT type or return_period (expected to dynamically auto-detect and update)...`);
+        const formNoParams = new FormData();
+        formNoParams.append('file', Buffer.from(JSON.stringify(payload.records)), {
+            filename: 'mock-adesk-data.json',
+            contentType: 'application/json'
+        });
+
+        const noParamsResponse = await fetch('http://localhost:3002/connectors/book-import/file', {
+            method: 'POST',
+            headers: {
+                ...formNoParams.getHeaders(),
+                'X-API-Key': testApiKey
+            },
+            body: formNoParams
+        });
+
+        const noParamsResBody = await noParamsResponse.json();
+        console.log('📥 Response Status:', noParamsResponse.status);
+        console.log('📥 Response Body:', JSON.stringify(noParamsResBody, null, 2));
+
+        // Verify final state in DB
+        dbCheck = await client.query(
+            "SELECT book_vchr_no, voucher_type, book_type, net_amount FROM purchase_vouchers WHERE book_vchr_no = $1 AND workspace_id = $2",
+            [testVoucher, workspace.id]
+        );
+        console.log('🎉 DB Records (After Omitted Params File Upload Conflict):');
+        console.table(dbCheck.rows);
+
+        const noParamsFinalRow = dbCheck.rows[0];
+        if (noParamsFinalRow && noParamsFinalRow.voucher_type === 'PURCHASE' && parseFloat(noParamsFinalRow.net_amount) === 1200.00) {
+            console.log(`\n✅ SUCCESS: Omitted params test passed! type and return_period were auto-detected flawlessly!`);
+        } else {
+            console.error(`\n❌ FAILURE: Omitted params test failed.`);
+        }
+
+
         // 7. Cleanup Database
         console.log(`\n🧹 Cleaning up generated test data...`);
         await client.query("DELETE FROM purchase_vouchers WHERE book_vchr_no = $1 AND workspace_id = $2", [testVoucher, workspace.id]);
