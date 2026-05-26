@@ -272,6 +272,43 @@ async function main() {
         }
 
 
+        // 6.7. Verify Authentication Error Messages (Should not map to session expiration)
+        console.log('\n🚀 Verifying validation error messages for missing or invalid API keys...');
+
+        // 1. Missing Key
+        const missingKeyRes = await fetch('http://localhost:3002/connectors/book-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ records: [] })
+        });
+        const missingKeyBody = await missingKeyRes.json();
+        console.log('📥 Missing API Key Status:', missingKeyRes.status);
+        console.log('📥 Missing API Key Error:', missingKeyBody.error);
+        if (missingKeyBody.error && missingKeyBody.error.includes('header is required')) {
+            console.log('✅ SUCCESS: Missing API Key error message is correct!');
+        } else {
+            console.error('❌ FAILURE: Missing API Key error message was modified!');
+        }
+
+        // 2. Invalid Key
+        const invalidKeyRes = await fetch('http://localhost:3002/connectors/book-import', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': 'invalid_key_value'
+            },
+            body: JSON.stringify({ records: [] })
+        });
+        const invalidKeyBody = await invalidKeyRes.json();
+        console.log('📥 Invalid API Key Status:', invalidKeyRes.status);
+        console.log('📥 Invalid API Key Error:', invalidKeyBody.error);
+        if (invalidKeyBody.error && invalidKeyBody.error === 'Invalid or inactive API key') {
+            console.log('✅ SUCCESS: Invalid API Key error message is correct!');
+        } else {
+            console.error('❌ FAILURE: Invalid API Key error message was modified!');
+        }
+
+
         // 7. Cleanup Database
         console.log(`\n🧹 Cleaning up generated test data...`);
         await client.query("DELETE FROM purchase_vouchers WHERE book_vchr_no = $1 AND workspace_id = $2", [testVoucher, workspace.id]);

@@ -18,7 +18,14 @@ const errorResponse = (res, error, statusCode = 500) => {
             message = 'This information already exists in our system. Please check for duplicates.';
         }
     } else if (statusCode === 401) {
-        message = 'Your session has expired or is invalid. Please log in again.';
+        const isApiKeyError = message.toLowerCase().includes('api-key') || 
+                             message.toLowerCase().includes('api_key') || 
+                             message.toLowerCase().includes('api key') ||
+                             message.toLowerCase().includes('x-api-key') ||
+                             message.toLowerCase().includes('key');
+        if (!isApiKeyError) {
+            message = 'Your session has expired or is invalid. Please log in again.';
+        }
     } else if (statusCode === 403) {
         message = 'You do not have permission to perform this action.';
     } else if (statusCode === 400 && !error.isCustom) {
