@@ -19,11 +19,11 @@ async function testDirectOrchestratorCall() {
     const res = {
         statusCode: 200,
         body: null,
-        status: function(code) {
+        status: function (code) {
             this.statusCode = code;
             return this;
         },
-        json: function(data) {
+        json: function (data) {
             this.body = data;
             return this;
         }
@@ -54,7 +54,7 @@ async function testDirectOrchestratorCall() {
             console.log(`Row: ID=${row.id} Voucher=${row.book_vchr_no} Supplier=${row.supplier_name} Cat=${row.gstr_category} Net=${row.net_amount}`);
         });
         console.log('--------------------------------------------------');
-        
+
         await client.end();
     } catch (err) {
         console.error('Test execution failed:', err);
