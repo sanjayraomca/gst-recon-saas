@@ -323,7 +323,14 @@ const pullPurchaseData = async (req, res) => {
                 try {
                     response = await axios.get(cleanUrl, {
                         params: { start_date, end_date, book_type: resolvedBookType, page, rows: ROWS_PER_PAGE },
-                        headers: { 'X-TIG-API-KEY': apiToken, 'Accept': 'application/json' },
+                        headers: { 
+                            'X-TIG-API-KEY': apiToken, 
+                            'Accept': 'application/json',
+                            'tenant-id': workspace.tenant_id,
+                            'workspace-id': String(workspace.id),
+                            'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
+                            'user-name': req.user ? (req.user.name || req.user.email) : ''
+                        },
                         timeout: 15000
                     });
                 } catch (apiErr) {
@@ -683,7 +690,14 @@ const testConnection = async (req, res) => {
                 const today = new Date().toISOString().split('T')[0];
                 response = await axios.get(cleanUrl, {
                     params: { start_date: today, end_date: today, book_type: 'all', page: 1, rows: 1 },
-                    headers: { 'X-TIG-API-KEY': apiToken, 'Accept': 'application/json' },
+                    headers: { 
+                        'X-TIG-API-KEY': apiToken, 
+                        'Accept': 'application/json',
+                        'tenant-id': workspace.tenant_id,
+                        'workspace-id': String(workspace.id),
+                        'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
+                        'user-name': req.user ? (req.user.name || req.user.email) : ''
+                    },
                     timeout: 8000
                 });
             }
