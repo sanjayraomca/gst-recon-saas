@@ -280,10 +280,15 @@ class DashboardModel {
 
             stats.forEach(s => {
                 const status = s.match_status?.toLowerCase();
-                if (status === 'matched') reconciliation.summary.matched = parseInt(s.count);
-                else if (status === 'mismatched' || status === 'partial_match') reconciliation.summary.mismatched += parseInt(s.count);
-                else if (status.includes('portal')) reconciliation.summary.missing_in_portal = parseInt(s.count);
-                else if (status.includes('books')) reconciliation.summary.missing_in_books = parseInt(s.count);
+                if (status === 'matched' || status === 'partial_match' || status === 'tolerance_match') {
+                    reconciliation.summary.matched += parseInt(s.count);
+                } else if (status === 'mismatched' || status === 'mismatch') {
+                    reconciliation.summary.mismatched += parseInt(s.count);
+                } else if (status.includes('portal') || status.includes('2b') || status.includes('2a')) {
+                    reconciliation.summary.missing_in_portal += parseInt(s.count);
+                } else if (status.includes('books')) {
+                    reconciliation.summary.missing_in_books += parseInt(s.count);
+                }
 
                 reconciliation.summary.total += parseInt(s.count);
                 reconciliation.variance += parseFloat(s.variance || 0);

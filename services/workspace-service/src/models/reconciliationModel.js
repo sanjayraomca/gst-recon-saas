@@ -1345,10 +1345,14 @@ class ReconciliationModel {
                             let finalList = [];
                             list.forEach(item => {
                                 const normalized = String(item).toLowerCase().replace(/\s+/g, '_');
-                                if (normalized === 'matched' || normalized === 'tolerance_match') {
-                                    finalList.push('matched', 'tolerance_match');
-                                } else if (normalized === 'mismatch' || normalized === 'mismatched' || normalized === 'partial_match') {
-                                    finalList.push('mismatch', 'mismatched', 'partial_match');
+                                if (normalized === 'matched' || normalized === 'tolerance_match' || normalized === 'partial_match') {
+                                    finalList.push('matched', 'tolerance_match', 'partial_match');
+                                } else if (normalized === 'mismatch' || normalized === 'mismatched') {
+                                    finalList.push('mismatch', 'mismatched');
+                                } else if (normalized === 'missing_in_portal' || normalized === 'not_in_portal' || normalized === 'missing_in_2b') {
+                                    finalList.push('missing_in_portal', 'not_in_portal', 'missing_in_2b');
+                                } else if (normalized === 'missing_in_books' || normalized === 'not_in_books') {
+                                    finalList.push('missing_in_books', 'not_in_books');
                                 } else {
                                     finalList.push(normalized);
                                 }
@@ -1616,9 +1620,9 @@ class ReconciliationModel {
         };
         statusCountsResult.forEach(row => {
             const status = row.match_status;
-            if (status === 'matched' || status === 'partial_match') {
+            if (status === 'matched' || status === 'partial_match' || status === 'tolerance_match') {
                 summary.matched += parseInt(row.count);
-            } else if (status === 'mismatch') {
+            } else if (status === 'mismatch' || status === 'mismatched') {
                 summary.mismatched += parseInt(row.count);
             } else if (['missing_in_2b', 'missing_in_books', 'not_eligible', 'missing_in_portal', 'not_in_portal', 'not_in_books'].includes(status)) {
                 summary.missing += parseInt(row.count);
