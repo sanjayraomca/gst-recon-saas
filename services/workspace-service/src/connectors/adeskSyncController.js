@@ -319,6 +319,10 @@ const pullPurchaseData = async (req, res) => {
             let page = 1;
             let hasMore = true;
             do {
+                if (page > 1) {
+                    // Small delay to prevent rate-limiting/throttling over the tunnel
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
                 let response;
                 try {
                     response = await axios.get(cleanUrl, {
@@ -331,7 +335,7 @@ const pullPurchaseData = async (req, res) => {
                             'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
                             'user-name': req.user ? (req.user.name || req.user.email) : ''
                         },
-                        timeout: 15000
+                        timeout: 45000
                     });
                 } catch (apiErr) {
                     await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cleanUrl, page });
@@ -698,7 +702,7 @@ const testConnection = async (req, res) => {
                         'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
                         'user-name': req.user ? (req.user.name || req.user.email) : ''
                     },
-                    timeout: 8000
+                    timeout: 20000
                 });
             }
         } catch (apiErr) {
