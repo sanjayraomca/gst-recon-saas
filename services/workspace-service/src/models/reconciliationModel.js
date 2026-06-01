@@ -1233,8 +1233,8 @@ class ReconciliationModel {
                 voucher_no: { cols: is2aVs2b ? [] : ['pi.book_vchr_no'] },
                 booksVoucherNo: { cols: is2aVs2b ? [] : ['pi.book_vchr_no'] },
                 purchase_invoice_number: { cols: is2aVs2b ? [] : ['pi.supplier_invoice_no'] },
-                gst_cat: { cols: is2aVs2b ? ['sa.source_section'] : ['pi.gstr_category'] },
-                gstrType: { cols: is2aVs2b ? ['sa.source_section'] : ['pi.gstr_category'] },
+                gst_cat: { cols: is2aVs2b ? ['sa.source_section', 'gi.source_section'] : [knex.raw('COALESCE(pi.gstr_category, pi.source_section, gi.source_section)')] },
+                gstrType: { cols: is2aVs2b ? ['sa.source_section', 'gi.source_section'] : [knex.raw('COALESCE(pi.gstr_category, pi.source_section, gi.source_section)')] },
                 voucher_date: { cols: is2aVs2b ? [] : ['pi.book_vchr_date'], dateCol: true },
                 purchase_invoice_date: { cols: is2aVs2b ? [] : ['pi.supplier_invoice_date'], dateCol: true },
                 taxPeriod: { cols: is2aVs2b ? ['gi.return_period'] : ['tp.period_code', 'gi.return_period'] },
@@ -1337,16 +1337,83 @@ class ReconciliationModel {
                     val = value.val;
                 }
 
-                // Intercept status filter to coalesce partial_match under matched
+                // Intercept status filter to coalesce partial_match under mismatch/mismatched and tolerance_match under matched
                 if (key === 'status' || key === 'match_status') {
                     const list = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined && v !== '') : (val ? [val] : []);
                     if (list.length > 0) {
                         query.where(function () {
-                            let finalList = [...list];
-                            if (list.includes('matched')) {
-                                finalList = [...new Set([...finalList, 'partial_match'])];
-                            }
-                            this.whereIn('rr.match_status', finalList);
+                            let finalList = [];
+                            list.forEach(item => {
+                                const normalized = String(item).toLowerCase().replace(/\s+/g, '_');
+                                if (normalized === 'matched' || normalized === 'tolerance_match') {
+                                    finalList.push('matched', 'tolerance_match');
+                                } else if (normalized === 'mismatch' || normalized === 'mismatched' || normalized === 'partial_match') {
+                                    finalList.push('mismatch', 'mismatched', 'partial_match');
+                                } else {
+                                    finalList.push(normalized);
+                                }
+                            });
+                            this.whereIn('rr.match_status', [...new Set(finalList)]);
+                        });
+                    }
+                    return;
+                }
+
+                // Intercept category/gstrType filter to properly match across source tables
+                if (key === 'gstrType' || key === 'gst_cat') {
+                    const list = Array.isArray(val) ? val.filter(v => v !== null && v !== undefined && v !== '') : (val ? [val] : []);
+                    if (list.length > 0) {
+                        query.where(function () {
+                            const self = this;
+                            list.forEach((item, idx) => {
+                                const method = idx === 0 ? 'where' : 'orWhere';
+                                const upperItem = String(item).toUpperCase();
+                                if (upperItem === 'CREDIT_NOTE' || upperItem === 'CREDIT NOTE') {
+                                    self[method](function () {
+                                        this.where('gi.document_category', 'CREDIT_NOTE')
+                                            .orWhere('pi.voucher_type', 'CREDIT_NOTE')
+                                            .orWhere('pi.source_section', 'cdnr-c');
+                                    });
+                                } else if (upperItem === 'DEBIT_NOTE' || upperItem === 'DEBIT NOTE') {
+                                    self[method](function () {
+                                        this.where('gi.document_category', 'DEBIT_NOTE')
+                                            .orWhere('pi.voucher_type', 'DEBIT_NOTE')
+                                            .orWhere('pi.source_section', 'cdnr-d');
+                                    });
+                                } else if (upperItem === 'CDNR') {
+                                    self[method](function () {
+                                        this.where('gi.source_section', 'CDNR')
+                                            .orWhereIn('pi.voucher_type', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                                            .orWhereIn('pi.source_section', ['cdnr-c', 'cdnr-d']);
+                                    });
+                                } else if (upperItem === 'B2B') {
+                                    self[method](function () {
+                                        this.where('gi.source_section', 'B2B')
+                                            .orWhere('pi.source_section', 'B2B')
+                                            .orWhere('pi.gstr_category', 'RDB2B')
+                                            .orWhere(function() {
+                                                this.whereNull('gi.source_section')
+                                                    .whereNull('pi.gstr_category')
+                                                    .whereNull('pi.source_section');
+                                            });
+                                    });
+                                } else if (upperItem === 'B2BA') {
+                                    self[method](function () {
+                                        this.where('gi.source_section', 'B2BA')
+                                            .orWhere('pi.source_section', 'B2BA');
+                                    });
+                                } else {
+                                    self[method](function () {
+                                        const cols = is2aVs2b ? ['sa.source_section', 'gi.source_section'] : ['pi.gstr_category', 'pi.source_section', 'gi.source_section'];
+                                        this.where(function() {
+                                            cols.forEach((col, cidx) => {
+                                                const subMethod = cidx === 0 ? 'where' : 'orWhere';
+                                                this[subMethod](col, 'ILIKE', `%${item}%`);
+                                            });
+                                        });
+                                    });
+                                }
+                            });
                         });
                     }
                     return;
@@ -1636,6 +1703,7 @@ class ReconciliationModel {
             'gi.place_of_supply as gstr_pos',
 
             // Dynamic GST & Tax Type Mappings
+            'gi.document_category as gstr_doc_category',
             'gi.source_section as gstr_source_section',
             is2aVs2b ? 'sa.source_section as gst_type' : knex.raw('COALESCE(pi.source_section, gi.source_section) as gst_type'),
             is2aVs2b ? knex.raw('NULL as purchase_voucher_type') : 'pi.voucher_type as purchase_voucher_type',
