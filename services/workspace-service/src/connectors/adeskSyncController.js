@@ -231,7 +231,7 @@ const logPullActivity = async (req, workspace, status, actionType, details) => {
  */
 const pullPurchaseData = async (req, res) => {
     let workspace = null;
-    const { workspace_id, year, quarter, month } = req.body;
+    const { workspace_id, year, quarter, month, start_date: reqStartDate, end_date: reqEndDate, book_type } = req.body;
     try {
         if (!workspace_id) {
             await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_INPUT', { error: 'workspace_id is required' });
@@ -258,51 +258,100 @@ const pullPurchaseData = async (req, res) => {
             : (workspace.settings || {});
 
         const adeskConfig = settings.adeskCloudConnector || {};
-        const cloudUrl = adeskConfig.cloudUrl || process.env.ADESK_MOCK_SERVER_URL || `http://localhost:${process.env.PORT || 3002}/connectors/mock-adesk`;
+        const cloudUrl = adeskConfig.cloudUrl;
         const apiToken = adeskConfig.apiToken;
 
         if (!apiToken) {
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk API Auth Token is missing' });
-            return errorResponse(res, 'Adesk API Auth Token is missing. Configure it in Setup first.', 400);
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk API Key is missing' });
+            return errorResponse(res, 'Adesk API Key is missing. Configure it in Connector Setup first.', 400);
+        }
+        if (!cloudUrl) {
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk Cloud URL is missing' });
+            return errorResponse(res, 'Adesk Cloud URL is missing. Configure it in Connector Setup first.', 400);
         }
 
-        // Calculate dynamic period dates
-        const { start_date, end_date } = calculateDates(year, quarter, month);
-
-        // Build base64 headers using GST_TOOL_API_KEY layout: tenant_uuid@@org_uuid@@org_gstn
-        const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-        const encodedKey = Buffer.from(rawKey).toString('base64');
-
-        const headers = {
-            'api_key': encodedKey,
-            'x-api-key': encodedKey,
-            'Authorization': `Bearer ${apiToken}`,
-            'Content-Type': 'application/json',
-            'x-adesk-sync-source': 'saas-orchestrator'
-        };
-
-        // Query Adesk external server
-        let response;
-        try {
-            response = await axios.post(cloudUrl, {
-                type: 'purchase',
-                start_date,
-                end_date
-            }, { headers, timeout: 5000 });
-        } catch (apiErr) {
-            console.error('Error connecting to Adesk Cloud API Server:', apiErr.message);
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cloudUrl });
-            return errorResponse(res, `Failed to reach Adesk Cloud API Server at ${cloudUrl}. Check configuration or verify mock server is running.`, 502);
+        // Calculate dynamic period dates (use explicit dates if provided, otherwise calculate)
+        let start_date = reqStartDate;
+        let end_date = reqEndDate;
+        if (!start_date || !end_date) {
+            const dates = calculateDates(year, quarter, month);
+            start_date = dates.start_date;
+            end_date = dates.end_date;
         }
 
-        const adeskRes = response.data;
-        console.log('DEBUG [pullPurchaseData] adeskRes:', adeskRes);
-        if (!adeskRes || adeskRes.success !== 1 || !Array.isArray(adeskRes.data)) {
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: adeskRes ? adeskRes.message : 'Invalid response' });
-            return errorResponse(res, adeskRes ? adeskRes.message : 'Invalid response received from Adesk Accounting Server', 502);
+        const resolvedBookType = book_type || 'all';
+        const isMockServer = cloudUrl.includes('mock-adesk');
+
+        // ── Fetch all records (paginated GET for real API, single POST for mock) ──
+        let allRecords = [];
+
+        if (isMockServer) {
+            // Legacy mock server: POST with JSON body
+            const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+            const encodedKey = Buffer.from(rawKey).toString('base64');
+            let response;
+            try {
+                response = await axios.post(cloudUrl, {
+                    type: 'purchase', start_date, end_date,
+                    year: year || '2025-2026', book_type: resolvedBookType
+                }, {
+                    headers: {
+                        'api_key': encodedKey, 'x-api-key': encodedKey,
+                        'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json',
+                        'tenant-id': workspace.tenant_id, 'workspace-id': String(workspace.id),
+                        'x-adesk-sync-source': 'saas-orchestrator'
+                    }, timeout: 10000
+                });
+            } catch (apiErr) {
+                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cloudUrl });
+                return errorResponse(res, `Failed to reach mock server: ${apiErr.message}`, 502);
+            }
+            const mockRes = response.data;
+            if (!mockRes || mockRes.success !== 1 || !Array.isArray(mockRes.data)) {
+                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: mockRes?.message || 'Invalid response' });
+                return errorResponse(res, mockRes?.message || 'Invalid response from mock server', 502);
+            }
+            allRecords = mockRes.data;
+        } else {
+            // Real Adesk API: GET with query params + X-TIG-API-KEY, auto-paginate all pages
+            const cleanUrl = cloudUrl.split('?')[0];
+            const ROWS_PER_PAGE = 200; // Server-side maximum page size limit
+            let page = 1;
+            let hasMore = true;
+            do {
+                let response;
+                try {
+                    response = await axios.get(cleanUrl, {
+                        params: { start_date, end_date, book_type: resolvedBookType, page, rows: ROWS_PER_PAGE },
+                        headers: { 'X-TIG-API-KEY': apiToken, 'Accept': 'application/json' },
+                        timeout: 15000
+                    });
+                } catch (apiErr) {
+                    await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cleanUrl, page });
+                    return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
+                }
+                const pageRes = response.data;
+                if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
+                    await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: pageRes?.message || 'Invalid response', page });
+                    return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
+                }
+                if (pageRes.data.length === 0) {
+                    hasMore = false;
+                } else {
+                    allRecords = allRecords.concat(pageRes.data);
+                    console.log(`[Adesk] Page ${page} — ${pageRes.data.length} records fetched (total so far: ${allRecords.length})`);
+                    if (pageRes.data.length < ROWS_PER_PAGE) {
+                        hasMore = false;
+                    } else {
+                        page++;
+                    }
+                }
+            } while (hasMore);
         }
 
-        const records = adeskRes.data;
+        const records = allRecords;
+
+
         if (records.length === 0) {
             const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
             await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', { records_received: 0, return_period: defaultReturnPeriod });
@@ -615,51 +664,53 @@ const testConnection = async (req, res) => {
             return errorResponse(res, 'Workspace not found', 404);
         }
 
-        // Build base64 headers
-        const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-        const encodedKey = Buffer.from(rawKey).toString('base64');
-
-        const headers = {
-            'api_key': encodedKey,
-            'x-api-key': encodedKey,
-            'Authorization': `Bearer ${apiToken}`,
-            'Content-Type': 'application/json'
-        };
-
-        // Query Adesk external server with a quick ping
+        // Auto-detect: real Adesk API (GET + X-TIG-API-KEY) vs mock server (POST + base64)
+        const isMockServer = cloudUrl.includes('mock-adesk');
         let response;
         const startTime = Date.now();
+
         try {
-            response = await axios.post(cloudUrl, {
-                type: 'ping'
-            }, { headers, timeout: 3000 });
+            if (isMockServer) {
+                const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+                const encodedKey = Buffer.from(rawKey).toString('base64');
+                response = await axios.post(cloudUrl, { type: 'ping' }, {
+                    headers: { 'api_key': encodedKey, 'x-api-key': encodedKey, 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+                    timeout: 5000
+                });
+            } else {
+                // Real Adesk API: GET with 1 row just to verify credentials and reachability
+                const cleanUrl = cloudUrl.split('?')[0];
+                const today = new Date().toISOString().split('T')[0];
+                response = await axios.get(cleanUrl, {
+                    params: { start_date: today, end_date: today, book_type: 'all', page: 1, rows: 1 },
+                    headers: { 'X-TIG-API-KEY': apiToken, 'Accept': 'application/json' },
+                    timeout: 8000
+                });
+            }
         } catch (apiErr) {
             const latency = `${Date.now() - startTime}ms`;
             if (apiErr.response) {
                 if (apiErr.response.status === 401 || apiErr.response.status === 403) {
                     await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_AUTH_FAILED', { error: 'Authentication failed', cloudUrl });
-                    return errorResponse(res, `Authentication failed. Adesk Cloud returned status ${apiErr.response.status}. Verify your API Auth Token.`, 401);
+                    return errorResponse(res, `Authentication failed (HTTP ${apiErr.response.status}). Please verify your API Key.`, 401);
                 }
-                await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Adesk Server reachable (Status ${apiErr.response.status})`, cloudUrl, latency });
-                return successResponse(res, {
-                    status: 'operational',
-                    latency,
-                    message: `Adesk Server is reachable (Response status ${apiErr.response.status})`
-                }, 'Adesk Cloud API Server is reachable!');
+                // Any other HTTP response still means server is reachable
+                await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Server reachable (Status ${apiErr.response.status})`, cloudUrl, latency });
+                return successResponse(res, { status: 'operational', latency, message: `Adesk Server is reachable (HTTP ${apiErr.response.status})` }, 'Adesk Cloud API Server is reachable!');
             }
             await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_CONNECTION_FAILED', { error: apiErr.message, cloudUrl });
-            return errorResponse(res, `Failed to reach Adesk Cloud API Server at ${cloudUrl}. Error: ${apiErr.message}`, 502);
+            return errorResponse(res, `Cannot reach Adesk Cloud API at ${cloudUrl}. Error: ${apiErr.message}`, 502);
         }
 
         const latency = `${Date.now() - startTime}ms`;
         const data = response.data;
-        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency, apiVersion: data.apiVersion });
+        await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency });
         return successResponse(res, {
-            status: data.status || 'operational',
+            status: 'operational',
             latency,
-            apiVersion: data.apiVersion || 'v1.4.12',
+            apiVersion: data.apiVersion || data._meta?.resource || 'v1',
             environment: data.environment || 'production',
-            message: data.message || 'Mock Adesk Cloud Server connected successfully!'
+            message: data.message || 'Connected to Adesk Cloud API successfully!'
         }, 'Successfully connected to Adesk Cloud API Server!');
 
     } catch (err) {
