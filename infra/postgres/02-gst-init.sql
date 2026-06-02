@@ -2303,3 +2303,35 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_status       ON workspace_api_keys (stat
 CREATE INDEX IF NOT EXISTS idx_api_keys_prod_key     ON workspace_api_keys (production_key);
 CREATE INDEX IF NOT EXISTS idx_api_keys_sand_key     ON workspace_api_keys (sandbox_key);
 
+
+-- =========================================================================
+-- SECTION: TIG INBOUND LOG (Adesk Connector Request/Response Audit Log)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS tig_inbound_log (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type            VARCHAR(255),
+    request_type    VARCHAR(255),
+    user_id         VARCHAR(255),
+    tenant_id       VARCHAR(255),
+    org_id          VARCHAR(255),
+    access_key      VARCHAR(255),       -- api_key (truncated for safety)
+    t_params        JSONB,              -- request parameters/body sent to connector
+    t_resp_headers  JSONB,              -- response headers received from connector
+    t_resp_body     JSONB,              -- response body received from connector
+    ip_address      VARCHAR(255),
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    user_agent      VARCHAR(255),
+    status          VARCHAR(255),       -- success | error | pending
+    extrainfo       JSONB
+);
+
+-- Indexes for fast filtering in Adminer/queries
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_org       ON tig_inbound_log (org_id);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_tenant    ON tig_inbound_log (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_type      ON tig_inbound_log (type);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_status    ON tig_inbound_log (status);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_created   ON tig_inbound_log (created_at DESC);
+
+COMMENT ON TABLE tig_inbound_log IS 'Audit log for all inbound API connector requests and responses (Adesk, etc.)';

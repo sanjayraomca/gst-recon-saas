@@ -52,9 +52,20 @@ const calculateDates = (year, quarter, month) => {
  * Helper: Derive the return period (MMYYYY format) dynamically from a date string (YYYY-MM-DD).
  */
 const getPeriodFromDate = (dateStr) => {
-    if (!dateStr) return '042026';
+    if (!dateStr) {
+        // Dynamic fallback: current month + current year in MMYYYY format
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(now.getFullYear());
+        return `${mm}${yyyy}`;
+    }
     const parts = dateStr.split('-');
-    if (parts.length < 2) return '042026';
+    if (parts.length < 2) {
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(now.getFullYear());
+        return `${mm}${yyyy}`;
+    }
     return `${parts[1]}${parts[0]}`;
 };
 
@@ -350,6 +361,46 @@ const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
 /**
  * Helper: Log pull sync actions (both success and fail) in activity_logs
  */
+const logTigInbound = async (options) => {
+    try {
+        const {
+            req,
+            type,
+            requestType,
+            userId,
+            tenantId,
+            orgId,
+            accessKey,
+            params,
+            respHeaders,
+            respBody,
+            status,
+            extrainfo
+        } = options;
+
+        const ip = req ? (req.ip || (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.connection && req.connection.remoteAddress) || null) : null;
+        const userAgent = req ? req.headers['user-agent'] : null;
+
+        await knex('tig_inbound_log').insert({
+            type: type || null,
+            request_type: requestType || null,
+            user_id: userId || null,
+            tenant_id: tenantId || null,
+            org_id: orgId || null,
+            access_key: accessKey ? (typeof accessKey === 'string' && accessKey.length > 250 ? `${accessKey.substring(0, 240)}...` : accessKey) : null,
+            t_params: params || null,
+            t_resp_headers: respHeaders || null,
+            t_resp_body: respBody || null,
+            ip_address: ip || null,
+            user_agent: userAgent || null,
+            status: status || null,
+            extrainfo: extrainfo || null
+        });
+    } catch (err) {
+        console.error('[logTigInbound] Failed to write inbound log:', err.message);
+    }
+};
+
 const logPullActivity = async (req, workspace, status, actionType, details) => {
     try {
         await logActivity({
@@ -444,12 +495,13 @@ const pullPurchaseData = async (req, res) => {
             'tenant-id': workspace.tenant_id,
             'workspace-id': String(workspace.id),
             'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-            'user-name': req.user ? (req.user.name || 'User') : '',
-            'user-email': req.user ? (req.user.email || 'user@example.com') : ''
+            'user-name': req.user ? (req.user.name || '') : '',
+            'user-email': req.user ? (req.user.email || '') : ''
         };
 
         const isMockServer = cloudUrl.includes('mock-adesk');
-        const targetCloudUrl = isMockServer ? 'http://localhost:3002/connectors/mock-adesk' : cloudUrl;
+        const mockAdeskBaseUrl = process.env.MOCK_ADESK_URL || `http://localhost:${process.env.PORT || 3002}`;
+        const targetCloudUrl = isMockServer ? `${mockAdeskBaseUrl}/connectors/mock-adesk` : cloudUrl;
 
         // ── Fetch all records (paginated GET for real API, single POST for mock) ──
         let allRecords = [];
@@ -461,8 +513,11 @@ const pullPurchaseData = async (req, res) => {
             let response;
             try {
                 response = await axios.post(targetCloudUrl, {
-                    type: 'purchase', start_date, end_date,
-                    year: year || '2025-2026', book_type: resolvedBookType
+                    type: 'purchase',
+                    start_date,
+                    end_date,
+                    year: year || '',
+                    book_type: resolvedBookType
                 }, {
                     headers: {
                         'api_key': encodedKey, 'x-api-key': encodedKey,
@@ -472,14 +527,54 @@ const pullPurchaseData = async (req, res) => {
                     }, timeout: 10000
                 });
             } catch (apiErr) {
+                await logTigInbound({
+                    req,
+                    type: resolvedBookType,
+                    requestType: 'pullPurchaseData_mock',
+                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                    tenantId: workspace.tenant_id,
+                    orgId: workspace.id,
+                    accessKey: apiToken,
+                    params: requestBody,
+                    respBody: { error: apiErr.message },
+                    status: 'error',
+                    extrainfo: { error: apiErr.message, cloudUrl }
+                });
                 await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cloudUrl });
                 return errorResponse(res, `Failed to reach mock server: ${apiErr.message}`, 502);
             }
             const mockRes = response.data;
             if (!mockRes || mockRes.success !== 1 || !Array.isArray(mockRes.data)) {
+                await logTigInbound({
+                    req,
+                    type: resolvedBookType,
+                    requestType: 'pullPurchaseData_mock',
+                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                    tenantId: workspace.tenant_id,
+                    orgId: workspace.id,
+                    accessKey: apiToken,
+                    params: requestBody,
+                    respHeaders: { ...response.headers, connector_config: settings },
+                    respBody: mockRes,
+                    status: 'error',
+                    extrainfo: { error: 'Invalid response from mock server' }
+                });
                 await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: mockRes?.message || 'Invalid response' });
                 return errorResponse(res, mockRes?.message || 'Invalid response from mock server', 502);
             }
+            await logTigInbound({
+                req,
+                type: resolvedBookType,
+                requestType: 'pullPurchaseData_mock',
+                userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                tenantId: workspace.tenant_id,
+                orgId: workspace.id,
+                accessKey: apiToken,
+                params: requestBody,
+                respHeaders: { ...response.headers, connector_config: settings },
+                respBody: mockRes,
+                status: 'success'
+            });
             allRecords = mockRes.data;
         } else {
             // Real Adesk API: POST with body parameters + X-TIG-API-KEY + base64 x-api-key
@@ -489,8 +584,7 @@ const pullPurchaseData = async (req, res) => {
             let response;
             try {
                 response = await axios.post(cleanUrl, {
-                    type: resolvedBookType === 'sales' ? 'sales' : 'purchase',
-                    fyear: year || '2025-2026',
+                    fyear: year,
                     start_date: start_date,
                     end_date: end_date,
                     book_type: resolvedBookType,
@@ -498,7 +592,8 @@ const pullPurchaseData = async (req, res) => {
                     rows: 99999
                 }, {
                     headers: {
-                        'Authorization': `Bearer ${apiToken}`,
+                        // 'Authorization': `Bearer ${apiToken}`,
+
                         'x-api-key': encodedKey,
                         'api_key': encodedKey,
                         'X-TIG-API-KEY': apiToken,
@@ -507,12 +602,26 @@ const pullPurchaseData = async (req, res) => {
                         'tenant-id': workspace.tenant_id,
                         'workspace-id': String(workspace.id),
                         'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                        'user-name': req.user ? (req.user.name || 'User') : '',
-                        'user-email': req.user ? (req.user.email || 'user@example.com') : ''
+                        'user-name': req.user ? (req.user.name || '') : '',
+                        'user-email': req.user ? (req.user.email || '') : '',
+                        'third-party-platform': process.env.PLATFORM_NAME || 'GST Reconciliation Tool'
                     },
                     timeout: 45000
                 });
             } catch (apiErr) {
+                await logTigInbound({
+                    req,
+                    type: resolvedBookType,
+                    requestType: 'pullPurchaseData_real',
+                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                    tenantId: workspace.tenant_id,
+                    orgId: workspace.id,
+                    accessKey: apiToken,
+                    params: requestBody,
+                    respBody: { error: apiErr.message, responseError: apiErr.response?.data },
+                    status: 'error',
+                    extrainfo: { error: apiErr.message, status: apiErr.response?.status, cleanUrl }
+                });
                 await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', {
                     error: apiErr.message,
                     responseError: apiErr.response?.data,
@@ -525,6 +634,19 @@ const pullPurchaseData = async (req, res) => {
             }
             const pageRes = response.data;
             if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
+                await logTigInbound({
+                    req,
+                    type: resolvedBookType,
+                    requestType: 'pullPurchaseData_real',
+                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                    tenantId: workspace.tenant_id,
+                    orgId: workspace.id,
+                    accessKey: apiToken,
+                    params: requestBody,
+                    respHeaders: { ...response.headers, connector_config: settings },
+                    respBody: pageRes,
+                    status: 'error'
+                });
                 await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', {
                     error: pageRes?.message || 'Invalid response format',
                     responsePayload: pageRes,
@@ -533,6 +655,19 @@ const pullPurchaseData = async (req, res) => {
                 });
                 return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
             }
+            await logTigInbound({
+                req,
+                type: resolvedBookType,
+                requestType: 'pullPurchaseData_real',
+                userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                tenantId: workspace.tenant_id,
+                orgId: workspace.id,
+                accessKey: apiToken,
+                params: requestBody,
+                respHeaders: { ...response.headers, connector_config: settings },
+                respBody: pageRes,
+                status: 'success'
+            });
             allRecords = pageRes.data;
             console.log(`[Adesk] ${allRecords.length} records fetched successfully from Adesk Cloud API`);
         }
@@ -541,7 +676,7 @@ const pullPurchaseData = async (req, res) => {
 
 
         if (records.length === 0) {
-            const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
+            const defaultReturnPeriod = month === 'all' ? '' : `${month}${year.split('-')[0]}`;
             await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', {
                 records_received: 0,
                 return_period: defaultReturnPeriod,
@@ -557,7 +692,8 @@ const pullPurchaseData = async (req, res) => {
             }, 'No purchase data records found for the requested period on Adesk server');
         }
 
-        const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
+        // Derive return period dynamically from start_date or fall back to month/year
+        const defaultReturnPeriod = month === 'all' ? getPeriodFromDate(start_date) : `${month}${year.split('-')[0]}`;
 
         const isSales = resolvedBookType === 'sales';
 
@@ -598,7 +734,7 @@ const pullPurchaseData = async (req, res) => {
             financialYear: year,
             importType: importType,
             extraInfo: { source: 'adesk_cloud_connector', records_count: records.length, year, quarter, month, validation_failures: validationFailures },
-            userEmail: 'connector@adesk-cloud'
+            userEmail: req.user ? (req.user.email || req.user.name || 'connector@adesk-cloud') : 'connector@adesk-cloud'
         });
 
         const result = isSales
@@ -800,8 +936,12 @@ const mockAdeskServer = async (req, res) => {
                         // For sales B2B, ensure a valid customer GSTIN is present
                         const cat = (clonedRow.gstr_category || '').toUpperCase();
                         if (cat.includes('B2B')) {
-                            // Dynamically ensure customer GSTIN is different from organization's own GSTIN (orgGstn) to avoid self-sales
-                            clonedRow.party_gstn_no = clonedRow.party_gstn_no || (orgGstn === '24AALFA9789K1ZO' ? '24GENPS9883E1ZN' : '24AALFA9789K1ZO');
+                            // Dynamically generate a placeholder GSTIN that is different from the org's own GSTIN
+                            if (!clonedRow.party_gstn_no) {
+                                // Rotate last character of orgGstn to produce a different valid-looking GSTIN placeholder
+                                const rotated = orgGstn.slice(0, -1) + (orgGstn.slice(-1) === 'Z' ? 'A' : String.fromCharCode(orgGstn.charCodeAt(orgGstn.length - 1) + 1));
+                                clonedRow.party_gstn_no = rotated;
+                            }
                         }
                     } else {
                         clonedRow.vchr_type = clonedRow.vchr_type === 'SALES' ? 'PUR' : clonedRow.vchr_type;
@@ -886,7 +1026,7 @@ const mockAdeskServer = async (req, res) => {
                         financialYear: financialYear,
                         importType: isSales ? 'SALES_REGISTER' : 'PURCHASE_REGISTER',
                         extraInfo: { source: 'adesk_direct_mock_postman_push', records_count: records.length },
-                        userEmail: 'connector@adesk-postman'
+                        userEmail: req.headers['user-email'] || req.headers['x-user-email'] || 'connector@adesk-external'
                     });
 
                     // Bulk insert documents directly into database, ignoring duplicates
@@ -902,6 +1042,19 @@ const mockAdeskServer = async (req, res) => {
             }
         }
 
+        await logTigInbound({
+            req,
+            type: req.body?.book_type || req.body?.type || 'purchase',
+            requestType: 'mockAdeskServer',
+            tenantId: typeof tenantUuid !== 'undefined' ? tenantUuid : null,
+            orgId: typeof orgUuid !== 'undefined' ? orgUuid : null,
+            accessKey: req.headers['api_key'] || req.headers['x-api-key'] || null,
+            params: req.body,
+            respBody: { success: 1, message: 'record found and directly synchronized in database', records_returned: records.length, data: records },
+            status: 'success',
+            extrainfo: { source: 'mock_server' }
+        });
+
         return res.status(200).json({
             success: 1,
             message: 'record found and directly synchronized in database',
@@ -910,6 +1063,16 @@ const mockAdeskServer = async (req, res) => {
 
     } catch (serverErr) {
         console.error('Mock Adesk server request failed:', serverErr);
+        await logTigInbound({
+            req,
+            type: req.body?.book_type || req.body?.type || 'unknown',
+            requestType: 'mockAdeskServer',
+            accessKey: req.headers['api_key'] || req.headers['x-api-key'] || null,
+            params: req.body,
+            respBody: { error: serverErr.message },
+            status: 'error',
+            extrainfo: { source: 'mock_server' }
+        });
         return res.status(500).json({ success: 0, message: serverErr.message || 'Integrated server error' });
     }
 };
@@ -935,13 +1098,17 @@ const testConnection = async (req, res) => {
         // Fetch workspace details to get tenant_id and gstin for base64 key
         workspace = await knex('workspaces')
             .where({ id: workspace_id })
-            .select('id', 'tenant_id', 'gstn')
+            .select('id', 'tenant_id', 'gstn', 'settings')
             .first();
 
         if (!workspace) {
             await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_TEST_WORKSPACE_NOT_FOUND', { error: 'Workspace not found' });
             return errorResponse(res, 'Workspace not found', 404);
         }
+
+        const wsSettings = typeof workspace.settings === 'string'
+            ? JSON.parse(workspace.settings)
+            : (workspace.settings || {});
 
         // Auto-detect: real Adesk API (GET + X-TIG-API-KEY) vs mock server (POST + base64)
         const isMockServer = cloudUrl.includes('mock-adesk');
@@ -962,9 +1129,16 @@ const testConnection = async (req, res) => {
                 const today = new Date().toISOString().split('T')[0];
                 const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
                 const encodedKey = Buffer.from(rawKey).toString('base64');
+                // Derive current financial year dynamically
+                const nowDate = new Date();
+                const nowMonth = nowDate.getMonth() + 1; // 1-indexed
+                const nowYear = nowDate.getFullYear();
+                const fyStartYear = nowMonth >= 4 ? nowYear : nowYear - 1;
+                const fyEndYearShort = String(fyStartYear + 1).slice(-2);
+                const currentFY = `${fyStartYear}-${fyEndYearShort}`;
                 response = await axios.post(cleanUrl, {
                     type: 'ping',
-                    fyear: '2025-2026',
+                    fyear: currentFY,
                     start_date: today,
                     end_date: today,
                     book_type: 'all',
@@ -981,29 +1155,64 @@ const testConnection = async (req, res) => {
                         'tenant-id': workspace.tenant_id,
                         'workspace-id': String(workspace.id),
                         'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                        'user-name': req.user ? (req.user.name || 'User') : '',
-                        'user-email': req.user ? (req.user.email || 'user@example.com') : ''
+                        'user-name': req.user ? (req.user.name || '') : '',
+                        'user-email': req.user ? (req.user.email || '') : ''
                     },
                     timeout: 20000
                 });
             }
         } catch (apiErr) {
             const latency = `${Date.now() - startTime}ms`;
+            const userId = req.user ? (req.user.db_id || req.user.id || req.user.sub) : null;
             if (apiErr.response) {
                 if (apiErr.response.status === 401 || apiErr.response.status === 403) {
+                    await logTigInbound({
+                        req, type: 'testConnection', requestType: 'testConnection',
+                        userId, tenantId: workspace.tenant_id, orgId: workspace.id,
+                        accessKey: apiToken,
+                        params: { cloudUrl, type: 'ping' },
+                        respBody: { error: 'Authentication failed', httpStatus: apiErr.response.status },
+                        status: 'error', extrainfo: { latency, cloudUrl }
+                    });
                     await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_AUTH_FAILED', { error: 'Authentication failed', cloudUrl });
                     return errorResponse(res, `Authentication failed (HTTP ${apiErr.response.status}). Please verify your API Key.`, 401);
                 }
                 // Any other HTTP response still means server is reachable
+                await logTigInbound({
+                    req, type: 'testConnection', requestType: 'testConnection',
+                    userId, tenantId: workspace.tenant_id, orgId: workspace.id,
+                    accessKey: apiToken,
+                    params: { cloudUrl, type: 'ping' },
+                    respBody: { message: `Server reachable (Status ${apiErr.response.status})` },
+                    status: 'success', extrainfo: { latency, cloudUrl }
+                });
                 await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { message: `Server reachable (Status ${apiErr.response.status})`, cloudUrl, latency });
                 return successResponse(res, { status: 'operational', latency, message: `Adesk Server is reachable (HTTP ${apiErr.response.status})` }, 'Adesk Cloud API Server is reachable!');
             }
+            await logTigInbound({
+                req, type: 'testConnection', requestType: 'testConnection',
+                userId, tenantId: workspace.tenant_id, orgId: workspace.id,
+                accessKey: apiToken,
+                params: { cloudUrl, type: 'ping' },
+                respBody: { error: apiErr.message },
+                status: 'error', extrainfo: { latency, cloudUrl }
+            });
             await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_TEST_CONNECTION_FAILED', { error: apiErr.message, cloudUrl });
             return errorResponse(res, `Cannot reach Adesk Cloud API at ${cloudUrl}. Error: ${apiErr.message}`, 502);
         }
 
         const latency = `${Date.now() - startTime}ms`;
         const data = response.data;
+        await logTigInbound({
+            req, type: 'testConnection', requestType: 'testConnection',
+            userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+            tenantId: workspace.tenant_id, orgId: workspace.id,
+            accessKey: apiToken,
+            params: { cloudUrl, type: 'ping' },
+            respHeaders: { ...response.headers, connector_config: wsSettings },
+            respBody: data,
+            status: 'success', extrainfo: { latency, cloudUrl }
+        });
         await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_TEST_SUCCESS', { cloudUrl, latency });
         return successResponse(res, {
             status: 'operational',
