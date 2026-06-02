@@ -12,7 +12,7 @@ const { pullPurchaseData } = require('../services/workspace-service/src/connecto
 
 const req = {
     body: {
-        workspace_id: 'a0fbb739-7ce5-473b-943b-a6c5ec782af1',
+        workspace_id: 'c8836278-fe0b-4e3d-af6a-2702908d7ad1',
         year: '2025-26',
         quarter: 'Q1',
         month: '4' // April 2025 (contains our FUEL & PETROL expense!)

@@ -425,7 +425,7 @@ const pullPurchaseData = async (req, res) => {
             'user-email': req.user ? (req.user.email || 'user@example.com') : ''
         };
 
-        const isMockServer = cloudUrl.includes('mock-adesk') || cloudUrl.includes('ngrok-free.dev');
+        const isMockServer = cloudUrl.includes('mock-adesk');
         const targetCloudUrl = isMockServer ? 'http://localhost:3002/connectors/mock-adesk' : cloudUrl;
 
         // ── Fetch all records (paginated GET for real API, single POST for mock) ──
@@ -459,11 +459,14 @@ const pullPurchaseData = async (req, res) => {
             }
             allRecords = mockRes.data;
         } else {
-            // Real Adesk API: POST with body parameters + X-TIG-API-KEY
+            // Real Adesk API: POST with body parameters + X-TIG-API-KEY + base64 x-api-key
             const cleanUrl = cloudUrl.split('?')[0];
+            const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+            const encodedKey = Buffer.from(rawKey).toString('base64');
             let response;
             try {
                 response = await axios.post(cleanUrl, {
+                    type: resolvedBookType === 'sales' ? 'sales' : 'purchase',
                     fyear: year || '2025-2026',
                     start_date: start_date,
                     end_date: end_date,
@@ -472,6 +475,9 @@ const pullPurchaseData = async (req, res) => {
                     rows: 99999
                 }, {
                     headers: {
+                        'Authorization': `Bearer ${apiToken}`,
+                        'x-api-key': encodedKey,
+                        'api_key': encodedKey,
                         'X-TIG-API-KEY': apiToken,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
@@ -771,7 +777,8 @@ const mockAdeskServer = async (req, res) => {
                         // For sales B2B, ensure a valid customer GSTIN is present
                         const cat = (clonedRow.gstr_category || '').toUpperCase();
                         if (cat.includes('B2B')) {
-                            clonedRow.party_gstn_no = clonedRow.party_gstn_no || '24AALFA9789K1ZO';
+                            // Dynamically ensure customer GSTIN is different from organization's own GSTIN (orgGstn) to avoid self-sales
+                            clonedRow.party_gstn_no = clonedRow.party_gstn_no || (orgGstn === '24AALFA9789K1ZO' ? '24GENPS9883E1ZN' : '24AALFA9789K1ZO');
                         }
                     } else {
                         clonedRow.vchr_type = clonedRow.vchr_type === 'SALES' ? 'PUR' : clonedRow.vchr_type;
@@ -930,7 +937,10 @@ const testConnection = async (req, res) => {
                 // Real Adesk API: POST with 1 row just to verify credentials and reachability
                 const cleanUrl = cloudUrl.split('?')[0];
                 const today = new Date().toISOString().split('T')[0];
+                const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+                const encodedKey = Buffer.from(rawKey).toString('base64');
                 response = await axios.post(cleanUrl, {
+                    type: 'ping',
                     fyear: '2025-2026',
                     start_date: today,
                     end_date: today,
@@ -939,6 +949,9 @@ const testConnection = async (req, res) => {
                     rows: 1
                 }, {
                     headers: {
+                        'Authorization': `Bearer ${apiToken}`,
+                        'x-api-key': encodedKey,
+                        'api_key': encodedKey,
                         'X-TIG-API-KEY': apiToken,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
