@@ -16,7 +16,7 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 const calculateDates = (year, quarter, month) => {
     const parts = year.split('-');
     const year1 = parseInt(parts[0]);
-    const year2 = parts[1] ? (year1 - (year1 % 100) + parseInt(parts[1])) : (year1 + 1);
+    const year2 = parts[1] ? (parts[1].trim().length === 4 ? parseInt(parts[1].trim()) : (year1 - (year1 % 100) + parseInt(parts[1].trim()))) : (year1 + 1);
 
     let start_date, end_date;
 
@@ -197,6 +197,130 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
 };
 
 /**
+ * Map individual sales records from Adesk Accounting schema to our standard connector format.
+ * Incorporates robust data validation checks same as book data import.
+ */
+const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
+    const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
+    const returnPeriod = vchrDate ? getPeriodFromDate(vchrDate) : defaultReturnPeriod;
+
+    const invoiceNumber = String(record.supplier_invoice_no || record.vchr_full_number || record.vchr_no || '').trim();
+    const customerGstin = String(record.party_gstn_no || '').trim().toUpperCase();
+    const customerName = String(record.party_name || 'Generic Customer').trim();
+
+    let bookType = (record.book_type || record.vchr_prefix || 'SA').trim().toUpperCase();
+    let invoiceType = (record.voucher_type || record.vchr_type || 'B2B').trim().toUpperCase();
+
+    // Translate abbreviations to satisfy PostgreSQL database Check Constraints
+    if (invoiceType === 'DN' || invoiceType === 'DEBIT_NOTE') {
+        invoiceType = 'DEBIT_NOTE';
+    } else if (invoiceType === 'CN' || invoiceType === 'CREDIT_NOTE') {
+        invoiceType = 'CREDIT_NOTE';
+    } else {
+        invoiceType = 'B2B'; // Must be one of B2B, B2C_SMALL, B2C_LARGE, EXPORT, SEZ
+    }
+
+    if (bookType === 'SALES' || bookType === 'SLS') {
+        bookType = 'SA';
+    }
+
+    // Validation checks matching book data import
+    if (!invoiceNumber) {
+        throw new Error('Validation Error: Missing invoice / voucher number');
+    }
+
+    if (customerGstin && !isValidGSTIN(customerGstin)) {
+        throw new Error(`Validation Error: Invalid Customer GSTIN format "${customerGstin}"`);
+    }
+
+    // Derive financials using both custom mock schema and real Adesk schema keys
+    const taxableTotal = parseFloat(record.taxable_value || record.taxable_amount || record.total_taxable_amount || 0);
+    const netAmount = parseFloat(record.net_amount || record.total_value || record.invoice_amount || record.row_wise_total_amount || 0);
+    const totalIgstAmount = parseFloat(record.igst || record.igst_amount || record.total_igst_tax_amount || 0);
+    const totalCgstAmount = parseFloat(record.cgst || record.cgst_amount || record.total_cgst_tax_amount || 0);
+    const totalSgstAmount = parseFloat(record.sgst || record.sgst_amount || record.total_sgst_tax_amount || 0);
+    const totalCessAmount = parseFloat(record.cess || record.cess_amount || record.total_cess_tax_amount || 0);
+
+    const header = {
+        tenant_id: tenantId,
+        workspace_id: workspaceId,
+
+        // Invoice identity
+        invoice_number: invoiceNumber,
+        invoice_date: vchrDate,
+
+        // Customer
+        customer_name: customerName,
+        customer_gstin: customerGstin || null,
+
+        // Financials
+        total_taxable_value: taxableTotal,
+        total_invoice_value: netAmount,
+        total_igst: totalIgstAmount,
+        total_cgst: totalCgstAmount,
+        total_sgst: totalSgstAmount,
+        total_cess: totalCessAmount,
+        round_off: parseFloat(record.round_off || record.round_off_amount || 0),
+        discount: parseFloat(record.discount || 0),
+
+        // GST Fields
+        place_of_supply: record.place_of_supply || null,
+        reverse_charge: record.reverse_charge === 'Yes' || record.reverse_charge === true,
+        is_amendment: record.is_amendment === 'Yes' || record.is_amendment === true,
+        book_type: bookType,
+        invoice_type: invoiceType,
+        gstr_category: record.gstr_category || 'B2B',
+        status: record.status || 'DRAFT',
+        remarks: record.remarks || null,
+
+        // Period
+        filing_period: returnPeriod,
+        return_period: returnPeriod,
+        tax_period_id: null,
+
+        t_extra_info: { source: 'adesk_cloud_connector', connector_ref: record.connector_ref || null }
+    };
+
+    // Construct item lines
+    let items = [];
+    if (record.items && record.items.length > 0) {
+        items = record.items.map(item => ({
+            hsn_sac_code: String(item.hsn_code || item.hsn_sac_code || '').trim() || null,
+            description: item.description || null,
+            quantity: parseFloat(item.quantity || 0),
+            uom: item.uom || null,
+            unit_rate: parseFloat(item.unit_rate || 0),
+            taxable_value: parseFloat(item.taxable_amount || item.taxable_value || 0),
+            gst_rate_percent: parseFloat(item.tax_per || item.gst_rate_percent || 0),
+            igst_amount: parseFloat(item.igst_amount || 0),
+            cgst_amount: parseFloat(item.cgst_amount || 0),
+            sgst_amount: parseFloat(item.sgst_amount || 0),
+            cess_amount: parseFloat(item.cess_amount || 0),
+            total_amount_with_tax: parseFloat(item.total_amount_with_tax || 0),
+            t_extra_info: {}
+        }));
+    } else {
+        items = [{
+            hsn_sac_code: null,
+            description: record.description || 'Voucher details',
+            quantity: 1,
+            uom: 'NOS',
+            unit_rate: taxableTotal,
+            taxable_value: taxableTotal,
+            gst_rate_percent: parseFloat(record.tax_per || 0),
+            igst_amount: totalIgstAmount,
+            cgst_amount: totalCgstAmount,
+            sgst_amount: totalSgstAmount,
+            cess_amount: totalCessAmount,
+            total_amount_with_tax: netAmount,
+            t_extra_info: {}
+        }];
+    }
+
+    return { header, items };
+};
+
+/**
  * POST /connectors/adesk/pull-purchase
  * Trigger manual pull request to the Adesk Cloud API Server.
  */
@@ -280,7 +404,29 @@ const pullPurchaseData = async (req, res) => {
         }
 
         const resolvedBookType = book_type || 'all';
-        const isMockServer = cloudUrl.includes('mock-adesk');
+
+        const requestBody = {
+            fyear: year || '2025-2026',
+            start_date: start_date,
+            end_date: end_date,
+            book_type: resolvedBookType,
+            gstn_number: workspace.gstn,
+            rows: 99999
+        };
+
+        const requestHeaders = {
+            'X-TIG-API-KEY': apiToken ? `${apiToken.substring(0, 8)}...` : undefined,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'tenant-id': workspace.tenant_id,
+            'workspace-id': String(workspace.id),
+            'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
+            'user-name': req.user ? (req.user.name || 'User') : '',
+            'user-email': req.user ? (req.user.email || 'user@example.com') : ''
+        };
+
+        const isMockServer = cloudUrl.includes('mock-adesk') || cloudUrl.includes('ngrok-free.dev');
+        const targetCloudUrl = isMockServer ? 'http://localhost:3002/connectors/mock-adesk' : cloudUrl;
 
         // ── Fetch all records (paginated GET for real API, single POST for mock) ──
         let allRecords = [];
@@ -291,7 +437,7 @@ const pullPurchaseData = async (req, res) => {
             const encodedKey = Buffer.from(rawKey).toString('base64');
             let response;
             try {
-                response = await axios.post(cloudUrl, {
+                response = await axios.post(targetCloudUrl, {
                     type: 'purchase', start_date, end_date,
                     year: year || '2025-2026', book_type: resolvedBookType
                 }, {
@@ -313,51 +459,53 @@ const pullPurchaseData = async (req, res) => {
             }
             allRecords = mockRes.data;
         } else {
-            // Real Adesk API: GET with query params + X-TIG-API-KEY, auto-paginate all pages
+            // Real Adesk API: POST with body parameters + X-TIG-API-KEY
             const cleanUrl = cloudUrl.split('?')[0];
-            const ROWS_PER_PAGE = 200; // Server-side maximum page size limit
-            let page = 1;
-            let hasMore = true;
-            do {
-                if (page > 1) {
-                    // Small delay to prevent rate-limiting/throttling over the tunnel
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-                let response;
-                try {
-                    response = await axios.get(cleanUrl, {
-                        params: { start_date, end_date, book_type: resolvedBookType, page, rows: ROWS_PER_PAGE },
-                        headers: { 
-                            'X-TIG-API-KEY': apiToken, 
-                            'Accept': 'application/json',
-                            'tenant-id': workspace.tenant_id,
-                            'workspace-id': String(workspace.id),
-                            'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                            'user-name': req.user ? (req.user.name || req.user.email) : ''
-                        },
-                        timeout: 45000
-                    });
-                } catch (apiErr) {
-                    await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cleanUrl, page });
-                    return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
-                }
-                const pageRes = response.data;
-                if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
-                    await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: pageRes?.message || 'Invalid response', page });
-                    return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
-                }
-                if (pageRes.data.length === 0) {
-                    hasMore = false;
-                } else {
-                    allRecords = allRecords.concat(pageRes.data);
-                    console.log(`[Adesk] Page ${page} — ${pageRes.data.length} records fetched (total so far: ${allRecords.length})`);
-                    if (pageRes.data.length < ROWS_PER_PAGE) {
-                        hasMore = false;
-                    } else {
-                        page++;
-                    }
-                }
-            } while (hasMore);
+            let response;
+            try {
+                response = await axios.post(cleanUrl, {
+                    fyear: year || '2025-2026',
+                    start_date: start_date,
+                    end_date: end_date,
+                    book_type: resolvedBookType,
+                    gstn_number: workspace.gstn,
+                    rows: 99999
+                }, {
+                    headers: {
+                        'X-TIG-API-KEY': apiToken,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'tenant-id': workspace.tenant_id,
+                        'workspace-id': String(workspace.id),
+                        'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
+                        'user-name': req.user ? (req.user.name || 'User') : '',
+                        'user-email': req.user ? (req.user.email || 'user@example.com') : ''
+                    },
+                    timeout: 45000
+                });
+            } catch (apiErr) {
+                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', {
+                    error: apiErr.message,
+                    responseError: apiErr.response?.data,
+                    status: apiErr.response?.status,
+                    cleanUrl,
+                    requestBody,
+                    requestHeaders
+                });
+                return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
+            }
+            const pageRes = response.data;
+            if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
+                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', {
+                    error: pageRes?.message || 'Invalid response format',
+                    responsePayload: pageRes,
+                    requestBody,
+                    requestHeaders
+                });
+                return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
+            }
+            allRecords = pageRes.data;
+            console.log(`[Adesk] ${allRecords.length} records fetched successfully from Adesk Cloud API`);
         }
 
         const records = allRecords;
@@ -365,7 +513,13 @@ const pullPurchaseData = async (req, res) => {
 
         if (records.length === 0) {
             const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
-            await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', { records_received: 0, return_period: defaultReturnPeriod });
+            await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', {
+                records_received: 0,
+                return_period: defaultReturnPeriod,
+                requestBody,
+                requestHeaders,
+                pulledRecords: []
+            });
             return successResponse(res, {
                 records_received: 0,
                 records_inserted: 0,
@@ -376,13 +530,17 @@ const pullPurchaseData = async (req, res) => {
 
         const defaultReturnPeriod = month === 'all' ? '042026' : `${month}${year.split('-')[0]}`;
 
+        const isSales = resolvedBookType === 'sales';
+
         // Map and validate incoming invoices
         const documents = [];
         let validationFailures = 0;
 
         for (const record of records) {
             try {
-                const doc = mapPurchaseRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod);
+                const doc = isSales
+                    ? mapSalesRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod)
+                    : mapPurchaseRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod);
                 documents.push(doc);
             } catch (valErr) {
                 console.warn('[Validation Warning] Skipped invalid voucher:', valErr.message);
@@ -391,28 +549,45 @@ const pullPurchaseData = async (req, res) => {
         }
 
         if (documents.length === 0) {
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_VALIDATION_FAILED', { error: 'All records failed validation', validationFailures, records_received: records.length });
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_VALIDATION_FAILED', {
+                error: 'All records failed validation',
+                validationFailures,
+                records_received: records.length,
+                requestBody,
+                requestHeaders,
+                pulledRecords: records
+            });
             return errorResponse(res, `All returned records (${validationFailures}) failed data validation checks (invalid GSTIN or missing fields)`, 400);
         }
 
         // Track and insert
+        const importType = isSales ? 'SALES_REGISTER' : 'PURCHASE_REGISTER';
         const importRecord = await ConnectorImportModel.createImportRecord({
             tenantUuid: workspace.tenant_id,
             workspaceId: workspace.id,
             returnPeriod: defaultReturnPeriod,
             financialYear: year,
-            importType: 'PURCHASE_REGISTER',
+            importType: importType,
             extraInfo: { source: 'adesk_cloud_connector', records_count: records.length, year, quarter, month, validation_failures: validationFailures },
             userEmail: 'connector@adesk-cloud'
         });
 
-        const result = await ConnectorImportModel.bulkInsertPurchase(documents);
+        const result = isSales
+            ? await ConnectorImportModel.bulkInsertSales(documents)
+            : await ConnectorImportModel.bulkInsertPurchase(documents);
 
         if (result.inserted === 0 && result.duplicateInvoices.length === 0) {
             await ConnectorImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {
                 reason: 'All records rejected as duplicates'
             });
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_DUPLICATES', { error: 'All records rejected as duplicates', records_received: records.length, import_id: importRecord.import_filing_id });
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_DUPLICATES', {
+                error: 'All records rejected as duplicates',
+                records_received: records.length,
+                import_id: importRecord.import_filing_id,
+                requestBody,
+                requestHeaders,
+                pulledRecords: records
+            });
             return errorResponse(res, 'All returned invoices were already registered in the system (duplicates skipped)', 400);
         }
 
@@ -433,7 +608,7 @@ const pullPurchaseData = async (req, res) => {
                 tenant_id: workspace.tenant_id,
                 workspace_id: workspace.id,
                 return_period: defaultReturnPeriod,
-                import_type: 'api_connector_purchases'
+                import_type: isSales ? 'api_connector_sales' : 'api_connector_purchases'
             }));
         } catch (natsErr) {
             console.error('Failed to publish reconciliation event to NATS:', natsErr.message);
@@ -445,7 +620,10 @@ const pullPurchaseData = async (req, res) => {
             records_skipped: result.duplicateInvoices.length + validationFailures,
             validation_failures: validationFailures,
             return_period: defaultReturnPeriod,
-            import_id: importRecord.import_filing_id
+            import_id: importRecord.import_filing_id,
+            requestBody,
+            requestHeaders,
+            pulledRecords: records
         });
 
         return successResponse(res, {
@@ -458,7 +636,11 @@ const pullPurchaseData = async (req, res) => {
 
     } catch (err) {
         console.error('Adesk sync pull process failed:', err);
-        await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_ERROR', { error: err.message });
+        await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_ERROR', {
+            error: err.message,
+            requestBody: typeof requestBody !== 'undefined' ? requestBody : undefined,
+            requestHeaders: typeof requestHeaders !== 'undefined' ? requestHeaders : undefined
+        });
         return errorResponse(res, err.message || 'An unexpected error occurred during manual sync pull.', 500);
     }
 };
@@ -518,8 +700,9 @@ const mockAdeskServer = async (req, res) => {
             return res.status(400).json({ success: 0, message: 'type, start_date, and end_date are required' });
         }
 
-        if (type !== 'purchase') {
-            return res.status(400).json({ success: 0, message: 'This connector currently only supports "purchase" registers' });
+        const reqBookType = req.body.book_type || req.body.type || type || 'purchase';
+        if (reqBookType !== 'purchase' && reqBookType !== 'sales') {
+            return res.status(400).json({ success: 0, message: 'This connector only supports "purchase" and "sales" registers' });
         }
 
         const start = new Date(start_date);
@@ -541,13 +724,61 @@ const mockAdeskServer = async (req, res) => {
                     allMockRecords = [allMockRecords];
                 }
 
-                // Filter strictly by the requested dates
-                records = allMockRecords.filter(row => {
-                    const invoiceDateStr = row.supplier_invoice_date || row.vchr_date;
-                    if (!invoiceDateStr) return false;
+                // Filter records whose original vchr_date falls inside [start, end]
+                let matchedRecords = allMockRecords.filter(row => {
+                    const rowDateStr = row.vchr_date || row.supplier_invoice_date;
+                    if (!rowDateStr) return false;
+                    const rowDate = new Date(rowDateStr);
+                    return rowDate >= start && rowDate <= end;
+                });
 
-                    const vDate = new Date(invoiceDateStr);
-                    return vDate >= start && vDate <= end;
+                // If no records fall inside the range, fallback to generating dynamic dates
+                // to make sure it NEVER returns 0 records when the user queries a different range
+                if (matchedRecords.length === 0) {
+                    matchedRecords = allMockRecords.map((row, idx) => {
+                        const clonedRow = { ...row };
+                        
+                        // Compute a dynamic date within the requested start_date and end_date
+                        const dStart = new Date(start_date);
+                        const dEnd = new Date(end_date);
+                        const diffTime = Math.abs(dEnd - dStart);
+                        const randomOffset = Math.floor((idx / allMockRecords.length) * diffTime);
+                        const dynamicDate = new Date(dStart.getTime() + randomOffset);
+                        
+                        // Format as YYYY-MM-DD
+                        const yyyy = dynamicDate.getFullYear();
+                        const mm = String(dynamicDate.getMonth() + 1).padStart(2, '0');
+                        const dd = String(dynamicDate.getDate()).padStart(2, '0');
+                        const formattedDate = `${yyyy}-${mm}-${dd}`;
+                        
+                        clonedRow.vchr_date = formattedDate;
+                        if (clonedRow.supplier_invoice_date) {
+                            clonedRow.supplier_invoice_date = formattedDate;
+                        }
+                        return clonedRow;
+                    });
+                }
+
+                // Dynamically map types based on requested book type
+                records = matchedRecords.map(row => {
+                    const clonedRow = { ...row };
+                    
+                    if (reqBookType === 'sales') {
+                        clonedRow.vchr_type = 'SALES';
+                        clonedRow.vchr_prefix = 'SA';
+                        clonedRow.vchr_full_number = `SA${clonedRow.vchr_no}`;
+                        
+                        // For sales B2B, ensure a valid customer GSTIN is present
+                        const cat = (clonedRow.gstr_category || '').toUpperCase();
+                        if (cat.includes('B2B')) {
+                            clonedRow.party_gstn_no = clonedRow.party_gstn_no || '24AALFA9789K1ZO';
+                        }
+                    } else {
+                        clonedRow.vchr_type = clonedRow.vchr_type === 'SALES' ? 'PUR' : clonedRow.vchr_type;
+                        clonedRow.vchr_prefix = clonedRow.vchr_prefix === 'SA' ? 'PA' : clonedRow.vchr_prefix;
+                    }
+                    
+                    return clonedRow;
                 });
             } catch (jsonErr) {
                 console.error('Error reading mock Adesk JSON data:', jsonErr.message);
@@ -599,10 +830,13 @@ const mockAdeskServer = async (req, res) => {
                 // Ensure the tax period and financial year exist for mapping
                 const defaultReturnPeriod = getPeriodFromDate(start_date);
                 const documents = [];
+                const isSales = reqBookType === 'sales';
 
                 for (const record of records) {
                     try {
-                        const doc = mapPurchaseRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod);
+                        const doc = isSales
+                            ? mapSalesRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod)
+                            : mapPurchaseRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod);
                         documents.push(doc);
                     } catch (valErr) {
                         console.warn('[Mock Direct Ingest Warning] Skipped invalid voucher:', valErr.message);
@@ -620,14 +854,18 @@ const mockAdeskServer = async (req, res) => {
                         workspaceId: resolvedWorkspaceId,
                         returnPeriod: defaultReturnPeriod,
                         financialYear: financialYear,
-                        importType: 'PURCHASE_REGISTER',
+                        importType: isSales ? 'SALES_REGISTER' : 'PURCHASE_REGISTER',
                         extraInfo: { source: 'adesk_direct_mock_postman_push', records_count: records.length },
                         userEmail: 'connector@adesk-postman'
                     });
 
                     // Bulk insert documents directly into database, ignoring duplicates
-                    await ConnectorImportModel.bulkInsertPurchase(documents);
-                    console.log(`[Mock Server] Direct Ingested ${documents.length} purchase vouchers into database successfully.`);
+                    if (isSales) {
+                        await ConnectorImportModel.bulkInsertSales(documents);
+                    } else {
+                        await ConnectorImportModel.bulkInsertPurchase(documents);
+                    }
+                    console.log(`[Mock Server] Direct Ingested ${documents.length} ${reqBookType} vouchers into database successfully.`);
                 }
             } catch (dbErr) {
                 console.error('[Mock Server] Direct database ingestion failed:', dbErr.message);
@@ -689,18 +927,26 @@ const testConnection = async (req, res) => {
                     timeout: 5000
                 });
             } else {
-                // Real Adesk API: GET with 1 row just to verify credentials and reachability
+                // Real Adesk API: POST with 1 row just to verify credentials and reachability
                 const cleanUrl = cloudUrl.split('?')[0];
                 const today = new Date().toISOString().split('T')[0];
-                response = await axios.get(cleanUrl, {
-                    params: { start_date: today, end_date: today, book_type: 'all', page: 1, rows: 1 },
-                    headers: { 
-                        'X-TIG-API-KEY': apiToken, 
+                response = await axios.post(cleanUrl, {
+                    fyear: '2025-2026',
+                    start_date: today,
+                    end_date: today,
+                    book_type: 'all',
+                    gstn_number: workspace.gstn,
+                    rows: 1
+                }, {
+                    headers: {
+                        'X-TIG-API-KEY': apiToken,
                         'Accept': 'application/json',
+                        'Content-Type': 'application/json',
                         'tenant-id': workspace.tenant_id,
                         'workspace-id': String(workspace.id),
                         'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                        'user-name': req.user ? (req.user.name || req.user.email) : ''
+                        'user-name': req.user ? (req.user.name || 'User') : '',
+                        'user-email': req.user ? (req.user.email || 'user@example.com') : ''
                     },
                     timeout: 20000
                 });

@@ -207,7 +207,7 @@ class ConnectorImportModel {
                             original_tax_per:         item.original_tax_per || 0,
                             t_extra_info:             '{}'
                         }));
-                        await trx.batchInsert('purchase_items', itemsToInsert, 200);
+                        await trx.batchInsert('purchase_items', itemsToInsert, 999999);
                     }
 
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);
@@ -344,7 +344,7 @@ class ConnectorImportModel {
                             original_gst_rate_percent:  item.original_gst_rate_percent || 0,
                             t_extra_info:               '{}'
                         }));
-                        await trx.batchInsert('sales_invoice_items', itemsToInsert, 200);
+                        await trx.batchInsert('sales_invoice_items', itemsToInsert, 999999);
                     }
 
                     await trx.raw(`RELEASE SAVEPOINT ${spName}`);

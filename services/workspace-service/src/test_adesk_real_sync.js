@@ -17,8 +17,8 @@ const API_KEY     = 'tig_inbound_4nEYYmlAviMAf9oyoRYZJsXe7IgnNkWn';
 const START_DATE  = '2025-04-01';
 const END_DATE    = '2026-03-31';
 const BOOK_TYPE   = 'all';
-const ROWS_PER_PG = 100;
-const WORKSPACE_ID = '80d8922a-c192-4759-83d3-a9d4c60f1072';
+const ROWS_PER_PG = 999999;
+const WORKSPACE_ID = '276e51ab-12da-404a-bac9-be1d675ca0d3';
 // ──────────────────────────────────────────────────────────────────────────────
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
