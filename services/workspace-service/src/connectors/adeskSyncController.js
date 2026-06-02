@@ -78,18 +78,36 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
     // Translate abbreviations to satisfy PostgreSQL database Check Constraints
     if (voucherType === 'EXP' || voucherType === 'EXPENSE') {
         voucherType = 'EXPENSE';
-    } else if (voucherType === 'PUR' || voucherType === 'PURCHASE') {
+    } else if (voucherType === 'PUR' || voucherType === 'PURCHASE' || voucherType === 'PA') {
         voucherType = 'PURCHASE';
     } else if (voucherType === 'DN' || voucherType === 'DEBIT_NOTE') {
         voucherType = 'DEBIT_NOTE';
     } else if (voucherType === 'CN' || voucherType === 'CREDIT_NOTE') {
         voucherType = 'CREDIT_NOTE';
+    } else {
+        voucherType = 'PURCHASE';
     }
 
-    if (bookType === 'PURCHASE' || bookType === 'PUR') {
-        bookType = 'PA';
-    } else if (bookType === 'EXPENSE') {
+    // Map bookType to valid column values: 'PA' (purchase), 'EXP' (expense), 'CN' (credit note), 'DN' (debit note)
+    if (voucherType === 'EXPENSE') {
         bookType = 'EXP';
+    } else if (voucherType === 'PURCHASE') {
+        bookType = 'PA';
+    } else if (voucherType === 'DEBIT_NOTE') {
+        bookType = 'DN';
+    } else if (voucherType === 'CREDIT_NOTE') {
+        bookType = 'CN';
+    } else {
+        // Fallback mapping based on substring checking if voucherType is unknown
+        if (bookType.includes('EXP')) {
+            bookType = 'EXP';
+        } else if (bookType.includes('DN')) {
+            bookType = 'DN';
+        } else if (bookType.includes('CN')) {
+            bookType = 'CN';
+        } else {
+            bookType = 'PA';
+        }
     }
 
     // Validation checks matching book data import
@@ -220,7 +238,12 @@ const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
         invoiceType = 'B2B'; // Must be one of B2B, B2C_SMALL, B2C_LARGE, EXPORT, SEZ
     }
 
-    if (bookType === 'SALES' || bookType === 'SLS') {
+    // Map bookType to valid column values: 'SA' (sales), 'SR' (sales return), 'CN' (credit note), 'DN' (debit note)
+    if (invoiceType === 'DEBIT_NOTE') {
+        bookType = 'DN';
+    } else if (invoiceType === 'CREDIT_NOTE') {
+        bookType = 'CN';
+    } else {
         bookType = 'SA';
     }
 
@@ -406,7 +429,7 @@ const pullPurchaseData = async (req, res) => {
         const resolvedBookType = book_type || 'all';
 
         const requestBody = {
-            fyear: year || '2025-2026',
+            fyear: year,
             start_date: start_date,
             end_date: end_date,
             book_type: resolvedBookType,
@@ -743,20 +766,20 @@ const mockAdeskServer = async (req, res) => {
                 if (matchedRecords.length === 0) {
                     matchedRecords = allMockRecords.map((row, idx) => {
                         const clonedRow = { ...row };
-                        
+
                         // Compute a dynamic date within the requested start_date and end_date
                         const dStart = new Date(start_date);
                         const dEnd = new Date(end_date);
                         const diffTime = Math.abs(dEnd - dStart);
                         const randomOffset = Math.floor((idx / allMockRecords.length) * diffTime);
                         const dynamicDate = new Date(dStart.getTime() + randomOffset);
-                        
+
                         // Format as YYYY-MM-DD
                         const yyyy = dynamicDate.getFullYear();
                         const mm = String(dynamicDate.getMonth() + 1).padStart(2, '0');
                         const dd = String(dynamicDate.getDate()).padStart(2, '0');
                         const formattedDate = `${yyyy}-${mm}-${dd}`;
-                        
+
                         clonedRow.vchr_date = formattedDate;
                         if (clonedRow.supplier_invoice_date) {
                             clonedRow.supplier_invoice_date = formattedDate;
@@ -768,12 +791,12 @@ const mockAdeskServer = async (req, res) => {
                 // Dynamically map types based on requested book type
                 records = matchedRecords.map(row => {
                     const clonedRow = { ...row };
-                    
+
                     if (reqBookType === 'sales') {
                         clonedRow.vchr_type = 'SALES';
                         clonedRow.vchr_prefix = 'SA';
                         clonedRow.vchr_full_number = `SA${clonedRow.vchr_no}`;
-                        
+
                         // For sales B2B, ensure a valid customer GSTIN is present
                         const cat = (clonedRow.gstr_category || '').toUpperCase();
                         if (cat.includes('B2B')) {
@@ -784,7 +807,7 @@ const mockAdeskServer = async (req, res) => {
                         clonedRow.vchr_type = clonedRow.vchr_type === 'SALES' ? 'PUR' : clonedRow.vchr_type;
                         clonedRow.vchr_prefix = clonedRow.vchr_prefix === 'SA' ? 'PA' : clonedRow.vchr_prefix;
                     }
-                    
+
                     return clonedRow;
                 });
             } catch (jsonErr) {
