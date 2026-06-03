@@ -983,7 +983,10 @@ class BookDataModel {
             .first();
 
         if (record) {
-            // Fetch items/line details if needed, for now return main record
+            const items = await knex('purchase_items')
+                .where('purchase_id', id)
+                .orderBy('id', 'asc');
+            record.items = items;
             return record;
         }
 
@@ -992,7 +995,15 @@ class BookDataModel {
             .where({ id, workspace_id: workspaceId })
             .first();
 
-        return record || null;
+        if (record) {
+            const items = await knex('sales_invoice_items')
+                .where('sales_id', id)
+                .orderBy('id', 'asc');
+            record.items = items;
+            return record;
+        }
+
+        return null;
     }
 
     /**

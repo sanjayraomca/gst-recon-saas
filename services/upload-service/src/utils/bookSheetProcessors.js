@@ -244,18 +244,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
         const invDate = parseDate(row[invDateIdx]);
         if (!invDate) continue;
 
-        const taxable = cleanAmount(taxableIdx !== null ? row[taxableIdx] : 0);
-        const igst = cleanAmount(igstIdx !== null ? row[igstIdx] : 0);
-        const sgst = cleanAmount(sgstIdx !== null ? row[sgstIdx] : 0);
-        const cgst = cleanAmount(cgstIdx !== null ? row[cgstIdx] : 0);
-        const cess = cleanAmount(cessIdx !== null ? row[cessIdx] : 0);
-
-        let itemTotal = itemTotalIdx !== null ? cleanAmount(row[itemTotalIdx]) : 0;
-        if (itemTotal === 0 && (taxable || igst || cgst || sgst || cess)) {
-            itemTotal = taxable + igst + cgst + sgst + cess;
-        }
-
-        const groupKey = `${invNum}__${invDate}__${itemTotal}`;
+        const groupKey = `${invNum}__${invDate}`;
 
         const custGstinRaw = gstinIdx !== null ? (row[gstinIdx] ?? '').toString().trim() : '';
         const custGstinClean = (custGstinRaw && isValidGSTIN(custGstinRaw)) ? custGstinRaw : null;
@@ -264,12 +253,22 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
         const bookType = resolveSalesBookType(vchType);
         const invType = resolveSalesInvoiceType(vchType, custGstinClean);
 
+        const taxable = cleanAmount(taxableIdx !== null ? row[taxableIdx] : 0);
+        const igst = cleanAmount(igstIdx !== null ? row[igstIdx] : 0);
+        const sgst = cleanAmount(sgstIdx !== null ? row[sgstIdx] : 0);
+        const cgst = cleanAmount(cgstIdx !== null ? row[cgstIdx] : 0);
+        const cess = cleanAmount(cessIdx !== null ? row[cessIdx] : 0);
+        const rowVal = cleanAmount(invValIdx !== null ? row[invValIdx] : 0);
 
         const isAmendment = isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
         const roundOff = cleanAmount(roundOffIdx !== null ? row[roundOffIdx] : 0);
         const description = descIdx !== null ? (row[descIdx] ?? '').toString().trim() || null : null;
         const taxRateStr = taxPerIdx !== null ? (row[taxPerIdx] ?? '').toString().replace(/%/g, '').trim() : '';
         const taxRate = taxRateStr ? parseFloat(taxRateStr) : null;
+        let itemTotal = itemTotalIdx !== null ? cleanAmount(row[itemTotalIdx]) : 0;
+        if (itemTotal === 0 && (taxable || igst || cgst || sgst || cess)) {
+            itemTotal = taxable + igst + cgst + sgst + cess;
+        }
 
         // Capture raw columns not mapped to a dedicated DB column → t_extra_info
         const gstrCategory = gstrCategoryIdx !== null ? (row[gstrCategoryIdx] ?? '').toString().trim() || null : null;
@@ -356,7 +355,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
         inv.header.total_cgst += cgst;
         inv.header.total_sgst += sgst;
         inv.header.total_cess += cess;
-        inv.header.total_invoice_value = itemTotal;
+        if (rowVal > 0) inv.header.total_invoice_value = rowVal;
         if (roundOff !== 0) inv.header.round_off = roundOff;
 
         // Build item-level t_extra_info: row-specific raw values
@@ -551,7 +550,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
             if (isNaN(taxRate)) taxRate = 0;
         }
 
-        const groupKey = `${bookVchrNo}__${bookVchrDate}__${itemTotal}`;
+        const groupKey = `${bookVchrNo}__${bookVchrDate}`;
 
         // Capture gstr_category and raw columns not mapped to a dedicated DB column → t_extra_info
         const gstrCategory = gstrCategoryIdx !== null ? (row[gstrCategoryIdx] ?? '').toString().trim() || null : null;
@@ -646,7 +645,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         v.header.total_cgst_amount += cgst;
         v.header.total_sgst_amount += sgst;
         v.header.total_cess_amount += cess;
-        v.header.net_amount = itemTotal;
+        if (rowVal > 0) v.header.net_amount = rowVal;
         if (roundOff !== 0) v.header.round_off = roundOff;
 
         // Build item-level t_extra_info: row-specific raw values

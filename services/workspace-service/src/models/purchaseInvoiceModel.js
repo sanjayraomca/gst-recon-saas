@@ -64,12 +64,21 @@ class PurchaseInvoiceModel {
      * Get single purchase invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await knex('purchase_vouchers')
+        const voucher = await knex('purchase_vouchers')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId
             })
             .first();
+
+        if (!voucher) return null;
+
+        const items = await knex('purchase_items')
+            .where('purchase_id', invoiceId)
+            .orderBy('id', 'asc');
+
+        voucher.items = items;
+        return voucher;
     }
 
     /**
