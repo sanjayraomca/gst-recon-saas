@@ -109,7 +109,7 @@ class ConnectorImportModel {
                             return_date, original_return_period, original_return_date, source_section,
                             gstr_category, t_extra_info
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
                             book_vchr_date = EXCLUDED.book_vchr_date,
@@ -266,7 +266,7 @@ class ConnectorImportModel {
                             original_return_period, original_return_date, source_section,
                             gstr_category, t_extra_info
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id, total_invoice_value)
                         DO UPDATE SET
                             customer_name = EXCLUDED.customer_name,
                             customer_gstin = EXCLUDED.customer_gstin,

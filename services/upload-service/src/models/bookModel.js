@@ -57,7 +57,7 @@ class BookModel {
                             original_return_period, original_return_date, source_section,
                             gstr_category, t_extra_info
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id) 
+                        ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id, total_invoice_value) 
                         DO UPDATE SET 
                             total_invoice_value = EXCLUDED.total_invoice_value,
                             total_taxable_value = EXCLUDED.total_taxable_value,
@@ -225,7 +225,7 @@ class BookModel {
                             return_date, original_return_period, original_return_date, source_section,
                             gstr_category, t_extra_info
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
+                        ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
                             book_vchr_date = EXCLUDED.book_vchr_date,

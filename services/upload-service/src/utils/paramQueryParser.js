@@ -2,6 +2,17 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 
 /**
+ * Helper to convert column letter (e.g. A, B, Z, AA) to 0-based column index.
+ */
+const colLetterToIndex = (colLetter) => {
+    let index = 0;
+    for (let i = 0; i < colLetter.length; i++) {
+        index = index * 26 + (colLetter.charCodeAt(i) - 64);
+    }
+    return index - 1;
+};
+
+/**
  * Fallback parser for non-standard "ParamQuery" XLSX exports.
  * 
  * Some ERP systems export XLSX files where the worksheets are not in the
@@ -10,7 +21,7 @@ const fs = require('fs');
  * than using the standard sharedStrings.xml.
  * 
  * The standard `xlsx` package fails to read these files (returns 0 sheets/rows).
- * This parser manually unzips and extracts the data using a simple regex.
+ * This parser manually unzips and extracts the data using a robust cell-mapping regex.
  */
 const parseParamQueryFallback = (filePath) => {
     try {
@@ -22,61 +33,66 @@ const parseParamQueryFallback = (filePath) => {
         }
 
         const rowRegex = /<row[^>]*>(.*?)<\/row>/g;
-        // Match <c> elements and extract the text inside <t>. It handles CDATA automatically.
-        const cellRegex = /<c[^>]*>.*?<t[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/t>.*?<\/c>/g;
-
         const rows = [];
         let match;
         
         while ((match = rowRegex.exec(xml)) !== null) {
             let rowXml = match[1];
             let cells = [];
-            let cellMatch;
             
-            // Note: This regex ignores empty cells that don't have a <t> tag, 
-            // but in ParamQuery exports, empty cells usually have an empty CDATA.
-            // If they are completely missing, column alignment might shift.
-            // Let's use a more robust regex that just captures the <c> tag.
-            // For ParamQuery, every column is explicitly outputted.
+            // Match cell tags: either <c attrs>content</c> or self-closing <c attrs />
+            const cTags = [...rowXml.matchAll(/<c\s+([^>]*?)(?:>(.*?)<\/c>|\/>)/g)];
             
-            // We use matchAll to iterate over <c> tags.
-            const cTags = [...rowXml.matchAll(/<c[^>]*>(.*?)<\/c>/g)];
-            
+            let colIdx = -1;
             for (const cTag of cTags) {
-                const inner = cTag[1];
+                const attributes = cTag[1];
+                const inner = cTag[2] || '';
+                
+                // Determine exact column index based on r="[ColumnLetter][RowNumber]"
+                const rMatch = /r="([A-Z]+)\d+"/.exec(attributes);
+                if (rMatch) {
+                    colIdx = colLetterToIndex(rMatch[1]);
+                } else {
+                    colIdx++;
+                }
+                
+                let val = null;
                 
                 // Text strings inside inlineStr CDATA
                 const tMatch = /<t[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/t>/.exec(inner);
                 if (tMatch) {
-                    cells.push(tMatch[1]);
-                    continue;
-                }
-                
-                // Numeric or date values inside <v>
-                const vMatch = /<v[^>]*>(.*?)<\/v>/.exec(inner);
-                if (vMatch) {
-                    // It could be a number or an excel date serial
-                    let val = vMatch[1];
-                    if (!isNaN(val)) {
-                        val = Number(val);
+                    val = tMatch[1];
+                } else {
+                    // Numeric or date values inside <v>
+                    const vMatch = /<v[^>]*>(.*?)<\/v>/.exec(inner);
+                    if (vMatch) {
+                        val = vMatch[1];
+                        if (!isNaN(val) && val.trim() !== '') {
+                            val = Number(val);
+                        }
                     }
-                    cells.push(val);
-                    continue;
                 }
                 
-                cells.push(null);
+                cells[colIdx] = val;
             }
+            
+            // Fill any skipped columns/holes with null
+            for (let k = 0; k < cells.length; k++) {
+                if (cells[k] === undefined) {
+                    cells[k] = null;
+                }
+            }
+            
             rows.push(cells);
         }
 
         if (rows.length > 0) {
-            console.log(`[ParamQueryParser] Successfully extracted ${rows.length} rows via fallback.`);
+            console.log(`[ParamQueryParser] Successfully extracted ${rows.length} rows via robust fallback.`);
             return rows;
         }
 
         return null;
     } catch (e) {
-        // Suppress errors, this is just a fallback
         console.error('[ParamQueryParser] Fallback failed:', e.message);
         return null;
     }

@@ -1102,7 +1102,7 @@ CREATE TABLE sales_invoices (
 
     -- Uniqueness Constraint
     CONSTRAINT uq_sales_invoice_unique 
-        UNIQUE (tenant_id, workspace_id, book_type, invoice_number, tax_period_id)
+        UNIQUE (tenant_id, workspace_id, book_type, invoice_number, tax_period_id, total_invoice_value)
 );
 
 
@@ -1235,7 +1235,7 @@ CREATE TABLE purchase_vouchers (
     t_extra_info JSONB DEFAULT '{}',
 
     CONSTRAINT uq_purchase_voucher_invoice 
-    UNIQUE (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no)
+    UNIQUE (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
 );
 
 
