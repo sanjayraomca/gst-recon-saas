@@ -8,6 +8,103 @@ const { isValidGSTIN } = require('./validation');
 const axios = require('axios');
 
 /**
+ * Helper: Group mapped documents by invoice/voucher identity, summing up the totals
+ * and merging the item lists.
+ */
+const groupMappedDocuments = (documents, isSales) => {
+    const groupedMap = new Map();
+    for (const doc of documents) {
+        const header = doc.header;
+        const key = isSales
+            ? `${header.invoice_number}__${header.invoice_date}`
+            : `${header.book_vchr_no}__${header.book_vchr_date}`;
+
+        if (!groupedMap.has(key)) {
+            const headerClone = { ...header };
+            if (isSales) {
+                headerClone.total_taxable_value = 0;
+                headerClone.total_igst = 0;
+                headerClone.total_cgst = 0;
+                headerClone.total_sgst = 0;
+                headerClone.total_cess = 0;
+                headerClone.total_invoice_value = 0;
+            } else {
+                headerClone.taxable_total = 0;
+                headerClone.total_igst_amount = 0;
+                headerClone.total_cgst_amount = 0;
+                headerClone.total_sgst_amount = 0;
+                headerClone.total_cess_amount = 0;
+                headerClone.net_amount = 0;
+            }
+            groupedMap.set(key, {
+                header: headerClone,
+                items: []
+            });
+        }
+
+        const existing = groupedMap.get(key);
+        existing.items.push(...(doc.items || []));
+
+        if (isSales) {
+            existing.header.total_taxable_value += header.total_taxable_value || 0;
+            existing.header.total_igst += header.total_igst || 0;
+            existing.header.total_cgst += header.total_cgst || 0;
+            existing.header.total_sgst += header.total_sgst || 0;
+            existing.header.total_cess += header.total_cess || 0;
+            if (header.total_invoice_value > 0) {
+                existing.header.total_invoice_value = header.total_invoice_value;
+            }
+            if (header.round_off !== 0) {
+                existing.header.round_off = header.round_off;
+            }
+        } else {
+            existing.header.taxable_total += header.taxable_total || 0;
+            existing.header.total_igst_amount += header.total_igst_amount || 0;
+            existing.header.total_cgst_amount += header.total_cgst_amount || 0;
+            existing.header.total_sgst_amount += header.total_sgst_amount || 0;
+            existing.header.total_cess_amount += header.total_cess_amount || 0;
+            // SUM the per-row net amounts (row_wise_total_amount) to build the full invoice total
+            existing.header.net_amount += header.net_amount || 0;
+            if (header.round_off !== 0) {
+                existing.header.round_off = header.round_off;
+            }
+        }
+    }
+
+    const result = Array.from(groupedMap.values());
+    for (const doc of result) {
+        if (isSales) {
+            if (!doc.header.total_invoice_value || doc.header.total_invoice_value <= 0) {
+                doc.header.total_invoice_value =
+                    doc.header.total_taxable_value +
+                    doc.header.total_igst +
+                    doc.header.total_cgst +
+                    doc.header.total_sgst +
+                    doc.header.total_cess +
+                    (doc.header.round_off || 0);
+            }
+            for (const k of ['total_taxable_value', 'total_igst', 'total_cgst', 'total_sgst', 'total_cess', 'total_invoice_value']) {
+                doc.header[k] = Math.round(doc.header[k] * 100) / 100;
+            }
+        } else {
+            if (!doc.header.net_amount || doc.header.net_amount <= 0) {
+                doc.header.net_amount =
+                    doc.header.taxable_total +
+                    doc.header.total_igst_amount +
+                    doc.header.total_cgst_amount +
+                    doc.header.total_sgst_amount +
+                    doc.header.total_cess_amount +
+                    (doc.header.round_off || 0);
+            }
+            for (const k of ['taxable_total', 'total_igst_amount', 'total_cgst_amount', 'total_sgst_amount', 'total_cess_amount', 'net_amount']) {
+                doc.header[k] = Math.round(doc.header[k] * 100) / 100;
+            }
+        }
+    }
+    return result;
+};
+
+/**
  * Helper: Calculate dynamic start and end dates based on FY string, quarter, and month.
  * Handles fiscal boundaries and Leap years dynamically.
  */
@@ -75,9 +172,16 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
     const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
     const returnPeriod = vchrDate ? getPeriodFromDate(vchrDate) : defaultReturnPeriod;
 
-    // Support both custom mock keys and real Adesk response keys
-    const supplierInvoiceNo = String(record.supplier_invoice_no || record.vchr_full_number || record.vchr_no || '').trim();
+    // book_vchr_no: from book_vchr_no or vchr_full_number (e.g. "C1EXP4" from Adesk)
     const bookVchrNo = String(record.book_vchr_no || record.vchr_full_number || record.vchr_no || '').trim();
+    // supplier_invoice_no: must use the ref/supplier invoice number, NOT the internal book vchr number
+    // Adesk sends the supplier's invoice as ref_vchr_full_number or ref_vchr_no (e.g. "U-130")
+    const supplierInvoiceNo = String(
+        record.supplier_invoice_no ||
+        record.ref_vchr_full_number ||
+        record.ref_vchr_no ||
+        bookVchrNo // last resort fallback
+    ).trim();
     const supplierGstin = String(record.supplier_gstin || record.party_gstn_no || '').trim().toUpperCase();
     const supplierName = String(record.supplier_name || record.party_name || 'Generic Supplier').trim();
 
@@ -135,7 +239,9 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
 
     // Derive financials using both custom mock schema and real Adesk schema keys
     const taxableTotal = parseFloat(record.taxable_value || record.taxable_amount || record.total_taxable_amount || 0);
-    const netAmount = parseFloat(record.net_amount || record.total_value || record.invoice_amount || record.row_wise_total_amount || 0);
+    // Use row_wise_total_amount FIRST (per-line-item amount), fall back to invoice_amount (full invoice total)
+    // This ensures each tax-rate line shows its own correct net amount, not the full invoice total
+    const netAmount = parseFloat(record.row_wise_total_amount || record.net_amount || record.total_value || record.invoice_amount || 0);
     const totalIgstAmount = parseFloat(record.igst || record.igst_amount || record.total_igst_tax_amount || 0);
     const totalCgstAmount = parseFloat(record.cgst || record.cgst_amount || record.total_cgst_tax_amount || 0);
     const totalSgstAmount = parseFloat(record.sgst || record.sgst_amount || record.total_sgst_tax_amount || 0);
@@ -172,12 +278,24 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
         is_rcm: record.is_rcm || (record.reverse_charge === 'Yes') || false,
         voucher_type: voucherType,
         book_type: bookType,
-        gstr_category: record.gstr_category || 'NONGST',
+        gstr_category: record.gstr_category || null,
+        // Derive source_section from gstr_category (same logic as CSV sheet processor)
+        source_section: (() => {
+            const gc = (record.gstr_category || '').toString().toUpperCase().trim();
+            if (gc === 'RDB2B' || gc === 'B2B') return 'B2B';
+            if (gc === 'CDNR' || gc === 'RDB2BA') return 'cdnr';
+            if (gc === 'RDB2C') return 'B2C';
+            if (gc === 'NONGST') return null;
+            // Fallback: derive from book_type + GSTIN (same as resolveSourceSection in bookSheetProcessors)
+            const bt = bookType;
+            if ((bt === 'PA' || bt === 'EXP') && supplierGstin) return 'B2B';
+            return null;
+        })(),
         status: record.status || 'DRAFT',
         remarks: record.remarks || null,
 
         // Period
-        filing_period: returnPeriod,
+        filing_period: record.filing_period || returnPeriod,
         return_period: returnPeriod,
         tax_period_id: null,
 
@@ -543,7 +661,18 @@ const pullPurchaseData = async (req, res) => {
                 requestBody,
                 requestHeaders
             });
-            return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
+            const httpStatus = apiErr.response?.status;
+            let userMsg;
+            if (httpStatus === 404) {
+                userMsg = `Adesk Cloud URL returned 404 Not Found. The ngrok tunnel or API endpoint URL may be stale or incorrect. Please update the Cloud URL in Connector Setup. (URL: ${cleanUrl})`;
+            } else if (httpStatus === 401 || httpStatus === 403) {
+                userMsg = `Adesk API rejected the request with ${httpStatus}. Check your API Token in Connector Setup.`;
+            } else if (httpStatus) {
+                userMsg = `Adesk Cloud API returned HTTP ${httpStatus}. Please verify the URL and API Token in Connector Setup.`;
+            } else {
+                userMsg = `Cannot connect to Adesk Cloud API. Check if the ngrok tunnel is running. (${apiErr.message})`;
+            }
+            return errorResponse(res, userMsg, 502);
         }
         const pageRes = response.data;
         if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
@@ -620,7 +749,9 @@ const pullPurchaseData = async (req, res) => {
             }
         }
 
-        if (documents.length === 0) {
+        const groupedDocuments = groupMappedDocuments(documents, isSales);
+
+        if (groupedDocuments.length === 0) {
             await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_VALIDATION_FAILED', {
                 error: 'All records failed validation',
                 validationFailures,
@@ -645,8 +776,8 @@ const pullPurchaseData = async (req, res) => {
         });
 
         const result = isSales
-            ? await ConnectorImportModel.bulkInsertSales(documents)
-            : await ConnectorImportModel.bulkInsertPurchase(documents);
+            ? await ConnectorImportModel.bulkInsertSales(groupedDocuments)
+            : await ConnectorImportModel.bulkInsertPurchase(groupedDocuments);
 
         if (result.inserted === 0 && result.duplicateInvoices.length === 0) {
             await ConnectorImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {

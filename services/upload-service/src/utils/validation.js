@@ -69,7 +69,7 @@ const parseExcelDate = (dateVal) => {
 
     // If number (Excel serial date) or string that looks like one
     const isNumeric = typeof dateVal === 'number' || (typeof dateVal === 'string' && !isNaN(parseFloat(dateVal)) && /^\d+(\.\d+)?$/.test(dateVal.trim()));
-    
+
     if (isNumeric) {
         const num = parseFloat(dateVal);
         // Excel serial dates are usually between 20000 (1954) and 60000 (2064)

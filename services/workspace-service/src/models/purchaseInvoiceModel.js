@@ -24,19 +24,20 @@ class PurchaseInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = knex('purchase_vouchers')
-            .where({ workspace_id: workspaceId });
+        let query = knex('purchase_vouchers as ev')
+            .leftJoin('purchase_items as pi', 'ev.id', 'pi.purchase_id')
+            .where('ev.workspace_id', workspaceId);
 
         // Apply filters
-        if (gstin_id) query = query.where({ gstin_id });
-        if (supplier_id) query = query.where({ supplier_id });
-        if (invoice_date_from) query = query.where('invoice_date', '>=', invoice_date_from);
-        if (invoice_date_to) query = query.where('invoice_date', '<=', invoice_date_to);
-        if (itc_eligibility_status) query = query.where({ itc_eligibility_status });
-        if (reverse_charge !== undefined) query = query.where({ reverse_charge });
-        if (payment_status) query = query.where({ payment_status });
+        if (gstin_id) query = query.where('ev.gstin_id', gstin_id);
+        if (supplier_id) query = query.where('ev.supplier_id', supplier_id);
+        if (invoice_date_from) query = query.where('ev.invoice_date', '>=', invoice_date_from);
+        if (invoice_date_to) query = query.where('ev.invoice_date', '<=', invoice_date_to);
+        if (itc_eligibility_status) query = query.where('ev.itc_eligibility_status', itc_eligibility_status);
+        if (reverse_charge !== undefined) query = query.where('ev.reverse_charge', reverse_charge);
+        if (payment_status) query = query.where('ev.payment_status', payment_status);
         if (search) {
-            query = query.where('invoice_number', 'like', `%${search}%`);
+            query = query.where('ev.invoice_number', 'like', `%${search}%`);
         }
 
         // Get total count
@@ -45,7 +46,19 @@ class PurchaseInvoiceModel {
 
         // Get paginated results
         const invoices = await query
-            .orderBy('invoice_date', 'desc')
+            .select(
+                'ev.*',
+                'pi.id as item_id',
+                'pi.taxable_amount as item_taxable_amount',
+                'pi.tax_per as item_tax_per',
+                'pi.igst_amount as item_igst_amount',
+                'pi.cgst_amount as item_cgst_amount',
+                'pi.sgst_amount as item_sgst_amount',
+                'pi.cess_amount as item_cess_amount',
+                'pi.total_amount_with_tax as item_total_amount_with_tax',
+                'pi.description as item_description'
+            )
+            .orderBy('ev.invoice_date', 'desc')
             .limit(page_size)
             .offset(offset);
 

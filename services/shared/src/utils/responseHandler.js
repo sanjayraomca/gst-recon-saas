@@ -33,8 +33,14 @@ const errorResponse = (res, error, statusCode = 500) => {
         if (!message || message === 'Error' || message === 'Bad Request') {
             message = 'Some information is missing or incorrect. Please check your input and try again.';
         }
-    } else if (statusCode === 500 || statusCode === 502) {
+    } else if (statusCode === 500) {
         message = 'Something went wrong on our end. Please try again in a few minutes.';
+    } else if (statusCode === 502) {
+        // Only use generic message if there's no meaningful custom message already
+        if (!message || message === 'Error' || message === 'Bad Gateway' || message === 'Internal Server Error') {
+            message = 'Something went wrong on our end. Please try again in a few minutes.';
+        }
+        // Otherwise preserve the specific message (e.g. "ngrok URL returned 404")
     }
 
     return res.status(statusCode).json({

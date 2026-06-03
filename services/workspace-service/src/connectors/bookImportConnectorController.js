@@ -8,6 +8,104 @@ const TaxPeriodService = require('../../../shared/src/services/taxPeriodService'
 // but lives inside workspace-service container (no cross-service file dependency)
 const ConnectorImportModel = require('./connectorImportModel');
 
+
+/**
+ * Helper: Group mapped documents by invoice/voucher identity, summing up the totals
+ * and merging the item lists.
+ */
+const groupMappedDocuments = (documents, isSales) => {
+    const groupedMap = new Map();
+    for (const doc of documents) {
+        const header = doc.header;
+        const key = isSales
+            ? `${header.invoice_number}__${header.invoice_date}`
+            : `${header.book_vchr_no}__${header.book_vchr_date}`;
+
+        if (!groupedMap.has(key)) {
+            const headerClone = { ...header };
+            if (isSales) {
+                headerClone.total_taxable_value = 0;
+                headerClone.total_igst = 0;
+                headerClone.total_cgst = 0;
+                headerClone.total_sgst = 0;
+                headerClone.total_cess = 0;
+                headerClone.total_invoice_value = 0;
+            } else {
+                headerClone.taxable_total = 0;
+                headerClone.total_igst_amount = 0;
+                headerClone.total_cgst_amount = 0;
+                headerClone.total_sgst_amount = 0;
+                headerClone.total_cess_amount = 0;
+                headerClone.net_amount = 0;
+            }
+            groupedMap.set(key, {
+                header: headerClone,
+                items: []
+            });
+        }
+
+        const existing = groupedMap.get(key);
+        existing.items.push(...(doc.items || []));
+
+        if (isSales) {
+            existing.header.total_taxable_value += header.total_taxable_value || 0;
+            existing.header.total_igst += header.total_igst || 0;
+            existing.header.total_cgst += header.total_cgst || 0;
+            existing.header.total_sgst += header.total_sgst || 0;
+            existing.header.total_cess += header.total_cess || 0;
+            if (header.total_invoice_value > 0) {
+                existing.header.total_invoice_value = header.total_invoice_value;
+            }
+            if (header.round_off !== 0) {
+                existing.header.round_off = header.round_off;
+            }
+        } else {
+            existing.header.taxable_total += header.taxable_total || 0;
+            existing.header.total_igst_amount += header.total_igst_amount || 0;
+            existing.header.total_cgst_amount += header.total_cgst_amount || 0;
+            existing.header.total_sgst_amount += header.total_sgst_amount || 0;
+            existing.header.total_cess_amount += header.total_cess_amount || 0;
+            // SUM the per-row net amounts to build the full invoice total
+            existing.header.net_amount += header.net_amount || 0;
+            if (header.round_off !== 0) {
+                existing.header.round_off = header.round_off;
+            }
+        }
+    }
+
+    const result = Array.from(groupedMap.values());
+    for (const doc of result) {
+        if (isSales) {
+            if (!doc.header.total_invoice_value || doc.header.total_invoice_value <= 0) {
+                doc.header.total_invoice_value =
+                    doc.header.total_taxable_value +
+                    doc.header.total_igst +
+                    doc.header.total_cgst +
+                    doc.header.total_sgst +
+                    doc.header.total_cess +
+                    (doc.header.round_off || 0);
+            }
+            for (const k of ['total_taxable_value', 'total_igst', 'total_cgst', 'total_sgst', 'total_cess', 'total_invoice_value']) {
+                doc.header[k] = Math.round(doc.header[k] * 100) / 100;
+            }
+        } else {
+            if (!doc.header.net_amount || doc.header.net_amount <= 0) {
+                doc.header.net_amount =
+                    doc.header.taxable_total +
+                    doc.header.total_igst_amount +
+                    doc.header.total_cgst_amount +
+                    doc.header.total_sgst_amount +
+                    doc.header.total_cess_amount +
+                    (doc.header.round_off || 0);
+            }
+            for (const k of ['taxable_total', 'total_igst_amount', 'total_cgst_amount', 'total_sgst_amount', 'total_cess_amount', 'net_amount']) {
+                doc.header[k] = Math.round(doc.header[k] * 100) / 100;
+            }
+        }
+    }
+    return result;
+};
+
 /**
  * ConnectorBookImportController
  *
@@ -32,16 +130,16 @@ const VALID_TYPES = ['purchase_register', 'sales_register', 'purchase_return', '
 
 const TYPE_TO_BOOK = {
     purchase_register: 'PURCHASE',
-    purchase_return:   'PURCHASE_RETURN',
-    sales_register:    'SALES',
-    sales_return:      'SALES_RETURN'
+    purchase_return: 'PURCHASE_RETURN',
+    sales_register: 'SALES',
+    sales_return: 'SALES_RETURN'
 };
 
 const TYPE_TO_IMPORT_TYPE = {
     purchase_register: 'PURCHASE_REGISTER',
-    purchase_return:   'PURCHASE_REGISTER',
-    sales_register:    'SALES_REGISTER',
-    sales_return:      'SALES_REGISTER'
+    purchase_return: 'PURCHASE_REGISTER',
+    sales_register: 'SALES_REGISTER',
+    sales_return: 'SALES_REGISTER'
 };
 
 
@@ -83,83 +181,83 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
     }
 
     const header = {
-        tenant_id:               tenantId,
-        workspace_id:            workspaceId,
+        tenant_id: tenantId,
+        workspace_id: workspaceId,
 
         // Voucher identity
-        book_vchr_no:            vchrNo,
-        book_vchr_date:          record.vchr_date || record.voucher_date || null,
+        book_vchr_no: vchrNo,
+        book_vchr_date: record.vchr_date || record.voucher_date || null,
 
         // Supplier
-        supplier_name:           String(record.party_name || record.supplier_name || '').trim(),
-        supplier_gstin:          String(record.party_gstn_no || record.supplier_gstin || record.party_gstin || '').trim().toUpperCase() || null,
+        supplier_name: String(record.party_name || record.supplier_name || '').trim(),
+        supplier_gstin: String(record.party_gstn_no || record.supplier_gstin || record.party_gstin || '').trim().toUpperCase() || null,
         // supplier_invoice_no is NOT NULL in purchase_vouchers — fall back to vchrNo
-        supplier_invoice_no:     String(record.supplier_invoice_no || vchrNo || '').trim(),
-        supplier_invoice_date:   record.supplier_invoice_date || record.vchr_date || null,
+        supplier_invoice_no: String(record.supplier_invoice_no || vchrNo || '').trim(),
+        supplier_invoice_date: record.supplier_invoice_date || record.vchr_date || null,
 
         // Tax amounts
-        taxable_total:           parseFloat(record.total_taxable_amount || record.taxable_value || record.taxable_amount || 0),
-        total_igst_amount:       parseFloat(record.total_igst_tax_amount || record.igst || record.igst_amount || 0),
-        total_cgst_amount:       parseFloat(record.total_cgst_tax_amount || record.cgst || record.cgst_amount || 0),
-        total_sgst_amount:       parseFloat(record.total_sgst_tax_amount || record.sgst || record.sgst_amount || 0),
-        total_cess_amount:       parseFloat(record.total_cess_tax_amount || record.cess || record.cess_amount || 0),
-        net_amount:              parseFloat(record.invoice_amount || record.row_wise_total_amount || record.total_value || record.net_amount || record.invoice_value || 0),
-        round_off:               parseFloat(record.round_off_amount || record.round_off || 0),
-        discount:                parseFloat(record.discount || 0),
-        total_qty:               parseFloat(record.total_qty || 0),
+        taxable_total: parseFloat(record.total_taxable_amount || record.taxable_value || record.taxable_amount || 0),
+        total_igst_amount: parseFloat(record.total_igst_tax_amount || record.igst || record.igst_amount || 0),
+        total_cgst_amount: parseFloat(record.total_cgst_tax_amount || record.cgst || record.cgst_amount || 0),
+        total_sgst_amount: parseFloat(record.total_sgst_tax_amount || record.sgst || record.sgst_amount || 0),
+        total_cess_amount: parseFloat(record.total_cess_tax_amount || record.cess || record.cess_amount || 0),
+        net_amount: parseFloat(record.invoice_amount || record.row_wise_total_amount || record.total_value || record.net_amount || record.invoice_value || 0),
+        round_off: parseFloat(record.round_off_amount || record.round_off || 0),
+        discount: parseFloat(record.discount || 0),
+        total_qty: parseFloat(record.total_qty || 0),
 
         // GST fields
-        place_of_supply:         record.place_of_supply || null,
-        is_interstate:           record.inter_state || (record.is_interstate ? 'Yes' : 'No'),
-        is_rcm:                  record.reverse_charge ? (record.reverse_charge.toLowerCase() === 'yes') : (record.is_rcm || false),
-        voucher_type:            dbVoucherType,
-        book_type:               dbBookType,
-        gstr_category:           record.gstr_category || null,
-        source_section:          record.source_section || null,
-        status:                  record.status || 'DRAFT',
-        remarks:                 record.remarks || null,
-        itc_eligible:            record.itc_eligible !== undefined ? record.itc_eligible : null,
-        itc_claimed:             record.itc_claimed !== undefined ? record.itc_claimed : null,
+        place_of_supply: record.place_of_supply || null,
+        is_interstate: record.inter_state || (record.is_interstate ? 'Yes' : 'No'),
+        is_rcm: record.reverse_charge ? (record.reverse_charge.toLowerCase() === 'yes') : (record.is_rcm || false),
+        voucher_type: dbVoucherType,
+        book_type: dbBookType,
+        gstr_category: record.gstr_category || null,
+        source_section: record.source_section || null,
+        status: record.status || 'DRAFT',
+        remarks: record.remarks || null,
+        itc_eligible: record.itc_eligible !== undefined ? record.itc_eligible : null,
+        itc_claimed: record.itc_claimed !== undefined ? record.itc_claimed : null,
 
         // Period
-        filing_period:           record.filing_period || returnPeriod,
-        return_period:           returnPeriod,
-        tax_period_id:           null, // resolved dynamically by BookModel
+        filing_period: record.filing_period || returnPeriod,
+        return_period: returnPeriod,
+        tax_period_id: null, // resolved dynamically by BookModel
 
         // Amendment fields
-        is_amendment:            record.is_amendment ? (record.is_amendment.toLowerCase() === 'yes') : (record.is_amendment || false),
-        original_supplier_invoice_no:   record.original_supplier_invoice_no || null,
+        is_amendment: record.is_amendment ? (record.is_amendment.toLowerCase() === 'yes') : (record.is_amendment || false),
+        original_supplier_invoice_no: record.original_supplier_invoice_no || null,
         original_supplier_invoice_date: record.original_supplier_invoice_date || null,
-        original_book_vchr_no:          record.original_book_vchr_no || null,
-        original_book_vchr_date:        record.original_book_vchr_date || null,
-        original_net_amount:            parseFloat(record.original_net_amount || 0),
-        return_date:                    record.return_date || null,
-        original_return_period:         record.original_return_period || null,
-        original_return_date:           record.original_return_date || null,
+        original_book_vchr_no: record.original_book_vchr_no || null,
+        original_book_vchr_date: record.original_book_vchr_date || null,
+        original_net_amount: parseFloat(record.original_net_amount || 0),
+        return_date: record.return_date || null,
+        original_return_period: record.original_return_period || null,
+        original_return_date: record.original_return_date || null,
 
         t_extra_info: { source: 'api_connector', connector_ref: record.connector_ref || null }
     };
 
     // Items — optional line-item breakdown
     const items = (record.items || []).map(item => ({
-        hsn_code:               String(item.hsn_code || item.hsn || '').trim() || null,
-        description:            item.description || null,
-        quantity:               parseFloat(item.quantity || item.qty || 0),
-        uom:                    item.uom || null,
-        unit_rate:              parseFloat(item.unit_rate || item.rate || 0),
-        taxable_amount:         parseFloat(item.taxable_value || item.taxable_amount || 0),
-        tax_per:                parseFloat(item.tax_rate || item.gst_rate || item.tax_per || 0),
-        igst_amount:            parseFloat(item.igst || item.igst_amount || 0),
-        cgst_amount:            parseFloat(item.cgst || item.cgst_amount || 0),
-        sgst_amount:            parseFloat(item.sgst || item.sgst_amount || 0),
-        cess_amount:            parseFloat(item.cess || item.cess_amount || 0),
-        total_amount_with_tax:  parseFloat(item.total_value || item.total_amount_with_tax || 0),
+        hsn_code: String(item.hsn_code || item.hsn || '').trim() || null,
+        description: item.description || null,
+        quantity: parseFloat(item.quantity || item.qty || 0),
+        uom: item.uom || null,
+        unit_rate: parseFloat(item.unit_rate || item.rate || 0),
+        taxable_amount: parseFloat(item.taxable_value || item.taxable_amount || 0),
+        tax_per: parseFloat(item.tax_rate || item.gst_rate || item.tax_per || 0),
+        igst_amount: parseFloat(item.igst || item.igst_amount || 0),
+        cgst_amount: parseFloat(item.cgst || item.cgst_amount || 0),
+        sgst_amount: parseFloat(item.sgst || item.sgst_amount || 0),
+        cess_amount: parseFloat(item.cess || item.cess_amount || 0),
+        total_amount_with_tax: parseFloat(item.total_value || item.total_amount_with_tax || 0),
         original_taxable_amount: parseFloat(item.original_taxable_amount || 0),
-        original_igst_amount:    parseFloat(item.original_igst_amount || 0),
-        original_cgst_amount:    parseFloat(item.original_cgst_amount || 0),
-        original_sgst_amount:    parseFloat(item.original_sgst_amount || 0),
-        original_cess_amount:    parseFloat(item.original_cess_amount || 0),
-        original_tax_per:        parseFloat(item.original_tax_per || 0),
+        original_igst_amount: parseFloat(item.original_igst_amount || 0),
+        original_cgst_amount: parseFloat(item.original_cgst_amount || 0),
+        original_sgst_amount: parseFloat(item.original_sgst_amount || 0),
+        original_cess_amount: parseFloat(item.original_cess_amount || 0),
+        original_tax_per: parseFloat(item.original_tax_per || 0),
         t_extra_info: {}
     }));
 
@@ -173,71 +271,71 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
  */
 const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
     const header = {
-        tenant_id:              tenantId,
-        workspace_id:           workspaceId,
+        tenant_id: tenantId,
+        workspace_id: workspaceId,
 
         // Invoice identity
-        invoice_number:         String(record.invoice_no || record.vchr_no || record.invoice_number || '').trim(),
-        invoice_date:           record.invoice_date || record.vchr_date || null,
-        invoice_type:           record.invoice_type || 'B2B',
-        book_type:              record.book_type || 'SA',
+        invoice_number: String(record.invoice_no || record.vchr_no || record.invoice_number || '').trim(),
+        invoice_date: record.invoice_date || record.vchr_date || null,
+        invoice_type: record.invoice_type || 'B2B',
+        book_type: record.book_type || 'SA',
 
         // Customer
-        customer_name:          String(record.party_name || record.customer_name || '').trim(),
-        customer_gstin:         String(record.party_gstin || record.customer_gstin || '').trim().toUpperCase() || null,
+        customer_name: String(record.party_name || record.customer_name || '').trim(),
+        customer_gstin: String(record.party_gstin || record.customer_gstin || '').trim().toUpperCase() || null,
 
         // Tax amounts
-        total_taxable_value:    parseFloat(record.taxable_value || record.taxable_amount || 0),
-        total_igst:             parseFloat(record.igst || record.igst_amount || 0),
-        total_cgst:             parseFloat(record.cgst || record.cgst_amount || 0),
-        total_sgst:             parseFloat(record.sgst || record.sgst_amount || 0),
-        total_cess:             parseFloat(record.cess || record.cess_amount || 0),
-        total_invoice_value:    parseFloat(record.total_value || record.invoice_value || record.net_amount || 0),
-        round_off:              parseFloat(record.round_off || 0),
+        total_taxable_value: parseFloat(record.taxable_value || record.taxable_amount || 0),
+        total_igst: parseFloat(record.igst || record.igst_amount || 0),
+        total_cgst: parseFloat(record.cgst || record.cgst_amount || 0),
+        total_sgst: parseFloat(record.sgst || record.sgst_amount || 0),
+        total_cess: parseFloat(record.cess || record.cess_amount || 0),
+        total_invoice_value: parseFloat(record.total_value || record.invoice_value || record.net_amount || 0),
+        round_off: parseFloat(record.round_off || 0),
 
         // GST fields
-        place_of_supply:        record.place_of_supply || null,
-        reverse_charge:         record.reverse_charge || false,
-        gstr_category:          record.gstr_category || null,
-        source_section:         record.source_section || null,
+        place_of_supply: record.place_of_supply || null,
+        reverse_charge: record.reverse_charge || false,
+        gstr_category: record.gstr_category || null,
+        source_section: record.source_section || null,
 
         // Period
-        filing_period:          record.filing_period || returnPeriod,
-        return_period:          returnPeriod,
-        tax_period_id:          null, // resolved dynamically by BookModel
+        filing_period: record.filing_period || returnPeriod,
+        return_period: returnPeriod,
+        tax_period_id: null, // resolved dynamically by BookModel
 
         // Amendment fields
-        is_amendment:           record.is_amendment || false,
-        original_invoice_no:    record.original_invoice_no || null,
-        original_invoice_date:  record.original_invoice_date || null,
-        original_book_vchr_no:  record.original_book_vchr_no || null,
-        original_book_vchr_date:record.original_book_vchr_date || null,
-        original_net_amount:    parseFloat(record.original_net_amount || 0),
-        return_date:            record.return_date || null,
+        is_amendment: record.is_amendment || false,
+        original_invoice_no: record.original_invoice_no || null,
+        original_invoice_date: record.original_invoice_date || null,
+        original_book_vchr_no: record.original_book_vchr_no || null,
+        original_book_vchr_date: record.original_book_vchr_date || null,
+        original_net_amount: parseFloat(record.original_net_amount || 0),
+        return_date: record.return_date || null,
         original_return_period: record.original_return_period || null,
-        original_return_date:   record.original_return_date || null,
+        original_return_date: record.original_return_date || null,
 
         t_extra_info: { source: 'api_connector', connector_ref: record.connector_ref || null }
     };
 
     const items = (record.items || []).map(item => ({
-        hsn_sac_code:           String(item.hsn_sac_code || item.hsn || '').trim() || null,
-        description:            item.description || null,
-        quantity:               parseFloat(item.quantity || item.qty || 0),
-        uom:                    item.uom || null,
-        unit_rate:              parseFloat(item.unit_rate || item.rate || 0),
-        taxable_value:          parseFloat(item.taxable_value || item.taxable_amount || 0),
-        gst_rate_percent:       parseFloat(item.tax_rate || item.gst_rate || 0),
-        igst_amount:            parseFloat(item.igst || item.igst_amount || 0),
-        cgst_amount:            parseFloat(item.cgst || item.cgst_amount || 0),
-        sgst_amount:            parseFloat(item.sgst || item.sgst_amount || 0),
-        cess_amount:            parseFloat(item.cess || item.cess_amount || 0),
-        total_amount_with_tax:  parseFloat(item.total_value || item.total_amount_with_tax || 0),
+        hsn_sac_code: String(item.hsn_sac_code || item.hsn || '').trim() || null,
+        description: item.description || null,
+        quantity: parseFloat(item.quantity || item.qty || 0),
+        uom: item.uom || null,
+        unit_rate: parseFloat(item.unit_rate || item.rate || 0),
+        taxable_value: parseFloat(item.taxable_value || item.taxable_amount || 0),
+        gst_rate_percent: parseFloat(item.tax_rate || item.gst_rate || 0),
+        igst_amount: parseFloat(item.igst || item.igst_amount || 0),
+        cgst_amount: parseFloat(item.cgst || item.cgst_amount || 0),
+        sgst_amount: parseFloat(item.sgst || item.sgst_amount || 0),
+        cess_amount: parseFloat(item.cess || item.cess_amount || 0),
+        total_amount_with_tax: parseFloat(item.total_value || item.total_amount_with_tax || 0),
         original_taxable_value: parseFloat(item.original_taxable_value || 0),
-        original_igst_amount:   parseFloat(item.original_igst_amount || 0),
-        original_cgst_amount:   parseFloat(item.original_cgst_amount || 0),
-        original_sgst_amount:   parseFloat(item.original_sgst_amount || 0),
-        original_cess_amount:   parseFloat(item.original_cess_amount || 0),
+        original_igst_amount: parseFloat(item.original_igst_amount || 0),
+        original_cgst_amount: parseFloat(item.original_cgst_amount || 0),
+        original_sgst_amount: parseFloat(item.original_sgst_amount || 0),
+        original_cess_amount: parseFloat(item.original_cess_amount || 0),
         original_gst_rate_percent: parseFloat(item.original_gst_rate_percent || 0),
         t_extra_info: {}
     }));
@@ -368,9 +466,9 @@ const importBookData = async (req, res) => {
             resolvedReturnPeriod = `${mm}${yyyy}`;
         }
 
-        const bookType    = TYPE_TO_BOOK[resolvedType];
-        const importType  = TYPE_TO_IMPORT_TYPE[resolvedType];
-        const isSales     = bookType === 'SALES' || bookType === 'SALES_RETURN';
+        const bookType = TYPE_TO_BOOK[resolvedType];
+        const importType = TYPE_TO_IMPORT_TYPE[resolvedType];
+        const isSales = bookType === 'SALES' || bookType === 'SALES_RETURN';
 
         // ── Map incoming JSON → BookModel format ───────────────────────────
         const documents = records.map(record =>
@@ -379,23 +477,25 @@ const importBookData = async (req, res) => {
                 : mapPurchaseRecord(record, tenantId, workspaceId, resolvedReturnPeriod)
         );
 
+        const groupedDocuments = groupMappedDocuments(documents, isSales);
+
         // ── Create import tracking record ──────────────────────────────
         const importRecord = await ConnectorImportModel.createImportRecord({
-            tenantUuid:   tenantId,
+            tenantUuid: tenantId,
             workspaceId,
             returnPeriod: resolvedReturnPeriod,
             financialYear: TaxPeriodService.calculateFinancialYear(resolvedReturnPeriod),
             importType,
-            extraInfo:    { source: 'api_connector', mode, keyType, record_count: records.length },
-            userEmail:    'connector@api'
+            extraInfo: { source: 'api_connector', mode, keyType, record_count: records.length },
+            userEmail: 'connector@api'
         });
 
         // ── Run the import ─────────────────────────────────────────
         let result;
         if (isSales) {
-            result = await ConnectorImportModel.bulkInsertSales(documents);
+            result = await ConnectorImportModel.bulkInsertSales(groupedDocuments);
         } else {
-            result = await ConnectorImportModel.bulkInsertPurchase(documents);
+            result = await ConnectorImportModel.bulkInsertPurchase(groupedDocuments);
         }
 
         // ── Handle empty result ────────────────────────────────────────
@@ -413,7 +513,7 @@ const importBookData = async (req, res) => {
             'Completed',
             result.inserted,
             {
-                added_invoices:     result.addedInvoices,
+                added_invoices: result.addedInvoices,
                 duplicate_invoices: result.duplicateInvoices
             }
         );
@@ -421,12 +521,12 @@ const importBookData = async (req, res) => {
         // ── Publish NATS event (triggers reconciliation if configured) ─────
         try {
             await publishMessage('book-data-imported', JSON.stringify({
-                tenant_id:    tenantId,
+                tenant_id: tenantId,
                 workspace_id: workspaceId,
-                period:       return_period,
-                type:         bookType,
-                count:        result.inserted,
-                source:       'api_connector'
+                period: return_period,
+                type: bookType,
+                count: result.inserted,
+                source: 'api_connector'
             }));
         } catch (natsErr) {
             // Non-fatal — import succeeded even if reconciliation trigger fails
@@ -437,20 +537,20 @@ const importBookData = async (req, res) => {
         await logBookActivity(req, 'Success', `CONNECTOR_${bookType}_IMPORT`, {
             records_received: records.length,
             records_inserted: result.inserted,
-            records_skipped:  result.duplicateInvoices.length,
-            import_id:        importRecord.import_filing_id
+            records_skipped: result.duplicateInvoices.length,
+            import_id: importRecord.import_filing_id
         });
 
         return successResponse(res, {
-            import_id:         importRecord.import_filing_id,
+            import_id: importRecord.import_filing_id,
             type,
             return_period,
             mode,                                          // "live" or "demo" — driven by which key was used
-            records_received:  records.length,
-            records_inserted:  result.inserted,
-            records_updated:   result.duplicateInvoices.length,
-            added_refs:        result.addedInvoices,
-            updated_refs:      result.duplicateInvoices
+            records_received: records.length,
+            records_inserted: result.inserted,
+            records_updated: result.duplicateInvoices.length,
+            added_refs: result.addedInvoices,
+            updated_refs: result.duplicateInvoices
         }, `Import successful: ${result.inserted} records inserted, ${result.duplicateInvoices.length} updated`);
 
     } catch (error) {
