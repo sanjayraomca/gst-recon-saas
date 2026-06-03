@@ -7,8 +7,6 @@ const ConnectorImportModel = require('./connectorImportModel');
 const { isValidGSTIN } = require('./validation');
 const axios = require('axios');
 
-const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * Helper: Calculate dynamic start and end dates based on FY string, quarter, and month.
  * Handles fiscal boundaries and Leap years dynamically.
@@ -404,7 +402,7 @@ const logTigInbound = async (options) => {
 const logPullActivity = async (req, workspace, status, actionType, details) => {
     try {
         await logActivity({
-            userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+            userId: req.user?.db_id || null,
             tenantId: workspace ? workspace.tenant_id : null,
             workspaceId: workspace ? workspace.id : (req.body ? req.body.workspace_id : null),
             actionType: actionType,
@@ -432,11 +430,9 @@ const pullPurchaseData = async (req, res) => {
     const { workspace_id, year, quarter, month, start_date: reqStartDate, end_date: reqEndDate, book_type } = req.body;
     try {
         if (!workspace_id) {
-            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_INPUT', { error: 'workspace_id is required' });
             return errorResponse(res, 'workspace_id is required', 400);
         }
         if (!year || !quarter || !month) {
-            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_INPUT', { error: 'year, quarter, and month are required' });
             return errorResponse(res, 'year, quarter, and month are required', 400);
         }
 
@@ -447,7 +443,6 @@ const pullPurchaseData = async (req, res) => {
             .first();
 
         if (!workspace) {
-            await logPullActivity(req, null, 'Failed', 'CONNECTOR_ADESK_PULL_WORKSPACE_NOT_FOUND', { error: 'Workspace not found' });
             return errorResponse(res, 'Workspace not found', 404);
         }
 
@@ -460,11 +455,9 @@ const pullPurchaseData = async (req, res) => {
         const apiToken = adeskConfig.apiToken;
 
         if (!apiToken) {
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk API Key is missing' });
             return errorResponse(res, 'Adesk API Key is missing. Configure it in Connector Setup first.', 400);
         }
         if (!cloudUrl) {
-            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_AUTH_MISSING', { error: 'Adesk Cloud URL is missing' });
             return errorResponse(res, 'Adesk Cloud URL is missing. Configure it in Connector Setup first.', 400);
         }
 
@@ -494,187 +487,101 @@ const pullPurchaseData = async (req, res) => {
             'Content-Type': 'application/json',
             'tenant-id': workspace.tenant_id,
             'workspace-id': String(workspace.id),
-            'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
+            'user-id': req.user?.db_id || '',
             'user-name': req.user ? (req.user.name || '') : '',
             'user-email': req.user ? (req.user.email || '') : ''
         };
 
-        const isMockServer = cloudUrl.includes('mock-adesk');
-        const mockAdeskBaseUrl = process.env.MOCK_ADESK_URL || `http://localhost:${process.env.PORT || 3002}`;
-        const targetCloudUrl = isMockServer ? `${mockAdeskBaseUrl}/connectors/mock-adesk` : cloudUrl;
-
-        // ── Fetch all records (paginated GET for real API, single POST for mock) ──
-        let allRecords = [];
-
-        if (isMockServer) {
-            // Legacy mock server: POST with JSON body
-            const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-            const encodedKey = Buffer.from(rawKey).toString('base64');
-            let response;
-            try {
-                response = await axios.post(targetCloudUrl, {
-                    type: 'purchase',
-                    start_date,
-                    end_date,
-                    year: year || '',
-                    book_type: resolvedBookType
-                }, {
-                    headers: {
-                        'api_key': encodedKey, 'x-api-key': encodedKey,
-                        'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json',
-                        'tenant-id': workspace.tenant_id, 'workspace-id': String(workspace.id),
-                        'x-adesk-sync-source': 'saas-orchestrator'
-                    }, timeout: 10000
-                });
-            } catch (apiErr) {
-                await logTigInbound({
-                    req,
-                    type: resolvedBookType,
-                    requestType: 'pullPurchaseData_mock',
-                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
-                    tenantId: workspace.tenant_id,
-                    orgId: workspace.id,
-                    accessKey: apiToken,
-                    params: requestBody,
-                    respBody: { error: apiErr.message },
-                    status: 'error',
-                    extrainfo: { error: apiErr.message, cloudUrl }
-                });
-                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', { error: apiErr.message, cloudUrl });
-                return errorResponse(res, `Failed to reach mock server: ${apiErr.message}`, 502);
-            }
-            const mockRes = response.data;
-            if (!mockRes || mockRes.success !== 1 || !Array.isArray(mockRes.data)) {
-                await logTigInbound({
-                    req,
-                    type: resolvedBookType,
-                    requestType: 'pullPurchaseData_mock',
-                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
-                    tenantId: workspace.tenant_id,
-                    orgId: workspace.id,
-                    accessKey: apiToken,
-                    params: requestBody,
-                    respHeaders: { ...response.headers, connector_config: settings },
-                    respBody: mockRes,
-                    status: 'error',
-                    extrainfo: { error: 'Invalid response from mock server' }
-                });
-                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', { error: mockRes?.message || 'Invalid response' });
-                return errorResponse(res, mockRes?.message || 'Invalid response from mock server', 502);
-            }
-            await logTigInbound({
-                req,
-                type: resolvedBookType,
-                requestType: 'pullPurchaseData_mock',
-                userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
-                tenantId: workspace.tenant_id,
-                orgId: workspace.id,
-                accessKey: apiToken,
-                params: requestBody,
-                respHeaders: { ...response.headers, connector_config: settings },
-                respBody: mockRes,
-                status: 'success'
+        // Real Adesk API: POST with body parameters + X-TIG-API-KEY + base64 x-api-key
+        const cleanUrl = cloudUrl.split('?')[0];
+        const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+        const encodedKey = Buffer.from(rawKey).toString('base64');
+        let response;
+        try {
+            response = await axios.post(cleanUrl, {
+                fyear: year,
+                start_date: start_date,
+                end_date: end_date,
+                book_type: resolvedBookType,
+                gstn_number: workspace.gstn,
+                rows: 99999
+            }, {
+                headers: {
+                    'x-api-key': encodedKey,
+                    'api_key': encodedKey,
+                    'X-TIG-API-KEY': apiToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'tenant-id': workspace.tenant_id,
+                    'workspace-id': String(workspace.id),
+                    'user-id': req.user?.db_id || '',
+                    'user-name': req.user ? (req.user.name || '') : '',
+                    'user-email': req.user ? (req.user.email || '') : '',
+                    'third-party-platform': process.env.PLATFORM_NAME || 'GST Reconciliation Tool'
+                },
+                timeout: 45000
             });
-            allRecords = mockRes.data;
-        } else {
-            // Real Adesk API: POST with body parameters + X-TIG-API-KEY + base64 x-api-key
-            const cleanUrl = cloudUrl.split('?')[0];
-            const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-            const encodedKey = Buffer.from(rawKey).toString('base64');
-            let response;
-            try {
-                response = await axios.post(cleanUrl, {
-                    fyear: year,
-                    start_date: start_date,
-                    end_date: end_date,
-                    book_type: resolvedBookType,
-                    gstn_number: workspace.gstn,
-                    rows: 99999
-                }, {
-                    headers: {
-                        // 'Authorization': `Bearer ${apiToken}`,
-
-                        'x-api-key': encodedKey,
-                        'api_key': encodedKey,
-                        'X-TIG-API-KEY': apiToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'tenant-id': workspace.tenant_id,
-                        'workspace-id': String(workspace.id),
-                        'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                        'user-name': req.user ? (req.user.name || '') : '',
-                        'user-email': req.user ? (req.user.email || '') : '',
-                        'third-party-platform': process.env.PLATFORM_NAME || 'GST Reconciliation Tool'
-                    },
-                    timeout: 45000
-                });
-            } catch (apiErr) {
-                await logTigInbound({
-                    req,
-                    type: resolvedBookType,
-                    requestType: 'pullPurchaseData_real',
-                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
-                    tenantId: workspace.tenant_id,
-                    orgId: workspace.id,
-                    accessKey: apiToken,
-                    params: requestBody,
-                    respBody: { error: apiErr.message, responseError: apiErr.response?.data },
-                    status: 'error',
-                    extrainfo: { error: apiErr.message, status: apiErr.response?.status, cleanUrl }
-                });
-                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', {
-                    error: apiErr.message,
-                    responseError: apiErr.response?.data,
-                    status: apiErr.response?.status,
-                    cleanUrl,
-                    requestBody,
-                    requestHeaders
-                });
-                return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
-            }
-            const pageRes = response.data;
-            if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
-                await logTigInbound({
-                    req,
-                    type: resolvedBookType,
-                    requestType: 'pullPurchaseData_real',
-                    userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
-                    tenantId: workspace.tenant_id,
-                    orgId: workspace.id,
-                    accessKey: apiToken,
-                    params: requestBody,
-                    respHeaders: { ...response.headers, connector_config: settings },
-                    respBody: pageRes,
-                    status: 'error'
-                });
-                await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', {
-                    error: pageRes?.message || 'Invalid response format',
-                    responsePayload: pageRes,
-                    requestBody,
-                    requestHeaders
-                });
-                return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
-            }
+        } catch (apiErr) {
             await logTigInbound({
                 req,
                 type: resolvedBookType,
                 requestType: 'pullPurchaseData_real',
-                userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+                userId: req.user?.db_id || null,
+                tenantId: workspace.tenant_id,
+                orgId: workspace.id,
+                accessKey: apiToken,
+                params: requestBody,
+                respBody: { error: apiErr.message, responseError: apiErr.response?.data },
+                status: 'error',
+                extrainfo: { error: apiErr.message, status: apiErr.response?.status, cleanUrl }
+            });
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_CONNECTION_ERROR', {
+                error: apiErr.message,
+                responseError: apiErr.response?.data,
+                status: apiErr.response?.status,
+                cleanUrl,
+                requestBody,
+                requestHeaders
+            });
+            return errorResponse(res, `Failed to reach Adesk Cloud API: ${apiErr.message}`, 502);
+        }
+        const pageRes = response.data;
+        if (!pageRes || pageRes.success !== 1 || !Array.isArray(pageRes.data)) {
+            await logTigInbound({
+                req,
+                type: resolvedBookType,
+                requestType: 'pullPurchaseData_real',
+                userId: req.user?.db_id || null,
                 tenantId: workspace.tenant_id,
                 orgId: workspace.id,
                 accessKey: apiToken,
                 params: requestBody,
                 respHeaders: { ...response.headers, connector_config: settings },
                 respBody: pageRes,
-                status: 'success'
+                status: 'error'
             });
-            allRecords = pageRes.data;
-            console.log(`[Adesk] ${allRecords.length} records fetched successfully from Adesk Cloud API`);
+            await logPullActivity(req, workspace, 'Failed', 'CONNECTOR_ADESK_PULL_INVALID_RESPONSE', {
+                error: pageRes?.message || 'Invalid response format',
+                responsePayload: pageRes,
+                requestBody,
+                requestHeaders
+            });
+            return errorResponse(res, pageRes?.message || 'Invalid response from Adesk API', 502);
         }
-
-        const records = allRecords;
-
-
+        await logTigInbound({
+            req,
+            type: resolvedBookType,
+            requestType: 'pullPurchaseData_real',
+            userId: req.user?.db_id || null,
+            tenantId: workspace.tenant_id,
+            orgId: workspace.id,
+            accessKey: apiToken,
+            params: requestBody,
+            respHeaders: { ...response.headers, connector_config: settings },
+            respBody: pageRes,
+            status: 'success'
+        });
+        const records = pageRes.data;
         if (records.length === 0) {
             const defaultReturnPeriod = month === 'all' ? '' : `${month}${year.split('-')[0]}`;
             await logPullActivity(req, workspace, 'Success', 'CONNECTOR_ADESK_PULL_EMPTY', {
@@ -811,273 +718,6 @@ const pullPurchaseData = async (req, res) => {
 };
 
 /**
- * POST /connectors/mock-adesk
- * Simulates external Adesk Cloud Accounting Software Server.
- * Authenticates via base64 API key header and yields dynamic purchase registers.
- */
-const mockAdeskServer = async (req, res) => {
-    try {
-        const apiKeyHeader = req.headers['api_key'] || req.headers['x-api-key'] || req.headers['authorization'];
-        if (!apiKeyHeader) {
-            return res.status(400).json({ success: 0, message: 'Missing api_key or Authorization header' });
-        }
-
-        const rawToken = apiKeyHeader.startsWith('Bearer ') ? apiKeyHeader.substring(7) : apiKeyHeader;
-
-        let decoded;
-        try {
-            decoded = Buffer.from(rawToken, 'base64').toString('ascii');
-        } catch (decodeErr) {
-            return res.status(400).json({ success: 0, message: 'API key is not a valid base64 string' });
-        }
-
-        const parts = decoded.split('@@');
-        if (parts.length !== 3) {
-            return res.status(400).json({ success: 0, message: 'Invalid API key format. Expected tenant_uuid@@org_uuid@@org_gstn' });
-        }
-
-        const [tenantUuid, orgUuid, orgGstn] = parts;
-
-        // Perform validation: must be valid non-empty string codes and valid GSTIN
-        if (!tenantUuid || tenantUuid.trim() === '') {
-            return res.status(400).json({ success: 0, message: `Invalid tenant UUID or project code: "${tenantUuid}"` });
-        }
-        if (!orgUuid || orgUuid.trim() === '') {
-            return res.status(400).json({ success: 0, message: `Invalid organization UUID or org code: "${orgUuid}"` });
-        }
-        if (!isValidGSTIN(orgGstn)) {
-            return res.status(400).json({ success: 0, message: `Invalid GSTIN format: "${orgGstn}"` });
-        }
-
-        const { type, start_date, end_date } = req.body;
-
-        if (type === 'ping') {
-            return res.status(200).json({
-                success: 1,
-                message: 'Adesk Cloud mock server ping successful',
-                apiVersion: 'v1.4.12',
-                status: 'operational',
-                environment: 'production'
-            });
-        }
-
-        if (!type || !start_date || !end_date) {
-            return res.status(400).json({ success: 0, message: 'type, start_date, and end_date are required' });
-        }
-
-        const reqBookType = req.body.book_type || req.body.type || type || 'purchase';
-        if (reqBookType !== 'purchase' && reqBookType !== 'sales') {
-            return res.status(400).json({ success: 0, message: 'This connector only supports "purchase" and "sales" registers' });
-        }
-
-        const start = new Date(start_date);
-        const end = new Date(end_date);
-
-        const path = require('path');
-        const fs = require('fs');
-        const jsonPath = path.join(__dirname, 'mock-adesk-data.json');
-
-        let records = [];
-
-        if (fs.existsSync(jsonPath)) {
-            try {
-                const rawData = fs.readFileSync(jsonPath, 'utf8');
-                let allMockRecords = JSON.parse(rawData);
-
-                // If a single object is provided instead of an array, wrap it in an array
-                if (!Array.isArray(allMockRecords)) {
-                    allMockRecords = [allMockRecords];
-                }
-
-                // Filter records whose original vchr_date falls inside [start, end]
-                let matchedRecords = allMockRecords.filter(row => {
-                    const rowDateStr = row.vchr_date || row.supplier_invoice_date;
-                    if (!rowDateStr) return false;
-                    const rowDate = new Date(rowDateStr);
-                    return rowDate >= start && rowDate <= end;
-                });
-
-                // If no records fall inside the range, fallback to generating dynamic dates
-                // to make sure it NEVER returns 0 records when the user queries a different range
-                if (matchedRecords.length === 0) {
-                    matchedRecords = allMockRecords.map((row, idx) => {
-                        const clonedRow = { ...row };
-
-                        // Compute a dynamic date within the requested start_date and end_date
-                        const dStart = new Date(start_date);
-                        const dEnd = new Date(end_date);
-                        const diffTime = Math.abs(dEnd - dStart);
-                        const randomOffset = Math.floor((idx / allMockRecords.length) * diffTime);
-                        const dynamicDate = new Date(dStart.getTime() + randomOffset);
-
-                        // Format as YYYY-MM-DD
-                        const yyyy = dynamicDate.getFullYear();
-                        const mm = String(dynamicDate.getMonth() + 1).padStart(2, '0');
-                        const dd = String(dynamicDate.getDate()).padStart(2, '0');
-                        const formattedDate = `${yyyy}-${mm}-${dd}`;
-
-                        clonedRow.vchr_date = formattedDate;
-                        if (clonedRow.supplier_invoice_date) {
-                            clonedRow.supplier_invoice_date = formattedDate;
-                        }
-                        return clonedRow;
-                    });
-                }
-
-                // Dynamically map types based on requested book type
-                records = matchedRecords.map(row => {
-                    const clonedRow = { ...row };
-
-                    if (reqBookType === 'sales') {
-                        clonedRow.vchr_type = 'SALES';
-                        clonedRow.vchr_prefix = 'SA';
-                        clonedRow.vchr_full_number = `SA${clonedRow.vchr_no}`;
-
-                        // For sales B2B, ensure a valid customer GSTIN is present
-                        const cat = (clonedRow.gstr_category || '').toUpperCase();
-                        if (cat.includes('B2B')) {
-                            // Dynamically generate a placeholder GSTIN that is different from the org's own GSTIN
-                            if (!clonedRow.party_gstn_no) {
-                                // Rotate last character of orgGstn to produce a different valid-looking GSTIN placeholder
-                                const rotated = orgGstn.slice(0, -1) + (orgGstn.slice(-1) === 'Z' ? 'A' : String.fromCharCode(orgGstn.charCodeAt(orgGstn.length - 1) + 1));
-                                clonedRow.party_gstn_no = rotated;
-                            }
-                        }
-                    } else {
-                        clonedRow.vchr_type = clonedRow.vchr_type === 'SALES' ? 'PUR' : clonedRow.vchr_type;
-                        clonedRow.vchr_prefix = clonedRow.vchr_prefix === 'SA' ? 'PA' : clonedRow.vchr_prefix;
-                    }
-
-                    return clonedRow;
-                });
-            } catch (jsonErr) {
-                console.error('Error reading mock Adesk JSON data:', jsonErr.message);
-            }
-        } else {
-            console.warn(`Mock data file not found at: ${jsonPath}`);
-        }
-
-        // Write the fetched records directly into the local PostgreSQL database for a zero-friction developer experience
-        const isInternalOrchestrator = req.headers['x-adesk-sync-source'] === 'saas-orchestrator';
-        if (records.length > 0 && !isInternalOrchestrator) {
-            try {
-                // Resolve the actual, valid tenant_id and workspace_id from the database to prevent foreign key constraint violations
-                let resolvedTenantUuid = tenantUuid;
-                let resolvedWorkspaceId = orgUuid;
-
-                try {
-                    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgUuid);
-                    let dbWorkspace;
-                    if (isUuid) {
-                        dbWorkspace = await knex('workspaces')
-                            .where({ id: orgUuid })
-                            .select('id', 'tenant_id')
-                            .first();
-                    } else {
-                        dbWorkspace = await knex('workspaces')
-                            .where({ workspace_code: orgUuid })
-                            .select('id', 'tenant_id')
-                            .first();
-                    }
-
-                    if (dbWorkspace) {
-                        resolvedTenantUuid = dbWorkspace.tenant_id;
-                        resolvedWorkspaceId = dbWorkspace.id;
-                    } else {
-                        const keyRec = await knex('workspace_api_keys')
-                            .whereRaw("extrainfo->>'project_code' = ?", [tenantUuid])
-                            .andWhereRaw("extrainfo->>'org_code' = ?", [orgUuid])
-                            .first();
-                        if (keyRec) {
-                            resolvedTenantUuid = keyRec.tenant_id;
-                            resolvedWorkspaceId = keyRec.workspace_id;
-                        }
-                    }
-                } catch (lookupErr) {
-                    console.warn('[Mock Server] Failed to lookup workspace tenant_id:', lookupErr.message);
-                }
-
-                // Ensure the tax period and financial year exist for mapping
-                const defaultReturnPeriod = getPeriodFromDate(start_date);
-                const documents = [];
-                const isSales = reqBookType === 'sales';
-
-                for (const record of records) {
-                    try {
-                        const doc = isSales
-                            ? mapSalesRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod)
-                            : mapPurchaseRecord(record, resolvedTenantUuid, resolvedWorkspaceId, defaultReturnPeriod);
-                        documents.push(doc);
-                    } catch (valErr) {
-                        console.warn('[Mock Direct Ingest Warning] Skipped invalid voucher:', valErr.message);
-                    }
-                }
-
-                if (documents.length > 0) {
-                    const startYear = start.getFullYear();
-                    const endYearAbbr = (startYear + 1).toString().slice(-2);
-                    const financialYear = `${startYear}-${endYearAbbr}`;
-
-                    // Create database import log entry
-                    await ConnectorImportModel.createImportRecord({
-                        tenantUuid: resolvedTenantUuid,
-                        workspaceId: resolvedWorkspaceId,
-                        returnPeriod: defaultReturnPeriod,
-                        financialYear: financialYear,
-                        importType: isSales ? 'SALES_REGISTER' : 'PURCHASE_REGISTER',
-                        extraInfo: { source: 'adesk_direct_mock_postman_push', records_count: records.length },
-                        userEmail: req.headers['user-email'] || req.headers['x-user-email'] || 'connector@adesk-external'
-                    });
-
-                    // Bulk insert documents directly into database, ignoring duplicates
-                    if (isSales) {
-                        await ConnectorImportModel.bulkInsertSales(documents);
-                    } else {
-                        await ConnectorImportModel.bulkInsertPurchase(documents);
-                    }
-                    console.log(`[Mock Server] Direct Ingested ${documents.length} ${reqBookType} vouchers into database successfully.`);
-                }
-            } catch (dbErr) {
-                console.error('[Mock Server] Direct database ingestion failed:', dbErr.message);
-            }
-        }
-
-        await logTigInbound({
-            req,
-            type: req.body?.book_type || req.body?.type || 'purchase',
-            requestType: 'mockAdeskServer',
-            tenantId: typeof tenantUuid !== 'undefined' ? tenantUuid : null,
-            orgId: typeof orgUuid !== 'undefined' ? orgUuid : null,
-            accessKey: req.headers['api_key'] || req.headers['x-api-key'] || null,
-            params: req.body,
-            respBody: { success: 1, message: 'record found and directly synchronized in database', records_returned: records.length, data: records },
-            status: 'success',
-            extrainfo: { source: 'mock_server' }
-        });
-
-        return res.status(200).json({
-            success: 1,
-            message: 'record found and directly synchronized in database',
-            data: records
-        });
-
-    } catch (serverErr) {
-        console.error('Mock Adesk server request failed:', serverErr);
-        await logTigInbound({
-            req,
-            type: req.body?.book_type || req.body?.type || 'unknown',
-            requestType: 'mockAdeskServer',
-            accessKey: req.headers['api_key'] || req.headers['x-api-key'] || null,
-            params: req.body,
-            respBody: { error: serverErr.message },
-            status: 'error',
-            extrainfo: { source: 'mock_server' }
-        });
-        return res.status(500).json({ success: 0, message: serverErr.message || 'Integrated server error' });
-    }
-};
-
-/**
  * POST /connectors/adesk/test-connection
  * Pings the configured Adesk Cloud API Server to verify reachability and credentials.
  */
@@ -1110,60 +750,49 @@ const testConnection = async (req, res) => {
             ? JSON.parse(workspace.settings)
             : (workspace.settings || {});
 
-        // Auto-detect: real Adesk API (GET + X-TIG-API-KEY) vs mock server (POST + base64)
-        const isMockServer = cloudUrl.includes('mock-adesk');
         let response;
         const startTime = Date.now();
 
         try {
-            if (isMockServer) {
-                const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-                const encodedKey = Buffer.from(rawKey).toString('base64');
-                response = await axios.post(cloudUrl, { type: 'ping' }, {
-                    headers: { 'api_key': encodedKey, 'x-api-key': encodedKey, 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
-                    timeout: 5000
-                });
-            } else {
-                // Real Adesk API: POST with 1 row just to verify credentials and reachability
-                const cleanUrl = cloudUrl.split('?')[0];
-                const today = new Date().toISOString().split('T')[0];
-                const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
-                const encodedKey = Buffer.from(rawKey).toString('base64');
-                // Derive current financial year dynamically
-                const nowDate = new Date();
-                const nowMonth = nowDate.getMonth() + 1; // 1-indexed
-                const nowYear = nowDate.getFullYear();
-                const fyStartYear = nowMonth >= 4 ? nowYear : nowYear - 1;
-                const fyEndYearShort = String(fyStartYear + 1).slice(-2);
-                const currentFY = `${fyStartYear}-${fyEndYearShort}`;
-                response = await axios.post(cleanUrl, {
-                    type: 'ping',
-                    fyear: currentFY,
-                    start_date: today,
-                    end_date: today,
-                    book_type: 'all',
-                    gstn_number: workspace.gstn,
-                    rows: 1
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${apiToken}`,
-                        'x-api-key': encodedKey,
-                        'api_key': encodedKey,
-                        'X-TIG-API-KEY': apiToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'tenant-id': workspace.tenant_id,
-                        'workspace-id': String(workspace.id),
-                        'user-id': req.user ? (req.user.db_id || req.user.id || req.user.sub) : '',
-                        'user-name': req.user ? (req.user.name || '') : '',
-                        'user-email': req.user ? (req.user.email || '') : ''
-                    },
-                    timeout: 20000
-                });
-            }
+            // Real Adesk API: POST with 1 row just to verify credentials and reachability
+            const cleanUrl = cloudUrl.split('?')[0];
+            const today = new Date().toISOString().split('T')[0];
+            const rawKey = `${workspace.tenant_id}@@${workspace.id}@@${workspace.gstn}`;
+            const encodedKey = Buffer.from(rawKey).toString('base64');
+            // Derive current financial year dynamically
+            const nowDate = new Date();
+            const nowMonth = nowDate.getMonth() + 1; // 1-indexed
+            const nowYear = nowDate.getFullYear();
+            const fyStartYear = nowMonth >= 4 ? nowYear : nowYear - 1;
+            const fyEndYearShort = String(fyStartYear + 1).slice(-2);
+            const currentFY = `${fyStartYear}-${fyEndYearShort}`;
+            response = await axios.post(cleanUrl, {
+                type: 'ping',
+                fyear: currentFY,
+                start_date: today,
+                end_date: today,
+                book_type: 'all',
+                gstn_number: workspace.gstn,
+                rows: 1
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${apiToken}`,
+                    'x-api-key': encodedKey,
+                    'api_key': encodedKey,
+                    'X-TIG-API-KEY': apiToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'tenant-id': workspace.tenant_id,
+                    'workspace-id': String(workspace.id),
+                    'user-id': req.user?.db_id || '',
+                    'user-name': req.user ? (req.user.name || '') : '',
+                    'user-email': req.user ? (req.user.email || '') : ''
+                },
+                timeout: 20000
+            });
         } catch (apiErr) {
             const latency = `${Date.now() - startTime}ms`;
-            const userId = req.user ? (req.user.db_id || req.user.id || req.user.sub) : null;
+            const userId = req.user?.db_id || null;
             if (apiErr.response) {
                 if (apiErr.response.status === 401 || apiErr.response.status === 403) {
                     await logTigInbound({
@@ -1205,7 +834,7 @@ const testConnection = async (req, res) => {
         const data = response.data;
         await logTigInbound({
             req, type: 'testConnection', requestType: 'testConnection',
-            userId: req.user ? (req.user.db_id || req.user.id || req.user.sub) : null,
+            userId: req.user?.db_id || null,
             tenantId: workspace.tenant_id, orgId: workspace.id,
             accessKey: apiToken,
             params: { cloudUrl, type: 'ping' },
@@ -1231,6 +860,5 @@ const testConnection = async (req, res) => {
 
 module.exports = {
     pullPurchaseData,
-    mockAdeskServer,
     testConnection
 };

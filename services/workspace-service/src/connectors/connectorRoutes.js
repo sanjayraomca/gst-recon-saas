@@ -19,9 +19,6 @@ const { uploadMiddleware, importBookFile } = require('./bookFileImportConnectorC
 // No JWT — called directly by ERP connectors (Tally, Zoho, SAP, QuickBooks)
 router.post('/validate-key', validateApiKey);
 
-// Mock Adesk Accounting Server endpoint (Public - authenticates via base64 API key)
-router.post('/mock-adesk', require('./adeskSyncController').mockAdeskServer);
-
 // ── ERP DATA PUSH (X-API-Key authentication — no JWT) ────────────────────────
 // The ERP connector uses the API key issued by SuperAdmin.
 // apiKeyMiddleware validates the key and resolves workspaceId + tenantId.
