@@ -776,8 +776,8 @@ const pullPurchaseData = async (req, res) => {
         });
 
         const result = isSales
-            ? await ConnectorImportModel.bulkInsertSales(groupedDocuments)
-            : await ConnectorImportModel.bulkInsertPurchase(groupedDocuments);
+            ? await ConnectorImportModel.bulkInsertSales(groupedDocuments, importRecord.import_filing_id)
+            : await ConnectorImportModel.bulkInsertPurchase(groupedDocuments, importRecord.import_filing_id);
 
         if (result.inserted === 0 && result.duplicateInvoices.length === 0) {
             await ConnectorImportModel.updateImportStatus(importRecord.import_filing_id, 'Failed', 0, {

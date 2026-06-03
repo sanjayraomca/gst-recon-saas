@@ -493,9 +493,9 @@ const importBookData = async (req, res) => {
         // ── Run the import ─────────────────────────────────────────
         let result;
         if (isSales) {
-            result = await ConnectorImportModel.bulkInsertSales(groupedDocuments);
+            result = await ConnectorImportModel.bulkInsertSales(groupedDocuments, importRecord.import_filing_id);
         } else {
-            result = await ConnectorImportModel.bulkInsertPurchase(groupedDocuments);
+            result = await ConnectorImportModel.bulkInsertPurchase(groupedDocuments, importRecord.import_filing_id);
         }
 
         // ── Handle empty result ────────────────────────────────────────

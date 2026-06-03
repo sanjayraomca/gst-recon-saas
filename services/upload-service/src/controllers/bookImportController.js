@@ -261,7 +261,7 @@ class BookImportController {
                 if (upload_id) {
                     await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
                 }
-                result = await BookModel.bulkInsertSales(invoices);
+                result = await BookModel.bulkInsertSales(invoices, importRecord.import_filing_id);
             } else if (type === 'PURCHASE' || type === 'PURCHASE_RETURN') {
                 console.log(`[DEBUG] Starting processPurchaseSheet for ` + type);
                 const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceUuid, null, null, expectedGstin, type);
@@ -272,7 +272,7 @@ class BookImportController {
                 if (upload_id) {
                     await progressEmitter.emitProgress(upload_id, 85, 'Saving records to database...');
                 }
-                result = await BookModel.bulkInsertPurchase(vouchers);
+                result = await BookModel.bulkInsertPurchase(vouchers, importRecord.import_filing_id);
             }
             console.log(`[DEBUG] DB insertion completed. inserted=${result.inserted}`);
 

@@ -62,7 +62,7 @@ class ConnectorImportModel {
     // Purchase Vouchers (mirrors BookModel.bulkInsertPurchase)
     // ─────────────────────────────────────────────────────────────────────────
 
-    static async bulkInsertPurchase(vouchers) {
+    static async bulkInsertPurchase(vouchers, importFilingId = null) {
         if (!vouchers || vouchers.length === 0)
             return { inserted: 0, addedInvoices: [], duplicateInvoices: [] };
 
@@ -107,8 +107,8 @@ class ConnectorImportModel {
                             is_amendment, original_supplier_invoice_no, original_supplier_invoice_date,
                             original_book_vchr_no, original_book_vchr_date, original_net_amount,
                             return_date, original_return_period, original_return_date, source_section,
-                            gstr_category, t_extra_info
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gstr_category, t_extra_info, import_filing_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
@@ -143,6 +143,7 @@ class ConnectorImportModel {
                             original_return_date = EXCLUDED.original_return_date,
                             gstr_category = EXCLUDED.gstr_category,
                             t_extra_info = EXCLUDED.t_extra_info,
+                            import_filing_id = COALESCE(EXCLUDED.import_filing_id, purchase_vouchers.import_filing_id),
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
@@ -174,7 +175,8 @@ class ConnectorImportModel {
                         header.original_return_date || null,
                         header.source_section || null,
                         header.gstr_category || null,
-                        JSON.stringify(header.t_extra_info || {})
+                        JSON.stringify(header.t_extra_info || {}),
+                        importFilingId
                     ]);
 
                     const voucherId = headerRes.rows[0].id;
@@ -231,7 +233,7 @@ class ConnectorImportModel {
     // Sales Invoices (mirrors BookModel.bulkInsertSales)
     // ─────────────────────────────────────────────────────────────────────────
 
-    static async bulkInsertSales(invoices) {
+    static async bulkInsertSales(invoices, importFilingId = null) {
         if (!invoices || invoices.length === 0)
             return { inserted: 0, addedInvoices: [], duplicateInvoices: [] };
 
@@ -264,8 +266,8 @@ class ConnectorImportModel {
                             original_invoice_no, original_invoice_date, original_book_vchr_no,
                             original_book_vchr_date, original_net_amount, return_date,
                             original_return_period, original_return_date, source_section,
-                            gstr_category, t_extra_info
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gstr_category, t_extra_info, import_filing_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id, total_invoice_value)
                         DO UPDATE SET
                             customer_name = EXCLUDED.customer_name,
@@ -289,6 +291,7 @@ class ConnectorImportModel {
                             original_return_date = EXCLUDED.original_return_date,
                             gstr_category = EXCLUDED.gstr_category,
                             t_extra_info = EXCLUDED.t_extra_info,
+                            import_filing_id = COALESCE(EXCLUDED.import_filing_id, sales_invoices.import_filing_id),
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
@@ -310,7 +313,8 @@ class ConnectorImportModel {
                         header.original_return_period || null, header.original_return_date || null,
                         header.source_section || null,
                         header.gstr_category || null,
-                        JSON.stringify(header.t_extra_info || {})
+                        JSON.stringify(header.t_extra_info || {}),
+                        importFilingId
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;

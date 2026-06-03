@@ -1028,6 +1028,7 @@ CREATE TABLE sales_invoices (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     tax_period_id UUID REFERENCES tax_periods(id),
+    import_filing_id UUID REFERENCES gstr_import_master(import_filing_id) ON DELETE CASCADE,
 
     -- Invoice Classification
     invoice_type VARCHAR(20) NOT NULL
@@ -1161,6 +1162,7 @@ CREATE TABLE purchase_vouchers (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     tax_period_id UUID REFERENCES tax_periods(id),
+    import_filing_id UUID REFERENCES gstr_import_master(import_filing_id) ON DELETE CASCADE,
 
     -- Voucher Classification
     voucher_type VARCHAR(20)

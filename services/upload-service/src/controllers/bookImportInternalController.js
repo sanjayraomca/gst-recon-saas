@@ -123,11 +123,11 @@ const uploadInternal = async (req, res) => {
         if (uploadType === 'SALES' || uploadType === 'SALES_RETURN') {
             const invoices = processSalesSheet(jsonRows, tenantUuid, workspaceId, null, null, expectedGstin, uploadType);
             await BookImportInternalController.assignDynamicPeriods(invoices, db);
-            result = await BookModel.bulkInsertSales(invoices);
+            result = await BookModel.bulkInsertSales(invoices, importRecord.import_filing_id);
         } else {
             const vouchers = processPurchaseSheet(jsonRows, tenantUuid, workspaceId, null, null, expectedGstin, uploadType);
             await BookImportInternalController.assignDynamicPeriods(vouchers, db);
-            result = await BookModel.bulkInsertPurchase(vouchers);
+            result = await BookModel.bulkInsertPurchase(vouchers, importRecord.import_filing_id);
         }
 
         // ── Handle empty result ───────────────────────────────────────────────

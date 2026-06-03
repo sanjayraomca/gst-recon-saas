@@ -1340,6 +1340,63 @@ class GSTRImportController {
             return errorResponse(res, error);
         }
     }
+
+    /**
+     * Delete import record (Undo import)
+     * DELETE /gst-import/import/:import_filing_id
+     */
+    static async deleteImport(req, res) {
+        try {
+            const { import_filing_id } = req.params;
+            const userEmail = req.user?.email;
+
+            if (!userEmail) {
+                return errorResponse(res, { message: 'User email not found in token' }, 401);
+            }
+
+            const importRecord = await GSTRImportModel.getImportById(import_filing_id);
+            if (!importRecord) {
+                return errorResponse(res, { message: 'Import record not found' }, 404);
+            }
+
+            // Perform deletion
+            const deleted = await GSTRImportModel.deleteImport(import_filing_id);
+
+            // Log activity
+            await logActivity({
+                userId: req.user?.db_id || req.user?.id || req.user?.sub,
+                tenantId: importRecord.tenant_uuid,
+                workspaceId: importRecord.workspace_id || null,
+                actionType: 'UNDO_IMPORT',
+                entityType: 'ImportRecord',
+                details: {
+                    import_filing_id,
+                    filename: importRecord.original_filename,
+                    import_type: importRecord.import_type,
+                    records_deleted: importRecord.total_record
+                },
+                req
+            });
+
+            // Trigger reconciliation recalculation by publishing event
+            try {
+                publishEvent('import-undone', {
+                    tenant_id: importRecord.tenant_uuid,
+                    workspace_id: importRecord.workspace_id || null,
+                    period: importRecord.return_period,
+                    import_type: importRecord.import_type,
+                    import_id: import_filing_id
+                });
+            } catch (eventErr) {
+                console.warn('[deleteImport] Failed to publish event:', eventErr.message);
+            }
+
+            return successResponse(res, deleted, 'Import undone successfully');
+        } catch (error) {
+            console.error('Delete Import (Undo) Error:', error);
+            return errorResponse(res, error);
+        }
+    }
 }
 
 module.exports = GSTRImportController;

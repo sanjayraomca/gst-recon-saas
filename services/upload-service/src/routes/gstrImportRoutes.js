@@ -110,6 +110,7 @@ router.get('/filter-options', verifyToken, GSTRImportController.getFilterOptions
 
 // Get specific import details
 router.get('/import/:import_filing_id', verifyToken, GSTRImportController.getImportById);
+router.delete('/import/:import_filing_id', verifyToken, GSTRImportController.deleteImport);
 
 // Download original uploaded import file from MinIO
 router.get('/import/download/:import_filing_id', verifyToken, GSTRImportController.downloadImportFile);
