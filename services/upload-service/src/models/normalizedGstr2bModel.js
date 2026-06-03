@@ -564,7 +564,8 @@ class NormalizedGstr2bModel {
             igst: { col: 'igst', numeric: true },
             cgst: { col: 'cgst', numeric: true },
             sgst: { col: 'sgst', numeric: true },
-            cess: { col: 'cess', numeric: true }
+            cess: { col: 'cess', numeric: true },
+            applicable_tax_rate_percent: { col: 'applicable_tax_rate_percent', numeric: true }
         };
 
         Object.entries(parsedColumnFilters).forEach(([key, value]) => {
@@ -723,7 +724,8 @@ class NormalizedGstr2bModel {
             'sgst': 'sgst',
             'cess': 'cess',
             'return_period': 'return_period',
-            'eligibility': 'itc_available'
+            'eligibility': 'itc_available',
+            'applicable_tax_rate_percent': 'applicable_tax_rate_percent'
         };
 
         if (sortBy && allowedSortColumns[sortBy]) {
