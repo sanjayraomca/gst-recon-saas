@@ -2326,7 +2326,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_sand_key     ON workspace_api_keys (sand
 -- SECTION: TIG INBOUND LOG (Adesk Connector Request/Response Audit Log)
 -- =========================================================================
 
-CREATE TABLE IF NOT EXISTS tig_inbound_log (
+CREATE TABLE IF NOT EXISTS tig_inbound_outbound_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type            VARCHAR(255),
     request_type    VARCHAR(255),
@@ -2334,6 +2334,7 @@ CREATE TABLE IF NOT EXISTS tig_inbound_log (
     tenant_id       VARCHAR(255),
     org_id          VARCHAR(255),
     access_key      VARCHAR(255),       -- api_key (truncated for safety)
+    platform        VARCHAR(255),       -- platform name (Tally, Adesk, Zoho, etc.)
     t_params        JSONB,              -- request parameters/body sent to connector
     t_resp_headers  JSONB,              -- response headers received from connector
     t_resp_body     JSONB,              -- response body received from connector
@@ -2346,10 +2347,11 @@ CREATE TABLE IF NOT EXISTS tig_inbound_log (
 );
 
 -- Indexes for fast filtering in Adminer/queries
-CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_org       ON tig_inbound_log (org_id);
-CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_tenant    ON tig_inbound_log (tenant_id);
-CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_type      ON tig_inbound_log (type);
-CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_status    ON tig_inbound_log (status);
-CREATE INDEX IF NOT EXISTS idx_tig_inbound_log_created   ON tig_inbound_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_org       ON tig_inbound_outbound_log (org_id);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_tenant    ON tig_inbound_outbound_log (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_type      ON tig_inbound_outbound_log (type);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_status    ON tig_inbound_outbound_log (status);
+CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_created   ON tig_inbound_outbound_log (created_at DESC);
 
-COMMENT ON TABLE tig_inbound_log IS 'Audit log for all inbound API connector requests and responses (Adesk, etc.)';
+COMMENT ON TABLE tig_inbound_outbound_log IS 'Audit log for all inbound and outbound API connector requests and responses (Adesk, Tally, Zoho, etc.)';
+

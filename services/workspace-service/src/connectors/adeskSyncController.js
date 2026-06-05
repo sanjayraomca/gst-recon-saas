@@ -489,6 +489,7 @@ const logTigInbound = async (options) => {
             tenantId,
             orgId,
             accessKey,
+            platform,
             params,
             respHeaders,
             respBody,
@@ -499,13 +500,14 @@ const logTigInbound = async (options) => {
         const ip = req ? (req.ip || (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.connection && req.connection.remoteAddress) || null) : null;
         const userAgent = req ? req.headers['user-agent'] : null;
 
-        await knex('tig_inbound_log').insert({
+        await knex('tig_inbound_outbound_log').insert({
             type: type || null,
             request_type: requestType || null,
             user_id: userId || null,
             tenant_id: tenantId || null,
             org_id: orgId || null,
             access_key: accessKey ? (typeof accessKey === 'string' && accessKey.length > 250 ? `${accessKey.substring(0, 240)}...` : accessKey) : null,
+            platform: platform || 'ADESK',
             t_params: params || null,
             t_resp_headers: respHeaders || null,
             t_resp_body: respBody || null,

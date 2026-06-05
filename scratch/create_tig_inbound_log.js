@@ -8,10 +8,10 @@ const knex = require('../services/shared/src/db/connection');
 
 async function main() {
     try {
-        console.log('Creating table tig_inbound_log...');
+        console.log('Creating table tig_inbound_outbound_log...');
         
         await knex.raw(`
-            CREATE TABLE IF NOT EXISTS tig_inbound_log (
+            CREATE TABLE IF NOT EXISTS tig_inbound_outbound_log (
                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 type varchar(255),
                 request_type varchar(255),
@@ -19,6 +19,7 @@ async function main() {
                 tenant_id varchar(255),
                 org_id varchar(255),
                 access_key varchar(255),
+                platform varchar(255),
                 t_params jsonb,
                 t_resp_headers jsonb,
                 t_resp_body jsonb,
@@ -31,11 +32,11 @@ async function main() {
             );
         `);
         
-        console.log('Table tig_inbound_log created successfully!');
+        console.log('Table tig_inbound_outbound_log created successfully!');
         
         // Describe table structure to verify
         const columns = await knex('information_schema.columns')
-            .where({ table_name: 'tig_inbound_log' })
+            .where({ table_name: 'tig_inbound_outbound_log' })
             .select('column_name', 'data_type');
             
         console.log('Columns:', columns);
