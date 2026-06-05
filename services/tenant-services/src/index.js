@@ -59,30 +59,7 @@ const start = async () => {
         } catch (dbErr) {
             console.error('❌ Failed to verify/alter activity_logs table:', dbErr.message);
         }
-        // Ensure third_party_api_keys table exists
-        try {
-            const hasApiKeysTable = await knex.schema.hasTable('third_party_api_keys');
-            if (!hasApiKeysTable) {
-                await knex.schema.createTable('third_party_api_keys', (table) => {
-                    table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
-                    table.string('api_key', 64).unique().notNullable();
-                    table.string('key_name', 255).notNullable().defaultTo('Default Key');
-                    table.uuid('user_id').notNullable();
-                    table.uuid('workspace_id').notNullable();
-                    table.uuid('tenant_id').notNullable();
-                    table.string('platform', 100).nullable();
-                    table.boolean('is_active').defaultTo(true);
-                    table.timestamp('last_used_at').nullable();
-                    table.timestamp('expires_at').nullable();
-                    table.timestamps(true, true);
-                });
-                console.log('✅ Created table third_party_api_keys');
-            } else {
-                console.log('✅ Table third_party_api_keys verified');
-            }
-        } catch (dbErr) {
-            console.error('❌ Failed to verify/create third_party_api_keys table:', dbErr.message);
-        }
+        // Checked settings JSONB config on workspaces table
 
         const { setupGstinEventSubscriber } = require('./events/gstinEventHandler');
         setupGstinEventSubscriber();

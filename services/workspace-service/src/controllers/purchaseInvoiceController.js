@@ -225,34 +225,26 @@ const syncThirdPartyPurchases = async (req, res) => {
 
         if (rawApiKey) {
             // ── Tier 1: Permanent API Key ────────────────────────────────────────
-            const keyRecord = await knex('third_party_api_keys')
-                .where({ api_key: rawApiKey, is_active: true })
-                .first();
-
-            if (!keyRecord) {
-                return errorResponse(res, 'Invalid or revoked API key', 401);
-            }
-
-            // Check expiry if set
-            if (keyRecord.expires_at && new Date() > new Date(keyRecord.expires_at)) {
-                return errorResponse(res, 'API key has expired. Please generate a new one.', 401);
-            }
-
             workspace = await knex('workspaces')
-                .where({ id: keyRecord.workspace_id })
+                .whereRaw("settings->>'third_party_api_key' = ?", [rawApiKey])
                 .first();
 
             if (!workspace) {
-                return errorResponse(res, 'Workspace linked to this API key not found', 404);
+                return errorResponse(res, 'Invalid or revoked API key', 401);
             }
 
-            platform       = keyRecord.platform || (req.headers['platform'] || req.headers['x-platform'] || 'API');
-            resolvedUserId = keyRecord.user_id;
+            const settings = typeof workspace.settings === 'string'
+                ? JSON.parse(workspace.settings)
+                : (workspace.settings || {});
 
-            // Update last_used_at (fire and forget)
-            knex('third_party_api_keys')
-                .where({ id: keyRecord.id })
-                .update({ last_used_at: knex.fn.now() })
+            platform       = settings.third_party_api_key_platform || (req.headers['platform'] || req.headers['x-platform'] || 'API');
+            resolvedUserId = settings.third_party_api_key_user_id || workspace.id;
+
+            // Update last used timestamp (fire and forget)
+            settings.third_party_api_key_last_used_at = new Date().toISOString();
+            knex('workspaces')
+                .where({ id: workspace.id })
+                .update({ settings: JSON.stringify(settings) })
                 .catch(() => {});
 
         } else if (rawOrgToken) {

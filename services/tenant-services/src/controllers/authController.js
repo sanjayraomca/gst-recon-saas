@@ -954,7 +954,7 @@ const generateApiKey = async (req, res) => {
         // Resolve workspace
         const workspace = await knex('workspaces')
             .where({ id: workspace_id })
-            .select('id', 'name', 'gstn', 'tenant_id')
+            .select('id', 'name', 'gstn', 'tenant_id', 'settings')
             .first();
 
         if (!workspace) {
@@ -976,21 +976,27 @@ const generateApiKey = async (req, res) => {
         }
 
         // Generate a cryptographically random 32-byte key (64 hex chars), prefixed for clarity
-        const rawKey = 'gst_' + crypto.randomBytes(28).toString('hex');
+        const rawKey = 'tally_' + crypto.randomBytes(28).toString('hex');
 
-        const [keyRecord] = await knex('third_party_api_keys')
-            .insert({
-                api_key:      rawKey,
-                key_name:     key_name || `${workspace.name} Key`,
-                user_id:      userId,
-                workspace_id: workspace.id,
-                tenant_id:    workspace.tenant_id,
-                platform:     platform || null,
-                is_active:    true,
-                created_at:   knex.fn.now(),
-                updated_at:   knex.fn.now()
-            })
-            .returning('*');
+        const currentSettings = typeof workspace.settings === 'string'
+            ? JSON.parse(workspace.settings)
+            : (workspace.settings || {});
+
+        const updatedSettings = {
+            ...currentSettings,
+            third_party_api_key: rawKey,
+            third_party_api_key_name: key_name || `${workspace.name} Key`,
+            third_party_api_key_platform: platform || 'Tally Prime',
+            third_party_api_key_created_at: new Date().toISOString(),
+            third_party_api_key_user_id: userId
+        };
+
+        await knex('workspaces')
+            .where({ id: workspace.id })
+            .update({
+                settings: JSON.stringify(updatedSettings),
+                updated_at: knex.fn.now()
+            });
 
         await logActivity({
             userId,
@@ -998,20 +1004,20 @@ const generateApiKey = async (req, res) => {
             workspaceId: workspace.id,
             actionType:  'api_key_generated',
             entityType:  'ApiKey',
-            entityId:    keyRecord.id,
-            details:     { key_name: keyRecord.key_name, workspace: workspace.name, gstn: workspace.gstn },
+            entityId:    workspace.id,
+            details:     { key_name: updatedSettings.third_party_api_key_name, workspace: workspace.name, gstn: workspace.gstn },
             req
         });
 
         return successResponse(res, {
-            id:               keyRecord.id,
+            id:               workspace.id,
             api_key:          rawKey,   // Shown ONCE — user must save this
-            key_name:         keyRecord.key_name,
-            workspace_id:     keyRecord.workspace_id,
+            key_name:         updatedSettings.third_party_api_key_name,
+            workspace_id:     workspace.id,
             organization_name: workspace.name,
             organization_gstn: workspace.gstn,
-            platform:         keyRecord.platform,
-            created_at:       keyRecord.created_at
+            platform:         updatedSettings.third_party_api_key_platform,
+            created_at:       updatedSettings.third_party_api_key_created_at
         }, 'API key generated successfully. Copy it now — it will not be shown again.');
 
     } catch (error) {
@@ -1027,24 +1033,40 @@ const generateApiKey = async (req, res) => {
 const listApiKeys = async (req, res) => {
     try {
         const userId = req.user.db_id || req.user.id;
+        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
+            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
 
-        const keys = await knex('third_party_api_keys')
-            .join('workspaces', 'third_party_api_keys.workspace_id', 'workspaces.id')
-            .where('third_party_api_keys.user_id', userId)
-            .where('third_party_api_keys.is_active', true)
-            .select(
-                'third_party_api_keys.id',
-                'third_party_api_keys.key_name',
-                // Mask the key — show only first 8 chars
-                knex.raw("CONCAT(LEFT(third_party_api_keys.api_key, 12), '...') as api_key_preview"),
-                'third_party_api_keys.workspace_id',
-                'workspaces.name as organization_name',
-                'workspaces.gstn as organization_gstn',
-                'third_party_api_keys.platform',
-                'third_party_api_keys.last_used_at',
-                'third_party_api_keys.created_at'
-            )
-            .orderBy('third_party_api_keys.created_at', 'desc');
+        let query = knex('workspaces');
+        if (!isSuperAdmin) {
+            query = query
+                .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                .where('workspace_users.user_id', userId)
+                .whereNull('workspace_users.removed_at');
+        }
+
+        const workspaces = await query.select(
+            'workspaces.id',
+            'workspaces.name as organization_name',
+            'workspaces.gstn as organization_gstn',
+            'workspaces.settings'
+        );
+
+        const keys = [];
+        for (const ws of workspaces) {
+            const settings = typeof ws.settings === 'string' ? JSON.parse(ws.settings) : (ws.settings || {});
+            if (settings.third_party_api_key) {
+                keys.push({
+                    id: ws.id,
+                    key_name: settings.third_party_api_key_name || `${ws.organization_name} Key`,
+                    api_key_preview: settings.third_party_api_key.substring(0, 12) + '...',
+                    workspace_id: ws.id,
+                    organization_name: ws.organization_name,
+                    organization_gstn: ws.organization_gstn,
+                    platform: settings.third_party_api_key_platform || 'Tally Prime',
+                    created_at: settings.third_party_api_key_created_at
+                });
+            }
+        }
 
         return successResponse(res, keys, 'API keys fetched successfully');
     } catch (error) {
@@ -1062,30 +1084,59 @@ const revokeApiKey = async (req, res) => {
         const userId  = req.user.db_id || req.user.id;
         const { id }  = req.params;
 
-        const keyRecord = await knex('third_party_api_keys')
-            .where({ id, user_id: userId })
+        const workspace = await knex('workspaces')
+            .where({ id })
+            .select('id', 'name', 'tenant_id', 'settings')
             .first();
 
-        if (!keyRecord) {
-            return errorResponse(res, 'API key not found or you do not own it', 404);
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
         }
 
-        await knex('third_party_api_keys')
-            .where({ id })
-            .update({ is_active: false, updated_at: knex.fn.now() });
+        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
+            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+
+        if (!isSuperAdmin) {
+            const access = await knex('workspace_users')
+                .where({ workspace_id: workspace.id, user_id: userId, invitation_status: 'ACTIVE' })
+                .whereNull('removed_at')
+                .first();
+            if (!access) {
+                return errorResponse(res, `You do not have access to workspace "${workspace.name}"`, 403);
+            }
+        }
+
+        const currentSettings = typeof workspace.settings === 'string'
+            ? JSON.parse(workspace.settings)
+            : (workspace.settings || {});
+
+        const keyName = currentSettings.third_party_api_key_name || 'Tally Key';
+
+        delete currentSettings.third_party_api_key;
+        delete currentSettings.third_party_api_key_name;
+        delete currentSettings.third_party_api_key_platform;
+        delete currentSettings.third_party_api_key_created_at;
+        delete currentSettings.third_party_api_key_user_id;
+
+        await knex('workspaces')
+            .where({ id: workspace.id })
+            .update({
+                settings: JSON.stringify(currentSettings),
+                updated_at: knex.fn.now()
+            });
 
         await logActivity({
             userId,
-            tenantId:    keyRecord.tenant_id,
-            workspaceId: keyRecord.workspace_id,
+            tenantId:    workspace.tenant_id,
+            workspaceId: workspace.id,
             actionType:  'api_key_revoked',
             entityType:  'ApiKey',
-            entityId:    id,
-            details:     { key_name: keyRecord.key_name },
+            entityId:    workspace.id,
+            details:     { key_name: keyName },
             req
         });
 
-        return successResponse(res, { id }, 'API key revoked successfully');
+        return successResponse(res, { id: workspace.id }, 'API key revoked successfully');
     } catch (error) {
         console.error('revokeApiKey error:', error.message);
         return errorResponse(res, error.message, 500);
