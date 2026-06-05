@@ -1235,6 +1235,9 @@ CREATE TABLE purchase_vouchers (
     -- GST Category & Extra Raw Data
     gstr_category VARCHAR(50),
     t_extra_info JSONB DEFAULT '{}',
+    platform VARCHAR(50),
+    is_deleted BOOLEAN DEFAULT FALSE,
+    
 
     CONSTRAINT uq_purchase_voucher_invoice 
     UNIQUE (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
