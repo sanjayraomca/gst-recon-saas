@@ -720,6 +720,138 @@ const changePassword = async (req, res) => {
     }
 };
 
+const thirdPartyLogin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const platform = req.headers['platform'] || req.headers['x-platform'];
+
+        if (!email || !password) {
+            return errorResponse(res, 'Email and password required', 400);
+        }
+
+        if (!platform) {
+            return errorResponse(res, 'Platform header (platform or x-platform) is required', 400);
+        }
+
+        // Authenticate via Keycloak
+        const tokenData = await keycloakService.login(email, password);
+
+        // Sync user with local DB
+        const decoded = jwt.decode(tokenData.access_token);
+        let user = await User.findByEmail(email);
+        if (!user) {
+            user = await User.create({
+                id: crypto.randomUUID(),
+                email: email,
+                full_name: decoded.name || 'New User',
+                auth_provider_id: decoded.sub,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+        }
+
+        // Save / Upsert the platform association in third_party_users
+        const platformStr = String(platform).trim();
+        const emailStr = String(email).toLowerCase().trim();
+
+        const existingThirdPartyUser = await knex('third_party_users')
+            .where('email', emailStr)
+            .first();
+
+        let dbUser;
+        if (existingThirdPartyUser) {
+            const updated = await knex('third_party_users')
+                .where('email', emailStr)
+                .update({
+                    platform: platformStr,
+                    last_login_at: knex.fn.now(),
+                    updated_at: knex.fn.now()
+                })
+                .returning('*');
+            dbUser = updated[0];
+        } else {
+            const inserted = await knex('third_party_users')
+                .insert({
+                    id: crypto.randomUUID(),
+                    email: emailStr,
+                    platform: platformStr,
+                    last_login_at: knex.fn.now(),
+                    created_at: knex.fn.now(),
+                    updated_at: knex.fn.now()
+                })
+                .returning('*');
+            dbUser = inserted[0];
+        }
+
+        // Infer tenants/roles for response payload
+        const userTenants = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+            .select(
+                'tenants.id',
+                'tenants.tenant_code',
+                'tenants.legal_name',
+                'workspace_users.role',
+                'workspace_users.permissions'
+            )
+            .where('workspace_users.user_id', user.id);
+
+        const ownedTenants = await knex('tenants')
+            .where('owner_user_id', user.id)
+            .select('id', 'tenant_code', 'legal_name');
+
+        const isTenantOwner = ownedTenants.length > 0;
+        const existingTenantIds = new Set(userTenants.map(t => t.id));
+        for (const ot of ownedTenants) {
+            if (!existingTenantIds.has(ot.id)) {
+                userTenants.push({ ...ot, role: 'TENANT_ADMIN' });
+            }
+        }
+
+        let primaryTenantId = null;
+        if (isTenantOwner) {
+            primaryTenantId = ownedTenants[0].id;
+        } else if (user.tenant_id) {
+            primaryTenantId = user.tenant_id;
+        } else if (userTenants.length > 0) {
+            primaryTenantId = userTenants[0].id;
+        }
+
+        const responsePayload = {
+            ...tokenData,
+            tenant_id: primaryTenantId,
+            tenants: userTenants,
+            user: {
+                id: user.id,
+                full_name: user.full_name,
+                email: user.email,
+                platform: dbUser.platform,
+                last_login_at: dbUser.last_login_at,
+                is_tenant_owner: isTenantOwner
+            }
+        };
+
+        // Log activity with platform in activity_type
+        await logActivity({
+            userId: user.id,
+            tenantId: primaryTenantId,
+            actionType: 'third_party_login',
+            activityType: platformStr,
+            entityType: 'User',
+            entityId: user.id,
+            details: { email: user.email, platform: platformStr },
+            req: req
+        });
+
+        return successResponse(res, responsePayload, 'Login successful');
+
+    } catch (error) {
+        console.error('Third-party login error:', error.message);
+        const status = error.message === 'Invalid email or password' ? 401 : (error.message === 'Account is disabled' ? 403 : 500);
+        return errorResponse(res, error.message, status);
+    }
+};
+
 module.exports = {
     login,
     register,
@@ -730,5 +862,6 @@ module.exports = {
     verifyInvite,
     forgotPassword,
     resetPassword,
-    changePassword
+    changePassword,
+    thirdPartyLogin
 };

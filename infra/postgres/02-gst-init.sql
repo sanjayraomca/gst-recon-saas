@@ -151,6 +151,7 @@ CREATE TABLE activity_logs (
     tenant_id UUID,
     workspace_id UUID,
     action_type VARCHAR(50) NOT NULL, -- login, tenant_registered, create_org, etc.
+    activity_type VARCHAR(100),       -- platform details (e.g. Zoho, TallyPrime)
     entity_type VARCHAR(50) NOT NULL, -- User, Tenant, Organization, etc.
     entity_id UUID,
     details JSONB,
@@ -164,6 +165,17 @@ CREATE INDEX idx_activity_tenant ON activity_logs (tenant_id);
 CREATE INDEX idx_activity_workspace ON activity_logs (workspace_id);
 CREATE INDEX idx_activity_action ON activity_logs (action_type);
 CREATE INDEX idx_activity_created ON activity_logs (created_at);
+
+CREATE TABLE third_party_users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    platform VARCHAR(100) NOT NULL,
+    last_login_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_third_party_users_email ON third_party_users (email);
 
 -- Add foreign key constraint for tenant ownership (after users table exists)
 ALTER TABLE tenants ADD CONSTRAINT fk_tenants_owner 

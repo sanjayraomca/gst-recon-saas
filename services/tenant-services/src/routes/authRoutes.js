@@ -4,6 +4,7 @@ const authController = require('../controllers/authController');
 const { verifyToken } = require('../../../shared/src/middleware/authMiddleware');
 
 router.post('/login', authController.login);
+router.post('/third-party-login', authController.thirdPartyLogin);
 router.post('/register', authController.register);
 router.post('/refresh', authController.refresh);
 router.get('/profile', verifyToken, authController.getProfile);
