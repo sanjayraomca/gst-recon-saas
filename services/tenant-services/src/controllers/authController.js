@@ -975,8 +975,8 @@ const generateApiKey = async (req, res) => {
             }
         }
 
-        // Generate a cryptographically random 32-byte key (64 hex chars), prefixed for clarity
-        const rawKey = 'tally_' + crypto.randomBytes(28).toString('hex');
+        // Generate an API key containing base64 encoded tenant ID, workspace ID and workspace name
+        const rawKey = Buffer.from(`${workspace.tenant_id}_${workspace.id}_${workspace.name}`).toString('base64');
 
         const currentSettings = typeof workspace.settings === 'string'
             ? JSON.parse(workspace.settings)

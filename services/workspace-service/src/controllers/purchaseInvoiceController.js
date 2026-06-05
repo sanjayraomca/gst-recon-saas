@@ -306,7 +306,7 @@ const syncThirdPartyPurchases = async (req, res) => {
         const user = req.user || { db_id: resolvedUserId, id: resolvedUserId, email: 'api-key-auth' };
 
 
-        const rawVouchers = Array.isArray(req.body) ? req.body : (req.body.vouchers || []);
+        const rawVouchers = Array.isArray(req.body) ? req.body : (req.body.vouchers || req.body.records || []);
         if (rawVouchers.length === 0) {
             return successResponse(res, {
                 records_received: 0,
