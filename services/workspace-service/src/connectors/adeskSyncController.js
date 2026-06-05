@@ -319,6 +319,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cess_amount: parseFloat(item.cess_amount || 0),
             row_total: parseFloat(item.row_total || item.total_amount_with_tax || 0),
             invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
+            platform: 'Adesk GST',
             t_extra_info: {}
         }));
     } else {
@@ -336,6 +337,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cess_amount: totalCessAmount,
             row_total: netAmount,
             invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
+            platform: 'Adesk GST',
             t_extra_info: {}
         }];
     }

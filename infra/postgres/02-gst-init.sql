@@ -1300,6 +1300,9 @@ CREATE TABLE purchase_items (
     itc_eligible BOOLEAN DEFAULT TRUE,
     itc_block_reason TEXT,
 
+    -- Platform
+    platform VARCHAR(100) DEFAULT 'Adesk GST',
+
     -- Extra Raw Data
     t_extra_info JSONB DEFAULT '{}',
 

@@ -325,6 +325,7 @@ class BookModel {
                             original_sgst_amount: item.original_sgst_amount || 0,
                             original_cess_amount: item.original_cess_amount || 0,
                             original_tax_per: item.original_tax_per || 0,
+                            platform: item.platform || 'Adesk GST',
                             t_extra_info: item.t_extra_info ? JSON.stringify(item.t_extra_info) : '{}'
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);

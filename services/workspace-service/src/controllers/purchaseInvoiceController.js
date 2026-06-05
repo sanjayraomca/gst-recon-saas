@@ -63,7 +63,7 @@ const getAllInvoices = async (req, res) => {
         };
 
         const result = await PurchaseInvoiceModel.getAll(workspaceId, filters, pagination);
-        
+
         // Log Activity
         await logActivity({
             userId: req.user?.db_id || req.user?.id || req.user?.sub,
@@ -71,10 +71,10 @@ const getAllInvoices = async (req, res) => {
             workspaceId,
             actionType: 'VIEW_ALL_PURCHASE_INVOICES',
             entityType: 'BOOK_DATA',
-            details: { 
+            details: {
                 page_name: 'Purchase Register',
-                filters, 
-                pagination 
+                filters,
+                pagination
             },
             req
         });
@@ -248,11 +248,11 @@ const syncThirdPartyPurchases = async (req, res) => {
         // Tier 3:               legacy headers (platform + organization-gstno) + Bearer JWT
         // ─────────────────────────────────────────────────────────────────────────
 
-        const rawApiKey  = req.headers['x-api-key'];
+        const rawApiKey = req.headers['x-api-key'];
         const rawOrgToken = req.headers['x-org-token'] || req.headers['org-token'];
 
         let workspace = null;
-        let platform  = null;
+        let platform = null;
         let resolvedUserId = null;
 
         if (rawApiKey) {
@@ -271,7 +271,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 ? JSON.parse(workspace.settings)
                 : (workspace.settings || {});
 
-            platform       = settings.third_party_api_key_platform || (req.headers['platform'] || req.headers['x-platform'] || 'API');
+            platform = settings.third_party_api_key_platform || (req.headers['platform'] || req.headers['x-platform'] || 'API');
             resolvedUserId = settings.third_party_api_key_user_id || workspace.id;
 
             // Update last used timestamp (fire and forget)
@@ -279,7 +279,7 @@ const syncThirdPartyPurchases = async (req, res) => {
             knex('workspaces')
                 .where({ id: workspace.id })
                 .update({ settings: JSON.stringify(settings) })
-                .catch(() => {});
+                .catch(() => { });
 
         } else if (rawOrgToken) {
             // ── Tier 2: Org-scoped JWT ───────────────────────────────────────────
@@ -301,12 +301,12 @@ const syncThirdPartyPurchases = async (req, res) => {
                 return errorResponse(res, 'Workspace referenced in token not found', 404);
             }
 
-            platform       = orgClaims.platform;
+            platform = orgClaims.platform;
             resolvedUserId = orgClaims.user_id;
 
         } else {
             // ── Tier 3: Legacy headers (requires Bearer JWT) ─────────────────────
-            platform       = req.headers['platform'] || req.headers['x-platform'];
+            platform = req.headers['platform'] || req.headers['x-platform'];
             const orgGstNo = req.headers['organization-gstno'] || req.headers['x-organization-gstno'];
 
             if (!platform || !orgGstNo) {
@@ -371,7 +371,7 @@ const syncThirdPartyPurchases = async (req, res) => {
         const mappedDocs = [];
         for (const record of rawVouchers) {
             const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
-            
+
             // Derive returnPeriod
             let returnPeriod = '';
             if (vchrDate) {
@@ -394,7 +394,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 record.ref_vchr_no ||
                 bookVchrNo
             ).trim();
-            
+
             if (!supplierInvoiceNo) {
                 continue;
             }
@@ -489,6 +489,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 cess_amount: totalCessAmount,
                 row_total: netAmount,
                 invoice_amount: netAmount,
+                platform: platform || 'Adesk GST',
                 t_extra_info: '{}'
             }];
 

@@ -141,21 +141,21 @@ class BookDataModel {
                 case 'en': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
                 case 'cn': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
                 case 'nc': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
-                case 'lt': 
+                case 'lt':
                     if (useHaving) q.having(knex.raw(dbCol), '<', val);
-                    else q.where(dbCol, '<', val); 
+                    else q.where(dbCol, '<', val);
                     break;
-                case 'le': 
+                case 'le':
                     if (useHaving) q.having(knex.raw(dbCol), '<=', val);
-                    else q.where(dbCol, '<=', val); 
+                    else q.where(dbCol, '<=', val);
                     break;
-                case 'gt': 
+                case 'gt':
                     if (useHaving) q.having(knex.raw(dbCol), '>', val);
-                    else q.where(dbCol, '>', val); 
+                    else q.where(dbCol, '>', val);
                     break;
-                case 'ge': 
+                case 'ge':
                     if (useHaving) q.having(knex.raw(dbCol), '>=', val);
-                    else q.where(dbCol, '>=', val); 
+                    else q.where(dbCol, '>=', val);
                     break;
                 case 'in':
                     const vals = String(val).split(',').map(v => v.trim()).filter(Boolean);
@@ -216,8 +216,8 @@ class BookDataModel {
                     codes.forEach((code, idx) => {
                         const trimmed = code.trim();
                         const normalized = trimmed.padStart(2, '0');
-                        
-                        const condition = function() {
+
+                        const condition = function () {
                             this.where(mapping.placeOfSupply, '=', normalized)
                                 .orWhere(mapping.placeOfSupply, 'ilike', `${normalized} -%`)
                                 .orWhere(mapping.placeOfSupply, '=', trimmed)
@@ -542,7 +542,7 @@ class BookDataModel {
                         });
 
                         BookDataModel._applyColumnFilters(q, whereCF, colMappingPr);
-                        
+
                         // Mapping for aggregates in HAVING
                         const aggMapping = {
                             taxableAmt: 'sum(pi.taxable_amount)',
@@ -726,7 +726,8 @@ class BookDataModel {
                         knex.raw("COALESCE(rs.extra_info->>'match_status', 'missing_in_portal') as match_status"),
                         knex.raw("count(ev.id) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
                         'pi.description as description',
-                        'pi.tax_per as taxPercent'
+                        'pi.tax_per as taxPercent',
+                        'pi.platform as platform'
                     )
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                     .limit(page_size)

@@ -286,7 +286,8 @@ class BookModel {
                             original_cgst_amount: item.original_cgst_amount || 0,
                             original_sgst_amount: item.original_sgst_amount || 0,
                             original_cess_amount: item.original_cess_amount || 0,
-                            original_tax_per: item.original_tax_per || 0
+                            original_tax_per: item.original_tax_per || 0,
+                            platform: item.platform || 'Adesk GST'
                         }));
                         await trx.batchInsert('purchase_items', itemsToInsert, 200);
                     }
