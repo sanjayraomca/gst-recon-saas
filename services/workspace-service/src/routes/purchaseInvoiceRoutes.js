@@ -6,9 +6,13 @@ const {
     getInvoiceById,
     createInvoice,
     updateInvoice,
-    amendInvoice
+    amendInvoice,
+    syncThirdPartyPurchases
 } = require('../controllers/purchaseInvoiceController');
 const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
+
+// Third-party sync route (handles workspace resolution internally via headers)
+router.post('/third-party/sync', verifyToken, syncThirdPartyPurchases);
 
 // All routes require authentication and workspace authorization
 router.use(verifyToken);
