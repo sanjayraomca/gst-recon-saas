@@ -148,7 +148,7 @@ class ReconciliationModel {
                         .sum('purchase_items.cgst_amount as total_cgst_amount')
                         .sum('purchase_items.sgst_amount as total_sgst_amount')
                         .sum('purchase_items.cess_amount as total_cess_amount')
-                        .sum('purchase_items.total_amount_with_tax as net_amount')
+                        .sum('purchase_items.row_total as net_amount')
                         .where({ 'purchase_vouchers.workspace_id': workspaceId })
                         .groupBy(
                             'purchase_vouchers.id',
@@ -831,7 +831,7 @@ class ReconciliationModel {
                 .sum('cgst_amount as total_cgst_amount')
                 .sum('sgst_amount as total_sgst_amount')
                 .sum('cess_amount as total_cess_amount')
-                .sum('total_amount_with_tax as net_amount')
+                .sum('row_total as net_amount')
                 .groupBy('purchase_id')
                 .as('ps');
 

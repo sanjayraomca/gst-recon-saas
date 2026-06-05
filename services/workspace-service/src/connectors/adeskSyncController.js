@@ -317,7 +317,8 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cgst_amount: parseFloat(item.cgst_amount || 0),
             sgst_amount: parseFloat(item.sgst_amount || 0),
             cess_amount: parseFloat(item.cess_amount || 0),
-            total_amount_with_tax: parseFloat(item.total_amount_with_tax || 0),
+            row_total: parseFloat(item.row_total || item.total_amount_with_tax || 0),
+            invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
             t_extra_info: {}
         }));
     } else {
@@ -333,7 +334,8 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cgst_amount: totalCgstAmount,
             sgst_amount: totalSgstAmount,
             cess_amount: totalCessAmount,
-            total_amount_with_tax: netAmount,
+            row_total: netAmount,
+            invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
             t_extra_info: {}
         }];
     }

@@ -492,7 +492,9 @@ class BookDataModel {
                 is_interstate: 'ev.is_interstate',
                 roundoff: 'ev.round_off',
                 taxableAmt: 'pi.taxable_amount',
-                totalAmt: 'pi.total_amount_with_tax',
+                totalAmt: 'pi.row_total',
+                row_total: 'pi.row_total',
+                invoice_amount: 'pi.invoice_amount',
                 placeOfSupply: 'ev.place_of_supply'
             });
 
@@ -511,9 +513,11 @@ class BookDataModel {
                 cgst: 'pi.cgst_amount',
                 sgst: 'pi.sgst_amount',
                 cess: 'pi.cess_amount',
-                totalAmt: 'pi.total_amount_with_tax',
-                net: 'pi.total_amount_with_tax',
-                netAmount: 'pi.total_amount_with_tax',
+                totalAmt: 'pi.row_total',
+                row_total: 'pi.row_total',
+                net: 'pi.row_total',
+                netAmount: 'pi.row_total',
+                invoice_amount: 'pi.invoice_amount',
                 roundOff: 'ev.round_off',
                 status: 'ev.status',
                 docType: 'ev.book_type',
@@ -547,7 +551,9 @@ class BookDataModel {
                             sgst: 'sum(pi.sgst_amount)',
                             cess: 'sum(pi.cess_amount)',
                             roundOff: 'sum(ev.round_off)',
-                            totalAmt: 'sum(pi.total_amount_with_tax)',
+                            totalAmt: 'sum(pi.row_total)',
+                            row_total: 'sum(pi.row_total)',
+                            invoice_amount: 'sum(pi.invoice_amount)',
                             totalInvoiceCount: 'count(distinct ev.id)',
                             invoiceCount: 'count(distinct ev.id)'
                         };
@@ -613,7 +619,8 @@ class BookDataModel {
                 knex.raw('sum(pi.sgst_amount) as total_sgst'),
                 knex.raw('sum(pi.cess_amount) as total_cess'),
                 knex.raw('sum(ev.round_off) as total_round_off'),
-                knex.raw('sum(pi.total_amount_with_tax) as total_net')
+                knex.raw('sum(ev.net_amount / (SELECT GREATEST(count(*), 1) FROM purchase_items WHERE purchase_id = ev.id)) as total_net'),
+                knex.raw('sum(pi.invoice_amount) as total_invoice_amount')
             ).first();
 
             const summaryResult = await summaryQuery;
@@ -626,7 +633,8 @@ class BookDataModel {
                 sgst: parseFloat(summaryResult.total_sgst || 0),
                 cess: parseFloat(summaryResult.total_cess || 0),
                 roundOff: parseFloat(summaryResult.total_round_off || 0),
-                net: parseFloat(summaryResult.total_net || 0)
+                net: parseFloat(summaryResult.total_net || 0),
+                invoice_amount: parseFloat(summaryResult.total_invoice_amount || 0)
             };
 
             let sortCol = 'ev.supplier_invoice_date';
@@ -634,7 +642,9 @@ class BookDataModel {
                 if (sort_by === 'party') sortCol = 'party';
                 else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'gstin';
                 else if (sort_by === 'taxableAmt') sortCol = knex.raw(' sum(pi.taxable_amount) ');
-                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = knex.raw(' sum(pi.total_amount_with_tax) ');
+                else if (sort_by === 'row_total') sortCol = knex.raw(' sum(pi.row_total) ');
+                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = knex.raw(' sum(ev.net_amount / (SELECT GREATEST(count(*), 1) FROM purchase_items WHERE purchase_id = ev.id)) ');
+                else if (sort_by === 'invoice_amount') sortCol = knex.raw(' sum(pi.invoice_amount) ');
                 else if (sort_by === 'igst') sortCol = knex.raw(' sum(pi.igst_amount) ');
                 else if (sort_by === 'cgst') sortCol = knex.raw(' sum(pi.cgst_amount) ');
                 else if (sort_by === 'sgst') sortCol = knex.raw(' sum(pi.sgst_amount) ');
@@ -647,7 +657,9 @@ class BookDataModel {
                 else if (sort_by === 'party') sortCol = 'ev.supplier_name';
                 else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'ev.supplier_gstin';
                 else if (sort_by === 'taxableAmt') sortCol = 'pi.taxable_amount';
-                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = 'pi.total_amount_with_tax';
+                else if (sort_by === 'row_total') sortCol = 'pi.row_total';
+                else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = 'ev.net_amount';
+                else if (sort_by === 'invoice_amount') sortCol = 'pi.invoice_amount';
                 else if (sort_by === 'date' || sort_by === 'ref_vchr_date') sortCol = 'ev.supplier_invoice_date';
                 else if (sort_by === 'bookVchrNo') sortCol = 'ev.book_vchr_no';
                 else if (sort_by === 'bookVchrDate') sortCol = 'ev.book_vchr_date';
@@ -669,7 +681,7 @@ class BookDataModel {
                         knex.raw('sum(pi.sgst_amount) as sgst'),
                         knex.raw('sum(pi.igst_amount) as igst'),
                         knex.raw('sum(pi.cess_amount) as cess'),
-                        knex.raw('sum(pi.total_amount_with_tax) as "totalAmt"'),
+                        knex.raw('sum(ev.net_amount / (SELECT GREATEST(count(*), 1) FROM purchase_items WHERE purchase_id = ev.id)) as "totalAmt"'),
                         knex.raw('sum(ev.round_off) as "roundOff"'),
                         knex.raw('count(distinct ev.id) as "invoiceCount"'),
                         knex.raw('max(ev.place_of_supply) as "placeOfSupply"'),
@@ -697,7 +709,9 @@ class BookDataModel {
                         'pi.sgst_amount as sgst',
                         'pi.igst_amount as igst',
                         'pi.cess_amount as cess',
-                        'pi.total_amount_with_tax as totalAmt',
+                        'ev.net_amount as totalAmt',
+                        'pi.row_total as row_total',
+                        'pi.invoice_amount as invoice_amount',
                         'ev.place_of_supply as placeOfSupply',
                         'ev.is_interstate as isInterstate',
                         'ev.status',
@@ -864,7 +878,9 @@ class BookDataModel {
                 is_interstate: 'ev.is_interstate',
                 roundoff: 'ev.round_off',
                 taxableAmt: 'pi.taxable_amount',
-                totalAmt: 'pi.total_amount_with_tax',
+                totalAmt: 'pi.row_total',
+                row_total: 'pi.row_total',
+                invoice_amount: 'pi.invoice_amount',
                 placeOfSupply: 'ev.place_of_supply'
             });
 
@@ -906,8 +922,10 @@ class BookDataModel {
                     cgst: 'pi.cgst_amount',
                     sgst: 'pi.sgst_amount',
                     cess: 'pi.cess_amount',
-                    totalAmt: 'pi.total_amount_with_tax',
-                    net: 'pi.total_amount_with_tax',
+                    totalAmt: 'pi.row_total',
+                    row_total: 'pi.row_total',
+                    net: 'pi.row_total',
+                    invoice_amount: 'pi.invoice_amount',
                     roundOff: 'ev.round_off',
                     status: 'ev.status',
                     docType: 'ev.book_type',
@@ -934,7 +952,7 @@ class BookDataModel {
                 knex.raw('COALESCE(SUM(pi.sgst_amount),0) as sgst'),
                 knex.raw('COALESCE(SUM(pi.cess_amount),0) as cess'),
                 knex.raw('COALESCE(SUM(ev.round_off),0) as round_off'),
-                knex.raw('COALESCE(SUM(pi.total_amount_with_tax),0) as invoice_value')
+                knex.raw('COALESCE(SUM(pi.row_total),0) as invoice_value')
             );
             purchaseResults[t.id] = {
                 total: parseInt(row.total),

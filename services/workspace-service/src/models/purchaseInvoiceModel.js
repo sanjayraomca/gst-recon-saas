@@ -55,7 +55,9 @@ class PurchaseInvoiceModel {
                 'pi.cgst_amount as item_cgst_amount',
                 'pi.sgst_amount as item_sgst_amount',
                 'pi.cess_amount as item_cess_amount',
-                'pi.total_amount_with_tax as item_total_amount_with_tax',
+                'pi.row_total as item_total_amount_with_tax',
+                'pi.row_total as row_total',
+                'pi.invoice_amount as item_invoice_amount',
                 'pi.description as item_description'
             )
             .orderBy('ev.invoice_date', 'desc')

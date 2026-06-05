@@ -228,7 +228,9 @@ const processPurchaseJson = (data, tenantId, workspaceId, taxPeriodId, returnPer
             cgst_amount: cgst,
             sgst_amount: sgst,
             cess_amount: cess,
-            total_amount_with_tax: cleanAmount(row.item_total || (taxable + igst + cgst + sgst + cess))
+            row_total: cleanAmount(row.item_total || (taxable + igst + cgst + sgst + cess)),
+            total_amount_with_tax: cleanAmount(row.item_total || (taxable + igst + cgst + sgst + cess)),
+            invoice_amount: netAmount
         });
     }
 

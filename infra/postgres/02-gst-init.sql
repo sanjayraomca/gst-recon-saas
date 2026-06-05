@@ -1272,7 +1272,8 @@ CREATE TABLE purchase_items (
     sgst_amount NUMERIC(15, 2) DEFAULT 0,
     cess_amount NUMERIC(15, 2) DEFAULT 0,
 
-    total_amount_with_tax NUMERIC(15, 2) DEFAULT 0,
+    row_total NUMERIC(15, 2) DEFAULT 0,
+    invoice_amount NUMERIC(15, 2) DEFAULT 0,
 
     -- Reverse Charge
     is_rcm BOOLEAN DEFAULT FALSE,
