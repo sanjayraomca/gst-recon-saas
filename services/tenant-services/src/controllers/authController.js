@@ -1058,7 +1058,8 @@ const listApiKeys = async (req, res) => {
                 keys.push({
                     id: ws.id,
                     key_name: settings.third_party_api_key_name || `${ws.organization_name} Key`,
-                    api_key_preview: settings.third_party_api_key.substring(0, 12) + '...',
+                    api_key: settings.third_party_api_key,
+                    api_key_preview: settings.third_party_api_key,
                     workspace_id: ws.id,
                     organization_name: ws.organization_name,
                     organization_gstn: ws.organization_gstn,
