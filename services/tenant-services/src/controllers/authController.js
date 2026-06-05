@@ -817,6 +817,78 @@ const thirdPartyLogin = async (req, res) => {
             primaryTenantId = userTenants[0].id;
         }
 
+        // ─── Organization-scoped token ────────────────────────────────────────────
+        // If organization-gstno header is sent, validate access and issue an
+        // org_access_token that cryptographically proves this user can operate
+        // on that specific workspace. The sync API validates this token.
+        let orgAccessToken = null;
+        let orgInfo = null;
+
+        const orgGstNo = req.headers['organization-gstno'] || req.headers['x-organization-gstno'];
+
+        if (orgGstNo) {
+            // Resolve the workspace by GSTIN
+            const workspace = await knex('workspaces')
+                .where({ gstn: orgGstNo.trim().toUpperCase() })
+                .select('id', 'name', 'gstn', 'tenant_id')
+                .first();
+
+            if (!workspace) {
+                return errorResponse(res, `No organization found with GSTIN: ${orgGstNo}`, 404);
+            }
+
+            // Check if user is SUPER_ADMIN via Keycloak groups claim
+            const keycloakDecoded = jwt.decode(tokenData.access_token);
+            const keycloakGroups = (keycloakDecoded && keycloakDecoded.groups) || [];
+            const isSuperAdmin = keycloakGroups.some(g =>
+                g.toLowerCase().replace(/\s/g, '') === 'superadmin'
+            );
+
+            if (!isSuperAdmin) {
+                // Regular user — must have an active membership in this workspace
+                const access = await knex('workspace_users')
+                    .where({
+                        workspace_id: workspace.id,
+                        user_id: user.id,
+                        invitation_status: 'ACTIVE'
+                    })
+                    .whereNull('removed_at')
+                    .first();
+
+                if (!access) {
+                    return errorResponse(
+                        res,
+                        `Access denied: you do not have access to organization "${workspace.name}" (GSTIN: ${workspace.gstn})`,
+                        403
+                    );
+                }
+            }
+
+            // Issue org-scoped JWT signed with our own secret (12h lifetime)
+            const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
+            orgAccessToken = jwt.sign(
+                {
+                    user_id:           user.id,
+                    email:             user.email,
+                    platform:          platformStr,
+                    workspace_id:      workspace.id,
+                    tenant_id:         workspace.tenant_id,
+                    organization_gstn: workspace.gstn,
+                    organization_name: workspace.name,
+                    is_super_admin:    isSuperAdmin
+                },
+                jwtSecret,
+                { expiresIn: '12h', issuer: 'gst-recon-tool' }
+            );
+
+            orgInfo = {
+                workspace_id:      workspace.id,
+                organization_name: workspace.name,
+                organization_gstn: workspace.gstn
+            };
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         const responsePayload = {
             ...tokenData,
             tenant_id: primaryTenantId,
@@ -828,7 +900,12 @@ const thirdPartyLogin = async (req, res) => {
                 platform: dbUser.platform,
                 last_login_at: dbUser.last_login_at,
                 is_tenant_owner: isTenantOwner
-            }
+            },
+            // org_access_token is only present when organization-gstno header was sent
+            ...(orgAccessToken && {
+                org_access_token: orgAccessToken,
+                organization: orgInfo
+            })
         };
 
         // Log activity with platform in activity_type
@@ -839,7 +916,11 @@ const thirdPartyLogin = async (req, res) => {
             activityType: platformStr,
             entityType: 'User',
             entityId: user.id,
-            details: { email: user.email, platform: platformStr },
+            details: {
+                email: user.email,
+                platform: platformStr,
+                ...(orgInfo && { organization_gstn: orgInfo.organization_gstn })
+            },
             req: req
         });
 
@@ -849,6 +930,165 @@ const thirdPartyLogin = async (req, res) => {
         console.error('Third-party login error:', error.message);
         const status = error.message === 'Invalid email or password' ? 401 : (error.message === 'Account is disabled' ? 403 : 500);
         return errorResponse(res, error.message, status);
+    }
+};
+
+/**
+ * POST /auth/third-party/generate-api-key
+ * Generates a permanent API key scoped to a specific workspace.
+ * The user must be authenticated and have access to the workspace.
+ * The raw key is returned ONCE — store it securely.
+ */
+const generateApiKey = async (req, res) => {
+    try {
+        const crypto = require('crypto');
+        const { key_name, workspace_id, platform } = req.body;
+
+        if (!workspace_id) {
+            return errorResponse(res, 'workspace_id is required', 400);
+        }
+
+        const user = req.user;
+        const userId = user.db_id || user.id;
+
+        // Resolve workspace
+        const workspace = await knex('workspaces')
+            .where({ id: workspace_id })
+            .select('id', 'name', 'gstn', 'tenant_id')
+            .first();
+
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        // Authorization: must be SUPER_ADMIN or active member of this workspace
+        const isSuperAdmin = user.role === 'SUPER_ADMIN' ||
+            (user.groups && user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+
+        if (!isSuperAdmin) {
+            const access = await knex('workspace_users')
+                .where({ workspace_id: workspace.id, user_id: userId, invitation_status: 'ACTIVE' })
+                .whereNull('removed_at')
+                .first();
+            if (!access) {
+                return errorResponse(res, `You do not have access to workspace "${workspace.name}"`, 403);
+            }
+        }
+
+        // Generate a cryptographically random 32-byte key (64 hex chars), prefixed for clarity
+        const rawKey = 'gst_' + crypto.randomBytes(28).toString('hex');
+
+        const [keyRecord] = await knex('third_party_api_keys')
+            .insert({
+                api_key:      rawKey,
+                key_name:     key_name || `${workspace.name} Key`,
+                user_id:      userId,
+                workspace_id: workspace.id,
+                tenant_id:    workspace.tenant_id,
+                platform:     platform || null,
+                is_active:    true,
+                created_at:   knex.fn.now(),
+                updated_at:   knex.fn.now()
+            })
+            .returning('*');
+
+        await logActivity({
+            userId,
+            tenantId:    workspace.tenant_id,
+            workspaceId: workspace.id,
+            actionType:  'api_key_generated',
+            entityType:  'ApiKey',
+            entityId:    keyRecord.id,
+            details:     { key_name: keyRecord.key_name, workspace: workspace.name, gstn: workspace.gstn },
+            req
+        });
+
+        return successResponse(res, {
+            id:               keyRecord.id,
+            api_key:          rawKey,   // Shown ONCE — user must save this
+            key_name:         keyRecord.key_name,
+            workspace_id:     keyRecord.workspace_id,
+            organization_name: workspace.name,
+            organization_gstn: workspace.gstn,
+            platform:         keyRecord.platform,
+            created_at:       keyRecord.created_at
+        }, 'API key generated successfully. Copy it now — it will not be shown again.');
+
+    } catch (error) {
+        console.error('generateApiKey error:', error.message);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+/**
+ * GET /auth/third-party/api-keys
+ * Lists all active API keys for the authenticated user.
+ */
+const listApiKeys = async (req, res) => {
+    try {
+        const userId = req.user.db_id || req.user.id;
+
+        const keys = await knex('third_party_api_keys')
+            .join('workspaces', 'third_party_api_keys.workspace_id', 'workspaces.id')
+            .where('third_party_api_keys.user_id', userId)
+            .where('third_party_api_keys.is_active', true)
+            .select(
+                'third_party_api_keys.id',
+                'third_party_api_keys.key_name',
+                // Mask the key — show only first 8 chars
+                knex.raw("CONCAT(LEFT(third_party_api_keys.api_key, 12), '...') as api_key_preview"),
+                'third_party_api_keys.workspace_id',
+                'workspaces.name as organization_name',
+                'workspaces.gstn as organization_gstn',
+                'third_party_api_keys.platform',
+                'third_party_api_keys.last_used_at',
+                'third_party_api_keys.created_at'
+            )
+            .orderBy('third_party_api_keys.created_at', 'desc');
+
+        return successResponse(res, keys, 'API keys fetched successfully');
+    } catch (error) {
+        console.error('listApiKeys error:', error.message);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+/**
+ * DELETE /auth/third-party/api-keys/:id
+ * Revokes (deactivates) a specific API key.
+ */
+const revokeApiKey = async (req, res) => {
+    try {
+        const userId  = req.user.db_id || req.user.id;
+        const { id }  = req.params;
+
+        const keyRecord = await knex('third_party_api_keys')
+            .where({ id, user_id: userId })
+            .first();
+
+        if (!keyRecord) {
+            return errorResponse(res, 'API key not found or you do not own it', 404);
+        }
+
+        await knex('third_party_api_keys')
+            .where({ id })
+            .update({ is_active: false, updated_at: knex.fn.now() });
+
+        await logActivity({
+            userId,
+            tenantId:    keyRecord.tenant_id,
+            workspaceId: keyRecord.workspace_id,
+            actionType:  'api_key_revoked',
+            entityType:  'ApiKey',
+            entityId:    id,
+            details:     { key_name: keyRecord.key_name },
+            req
+        });
+
+        return successResponse(res, { id }, 'API key revoked successfully');
+    } catch (error) {
+        console.error('revokeApiKey error:', error.message);
+        return errorResponse(res, error.message, 500);
     }
 };
 
@@ -863,5 +1103,8 @@ module.exports = {
     forgotPassword,
     resetPassword,
     changePassword,
-    thirdPartyLogin
+    thirdPartyLogin,
+    generateApiKey,
+    listApiKeys,
+    revokeApiKey
 };

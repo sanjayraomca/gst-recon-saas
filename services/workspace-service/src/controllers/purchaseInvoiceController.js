@@ -1,6 +1,7 @@
 const PurchaseInvoiceModel = require('../models/purchaseInvoiceModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const jwt = require('jsonwebtoken');
 
 /**
  * Get all purchase invoices with filters and pagination
@@ -209,40 +210,109 @@ const syncThirdPartyPurchases = async (req, res) => {
         const knex = require('../../../shared/src/db/connection');
         const ConnectorImportModel = require('../connectors/connectorImportModel');
 
-        // Extract and validate headers
-        const platform = req.headers['platform'] || req.headers['x-platform'];
-        const orgName = req.headers['organization-name'] || req.headers['x-organization-name'];
-        const orgGstNo = req.headers['organization-gstno'] || req.headers['x-organization-gstno'];
+        // ─── Authentication: 3-tier system ───────────────────────────────────────
+        // Tier 1 (recommended): x-api-key  — permanent API key from generate-api-key endpoint
+        // Tier 2:               x-org-token — scoped JWT issued at login
+        // Tier 3:               legacy headers (platform + organization-gstno) + Bearer JWT
+        // ─────────────────────────────────────────────────────────────────────────
 
-        if (!platform || !orgName || !orgGstNo) {
-            return errorResponse(res, 'Missing required headers: platform, organization-name, and organization-gstno are required', 400);
-        }
+        const rawApiKey  = req.headers['x-api-key'];
+        const rawOrgToken = req.headers['x-org-token'] || req.headers['org-token'];
 
-        // Resolve workspace
-        const workspace = await knex('workspaces')
-            .where({ gstn: orgGstNo.trim().toUpperCase() })
-            .first();
+        let workspace = null;
+        let platform  = null;
+        let resolvedUserId = null;
 
-        if (!workspace) {
-            return errorResponse(res, `Workspace with GSTIN ${orgGstNo} not found`, 404);
-        }
-
-        // Workspace authorization check
-        const user = req.user;
-        const isSuperAdmin = user.role === 'SUPER_ADMIN' || (user.groups && user.groups.includes('super-admin'));
-        if (!isSuperAdmin) {
-            const access = await knex('workspace_users')
-                .where({
-                    workspace_id: workspace.id,
-                    user_id: user.db_id || user.id,
-                    invitation_status: 'ACTIVE'
-                })
-                .whereNull('removed_at')
+        if (rawApiKey) {
+            // ── Tier 1: Permanent API Key ────────────────────────────────────────
+            const keyRecord = await knex('third_party_api_keys')
+                .where({ api_key: rawApiKey, is_active: true })
                 .first();
-            if (!access) {
-                return errorResponse(res, 'Access denied for the specified workspace', 403);
+
+            if (!keyRecord) {
+                return errorResponse(res, 'Invalid or revoked API key', 401);
             }
+
+            // Check expiry if set
+            if (keyRecord.expires_at && new Date() > new Date(keyRecord.expires_at)) {
+                return errorResponse(res, 'API key has expired. Please generate a new one.', 401);
+            }
+
+            workspace = await knex('workspaces')
+                .where({ id: keyRecord.workspace_id })
+                .first();
+
+            if (!workspace) {
+                return errorResponse(res, 'Workspace linked to this API key not found', 404);
+            }
+
+            platform       = keyRecord.platform || (req.headers['platform'] || req.headers['x-platform'] || 'API');
+            resolvedUserId = keyRecord.user_id;
+
+            // Update last_used_at (fire and forget)
+            knex('third_party_api_keys')
+                .where({ id: keyRecord.id })
+                .update({ last_used_at: knex.fn.now() })
+                .catch(() => {});
+
+        } else if (rawOrgToken) {
+            // ── Tier 2: Org-scoped JWT ───────────────────────────────────────────
+            let orgClaims;
+            try {
+                const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
+                orgClaims = jwt.verify(rawOrgToken, jwtSecret, { issuer: 'gst-recon-tool' });
+            } catch (jwtErr) {
+                return errorResponse(res, `Invalid or expired org_access_token: ${jwtErr.message}. Please login again.`, 401);
+            }
+
+            workspace = await knex('workspaces').where({ id: orgClaims.workspace_id }).first();
+            if (!workspace) {
+                return errorResponse(res, 'Workspace referenced in token not found', 404);
+            }
+
+            platform       = orgClaims.platform;
+            resolvedUserId = orgClaims.user_id;
+
+        } else {
+            // ── Tier 3: Legacy headers (requires Bearer JWT) ─────────────────────
+            platform       = req.headers['platform'] || req.headers['x-platform'];
+            const orgGstNo = req.headers['organization-gstno'] || req.headers['x-organization-gstno'];
+
+            if (!platform || !orgGstNo) {
+                return errorResponse(
+                    res,
+                    'Authentication required. Provide one of: x-api-key header, x-org-token header, or platform + organization-gstno headers with Bearer JWT.',
+                    400
+                );
+            }
+
+            workspace = await knex('workspaces').where({ gstn: orgGstNo.trim().toUpperCase() }).first();
+            if (!workspace) {
+                return errorResponse(res, `Workspace with GSTIN ${orgGstNo} not found`, 404);
+            }
+
+            const user = req.user;
+            if (!user) {
+                return errorResponse(res, 'Bearer token required when using header-based auth', 401);
+            }
+
+            const isSuperAdmin = user.role === 'SUPER_ADMIN' || (user.groups && user.groups.includes('super-admin'));
+            if (!isSuperAdmin) {
+                const access = await knex('workspace_users')
+                    .where({ workspace_id: workspace.id, user_id: user.db_id || user.id, invitation_status: 'ACTIVE' })
+                    .whereNull('removed_at')
+                    .first();
+                if (!access) {
+                    return errorResponse(res, 'Access denied for the specified workspace', 403);
+                }
+            }
+
+            resolvedUserId = user.db_id || user.id;
         }
+        // ─────────────────────────────────────────────────────────────────────────
+
+        const user = req.user || { db_id: resolvedUserId, id: resolvedUserId, email: 'api-key-auth' };
+
 
         const rawVouchers = Array.isArray(req.body) ? req.body : (req.body.vouchers || []);
         if (rawVouchers.length === 0) {

@@ -15,4 +15,10 @@ router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 router.put('/change-password', verifyToken, authController.changePassword);
 
+// Third-party API Key Management (requires login)
+router.post('/third-party/generate-api-key', verifyToken, authController.generateApiKey);
+router.get('/third-party/api-keys', verifyToken, authController.listApiKeys);
+router.delete('/third-party/api-keys/:id', verifyToken, authController.revokeApiKey);
+
 module.exports = router;
+
