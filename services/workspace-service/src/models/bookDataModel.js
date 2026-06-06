@@ -1348,6 +1348,44 @@ class BookDataModel {
 
         return { id, itemId, type, subtype, deletionMode: deleteSingleItem ? 'single_item' : 'full_voucher' };
     }
+
+    static async getDeletedInvoices(workspaceId, { type, subtype, search, page = 1, page_size = 50 }) {
+        let query = knex('deleted_invoices')
+            .where('workspace_id', workspaceId);
+
+        if (type) {
+            query = query.where('type', type);
+        }
+        if (subtype) {
+            query = query.where('subtype', subtype);
+        }
+        if (search) {
+            const searchLower = search.toLowerCase();
+            query = query.where(function() {
+                this.whereRaw('LOWER(vchr_no) LIKE ?', [`%${searchLower}%`])
+                    .orWhereRaw('LOWER(inv_no) LIKE ?', [`%${searchLower}%`])
+                    .orWhereRaw('LOWER(remark) LIKE ?', [`%${searchLower}%`])
+                    .orWhereRaw('LOWER(subtype) LIKE ?', [`%${searchLower}%`]);
+            });
+        }
+
+        const countQuery = query.clone().clearSelect().clearOrder().count('id as count').first();
+        const totalResult = await countQuery;
+        const total = parseInt(totalResult?.count || 0, 10);
+
+        const rows = await query
+            .select('*')
+            .orderBy('deleted_at', 'desc')
+            .offset((page - 1) * page_size)
+            .limit(page_size);
+
+        return {
+            total,
+            page,
+            page_size,
+            data: rows
+        };
+    }
 }
 
 module.exports = BookDataModel;

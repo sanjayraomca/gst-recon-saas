@@ -259,6 +259,68 @@ const deleteBookDataById = async (req, res) => {
     }
 };
 
-module.exports = { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters, deleteBookDataById };
+const getDeletedInvoices = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        console.log('[DEBUG] getDeletedInvoices: workspaceId =', workspaceId);
+        if (!workspaceId) {
+            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        }
+
+        const { type, subtype, search, page, page_size } = req.query;
+        console.log('[DEBUG] getDeletedInvoices: query params =', { type, subtype, search, page, page_size });
+
+        // Tenant Isolation
+        const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
+        console.log('[DEBUG] getDeletedInvoices: tenantId =', tenantId);
+        if (tenantId) {
+            const workspace = await knex('workspaces')
+                .where({ id: workspaceId, tenant_id: tenantId })
+                .select('id')
+                .first();
+
+            if (!workspace) {
+                console.log('[DEBUG] getDeletedInvoices: Workspace not found or access denied for tenantId =', tenantId);
+                return errorResponse(res, 'Workspace not found or access denied', 403);
+            }
+        }
+
+        const filters = {
+            type: (type && type !== 'undefined') ? type : undefined,
+            subtype: (subtype && subtype !== 'undefined') ? subtype : undefined,
+            search: (search && search !== 'undefined') ? search : undefined,
+            page: parseInt(page) || 1,
+            page_size: Math.min(parseInt(page_size) || 50, 200)
+        };
+
+        const result = await BookDataModel.getDeletedInvoices(workspaceId, filters);
+        console.log('[DEBUG] getDeletedInvoices: result count =', result.total, 'data length =', result.data.length);
+
+        // Optional: Log activity of viewing deleted invoices list
+        await logActivity({
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: tenantId,
+            workspaceId: workspaceId,
+            actionType: 'VIEW_DELETED_INVOICES_REGISTRY',
+            entityType: 'AUDIT_LOG',
+            details: { filters },
+            req
+        });
+
+        return successResponse(res, result, 'Deleted invoices retrieved successfully');
+    } catch (error) {
+        console.error('BookDataController.getDeletedInvoices error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+module.exports = {
+    getBookData,
+    getBookDataSummary,
+    getBookDataById,
+    getBookDataMasters,
+    deleteBookDataById,
+    getDeletedInvoices
+};
 
 

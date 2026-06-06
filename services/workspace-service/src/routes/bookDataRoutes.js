@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../../../shared/src/middleware/authMiddleware');
-const { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters, deleteBookDataById } = require('../controllers/bookDataController');
+const { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters, deleteBookDataById, getDeletedInvoices } = require('../controllers/bookDataController');
 const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
 router.use(verifyToken);
@@ -12,6 +12,9 @@ router.get('/summary', getBookDataSummary);
 
 // GET /book-data/masters?type=sales_invoice — returns unique gstins/parties
 router.get('/masters', getBookDataMasters);
+
+// GET /book-data/deleted — returns paginated list of deleted invoices/vouchers
+router.get('/deleted', getDeletedInvoices);
 
 // GET /book-data/voucher/:id — returns a single book entry
 router.get('/voucher/:id', getBookDataById);
