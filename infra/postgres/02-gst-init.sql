@@ -2390,3 +2390,55 @@ CREATE INDEX IF NOT EXISTS idx_deleted_invoices_deleted_at   ON deleted_invoices
 COMMENT ON TABLE deleted_invoices IS 'Audit log of deleted invoices from book data or gst data. Preserves full snapshot for recovery and compliance.';
 
 
+-- ============================================================
+-- PERFORMANCE INDEXES (Migration 005)
+-- Added 2026-06-06 — covers all hot query paths.
+-- All use IF NOT EXISTS so this is safe on re-init.
+-- ============================================================
+
+-- purchase_vouchers
+CREATE INDEX IF NOT EXISTS idx_pv_workspace_period     ON purchase_vouchers (workspace_id, tax_period_id);
+CREATE INDEX IF NOT EXISTS idx_pv_supplier_gstin        ON purchase_vouchers (workspace_id, supplier_gstin);
+CREATE INDEX IF NOT EXISTS idx_pv_supplier_invoice_no  ON purchase_vouchers (workspace_id, supplier_invoice_no);
+CREATE INDEX IF NOT EXISTS idx_pv_is_deleted           ON purchase_vouchers (workspace_id, is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX IF NOT EXISTS idx_pv_book_type            ON purchase_vouchers (workspace_id, book_type);
+CREATE INDEX IF NOT EXISTS idx_pv_invoice_date         ON purchase_vouchers (workspace_id, supplier_invoice_date DESC);
+
+-- purchase_items
+CREATE INDEX IF NOT EXISTS idx_pi_purchase_id          ON purchase_items (purchase_id);
+CREATE INDEX IF NOT EXISTS idx_pi_hsn_code             ON purchase_items (hsn_code);
+
+-- sales_invoices
+CREATE INDEX IF NOT EXISTS idx_si_workspace_period     ON sales_invoices (workspace_id, tax_period_id);
+CREATE INDEX IF NOT EXISTS idx_si_customer_gstin       ON sales_invoices (workspace_id, customer_gstin);
+CREATE INDEX IF NOT EXISTS idx_si_invoice_date         ON sales_invoices (workspace_id, invoice_date DESC);
+CREATE INDEX IF NOT EXISTS idx_si_book_type            ON sales_invoices (workspace_id, book_type);
+
+-- reconciliation_runs
+CREATE INDEX IF NOT EXISTS idx_recon_runs_workspace_status ON reconciliation_runs (workspace_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_recon_runs_period           ON reconciliation_runs (workspace_id, period_id);
+
+-- reconciliation_results
+CREATE INDEX IF NOT EXISTS idx_recon_results_run_id    ON reconciliation_results (recon_run_id);
+CREATE INDEX IF NOT EXISTS idx_recon_results_ws_status ON reconciliation_results (workspace_id, match_status);
+CREATE INDEX IF NOT EXISTS idx_recon_results_itc       ON reconciliation_results (workspace_id, itc_decision);
+
+-- reconciliation_status
+CREATE INDEX IF NOT EXISTS idx_recon_status_book_data  ON reconciliation_status (workspace_id, book_data_id) WHERE book_data_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_recon_status_gstr_data  ON reconciliation_status (workspace_id, gstr_data_id) WHERE gstr_data_id IS NOT NULL;
+
+-- tig_inbound_outbound_log
+CREATE INDEX IF NOT EXISTS idx_tig_log_org_created     ON tig_inbound_outbound_log (org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tig_log_platform        ON tig_inbound_outbound_log (platform, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tig_log_request_type    ON tig_inbound_outbound_log (request_type, created_at DESC);
+
+-- supplier_master & customer_master
+CREATE INDEX IF NOT EXISTS idx_supplier_master_gstin   ON supplier_master (workspace_id, gstin);
+CREATE INDEX IF NOT EXISTS idx_supplier_master_name    ON supplier_master (workspace_id, supplier_name);
+CREATE INDEX IF NOT EXISTS idx_customer_master_gstin   ON customer_master (workspace_id, gstin);
+CREATE INDEX IF NOT EXISTS idx_customer_master_name    ON customer_master (workspace_id, customer_name);
+
+-- gstr_import_master
+CREATE INDEX IF NOT EXISTS idx_gstr_import_ws_status   ON gstr_import_master (workspace_id, status, upload_timestamp DESC);
+
+

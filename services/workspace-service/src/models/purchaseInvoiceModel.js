@@ -44,10 +44,57 @@ class PurchaseInvoiceModel {
         const countQuery = query.clone();
         const [{ count }] = await countQuery.count('* as count');
 
-        // Get paginated results
+        // Get paginated results — explicit columns only (avoids fetching t_extra_info JSONB + amendment blobs on every row)
         const invoices = await query
             .select(
-                'ev.*',
+                // Core identity
+                'ev.id',
+                'ev.workspace_id',
+                'ev.tenant_id',
+                'ev.import_filing_id',
+                'ev.tax_period_id',
+                // Supplier info
+                'ev.supplier_name',
+                'ev.supplier_gstin',
+                'ev.supplier_id',
+                // Invoice identity
+                'ev.supplier_invoice_no',
+                'ev.supplier_invoice_date',
+                'ev.book_vchr_no',
+                'ev.book_vchr_date',
+                // Classification
+                'ev.voucher_type',
+                'ev.book_type',
+                'ev.source_section',
+                'ev.gstr_category',
+                'ev.platform',
+                'ev.status',
+                'ev.is_deleted',
+                // Financial totals
+                'ev.taxable_total',
+                'ev.net_amount',
+                'ev.total_igst_amount',
+                'ev.total_cgst_amount',
+                'ev.total_sgst_amount',
+                'ev.total_cess_amount',
+                'ev.round_off',
+                'ev.discount',
+                // GST fields
+                'ev.place_of_supply',
+                'ev.is_interstate',
+                'ev.is_rcm',
+                'ev.return_period',
+                'ev.filing_period',
+                // ITC tracking
+                'ev.itc_eligible',
+                'ev.itc_claimed',
+                // Payment
+                'ev.payment_status',
+                'ev.amount_paid',
+                // Audit
+                'ev.created_at',
+                'ev.updated_at',
+                // Line item columns from purchase_items join
                 'pi.id as item_id',
                 'pi.taxable_amount as item_taxable_amount',
                 'pi.tax_per as item_tax_per',
@@ -60,7 +107,7 @@ class PurchaseInvoiceModel {
                 'pi.invoice_amount as item_invoice_amount',
                 'pi.description as item_description'
             )
-            .orderBy('ev.invoice_date', 'desc')
+            .orderBy('ev.supplier_invoice_date', 'desc')
             .limit(page_size)
             .offset(offset);
 
