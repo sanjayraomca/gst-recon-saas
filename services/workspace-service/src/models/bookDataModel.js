@@ -254,6 +254,8 @@ class BookDataModel {
         if (resolved.table === 'sales') {
             // --- sales_invoices ---
             let q = knex('sales_invoices as si')
+                .leftJoin('gstr_import_master as im', 'si.import_filing_id', 'im.import_filing_id')
+                .leftJoin('users as u', 'si.created_by', 'u.id')
                 .where('si.workspace_id', workspaceId);
 
             if (import_filing_id) {
@@ -466,7 +468,14 @@ class BookDataModel {
                         'si.book_type as bookType',
                         'si.round_off as roundOff',
                         knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
-                        knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\"")
+                        knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\""),
+                        'im.user_email as imported_by_email',
+                        'im.upload_timestamp as imported_at',
+                        'im.original_filename as imported_from_file',
+                        'im.import_type as imported_via',
+                        'si.created_at',
+                        'u.email as created_by_email',
+                        'u.full_name as created_by_name'
                     )
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                     .limit(page_size)
@@ -478,6 +487,8 @@ class BookDataModel {
             let q = knex('purchase_vouchers as ev')
                 .leftJoin('reconciliation_status as rs', 'ev.id', 'rs.book_data_id')
                 .leftJoin('purchase_items as pi', 'ev.id', 'pi.purchase_id')
+                .leftJoin('gstr_import_master as im', 'ev.import_filing_id', 'im.import_filing_id')
+                .leftJoin('users as u', 'ev.created_by', 'u.id')
                 .where('ev.workspace_id', workspaceId);
 
             if (import_filing_id) {
@@ -736,7 +747,14 @@ class BookDataModel {
                         knex.raw("count(ev.id) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, ''), ev.supplier_name)) as \"invoiceCount\""),
                         'pi.description as description',
                         'pi.tax_per as taxPercent',
-                        'pi.platform as platform'
+                        'pi.platform as platform',
+                        'im.user_email as imported_by_email',
+                        'im.upload_timestamp as imported_at',
+                        'im.original_filename as imported_from_file',
+                        'im.import_type as imported_via',
+                        'ev.created_at',
+                        'u.email as created_by_email',
+                        'u.full_name as created_by_name'
                     )
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
                     .limit(page_size)
