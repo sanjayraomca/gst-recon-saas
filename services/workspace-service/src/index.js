@@ -23,6 +23,7 @@ app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
 app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
 app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
 app.use('/customers', require('./routes/customerRoutes')); // Customer listing aggregated from all sources
+app.use('/connector-logs', require('./routes/connectorLogRoutes')); // TIG Inbound/Outbound connector log viewer
 
 
 
