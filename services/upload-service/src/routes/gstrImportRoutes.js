@@ -120,6 +120,9 @@ router.get('/import/download/:import_filing_id', verifyToken, GSTRImportControll
 //   Query: return_period, section, supplier_gstin, document_number, itc_available, page, page_size
 router.get('/gstr2b/list', verifyToken, GSTRImportController.listGstr2bInvoices);
 
+// Delete individual GSTR invoice
+router.delete('/gstr/invoice/:id', verifyToken, GSTRImportController.deleteGstrInvoice);
+
 // Section-level totals: GET /gst-import/gstr2b/summary
 //   Query: return_period
 router.get('/gstr2b/summary', verifyToken, GSTRImportController.getGstr2bSummary);

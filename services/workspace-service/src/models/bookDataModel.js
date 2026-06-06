@@ -716,6 +716,7 @@ class BookDataModel {
                 records = await q
                     .select(
                         'ev.id',
+                        'pi.id as item_id',
                         'ev.supplier_invoice_no as invoiceNo',
                         'ev.supplier_invoice_no as invoice_number',
                         'ev.book_vchr_no as bookVchrNo',
@@ -1207,7 +1208,148 @@ class BookDataModel {
             return { gstins, parties };
         }
     }
+
+    static async deleteById(workspaceId, id, tenantId, ipAddress, user, remark, itemId = null) {
+        // 1. Retrieve the voucher/invoice details first
+        let isPurchase = true;
+        let record = await knex('purchase_vouchers')
+            .where({ id, workspace_id: workspaceId })
+            .first();
+
+        // If not found in purchase_vouchers, try sales_invoices
+        if (!record) {
+            isPurchase = false;
+            record = await knex('sales_invoices')
+                .where({ id, workspace_id: workspaceId })
+                .first();
+        }
+
+        if (!record) {
+            throw new Error('Invoice or Voucher not found');
+        }
+
+        // 2. Determine the target item(s) to delete
+        //    - If itemId is provided, only delete that specific line item
+        //    - Otherwise delete the entire voucher and all its items
+        let itemsToArchive = [];
+        let deleteSingleItem = false;
+        let shouldDeleteParent = false;
+
+        if (isPurchase) {
+            const allItems = await knex('purchase_items')
+                .where('purchase_id', id)
+                .orderBy('id', 'asc');
+
+            if (itemId) {
+                // Single-item deletion
+                const targetItem = allItems.find(i => i.id === itemId);
+                if (!targetItem) throw new Error('Line item not found for this voucher');
+                itemsToArchive = [targetItem];
+                deleteSingleItem = true;
+                // Delete parent voucher only if this is the last item
+                shouldDeleteParent = allItems.length === 1;
+            } else {
+                // Full voucher deletion — archive all items
+                itemsToArchive = allItems;
+                shouldDeleteParent = true;
+            }
+        } else {
+            // Sales invoices: always full delete (no item_id support yet)
+            itemsToArchive = await knex('sales_invoice_items')
+                .where('sales_id', id)
+                .orderBy('id', 'asc');
+            shouldDeleteParent = true;
+        }
+
+        // 3. Determine type and subtype
+        const type = 'book data';
+        let subtype = 'purchase';
+        if (isPurchase) {
+            const vType = String(record.voucher_type || '').toLowerCase();
+            if (vType.includes('credit')) subtype = 'credit note';
+            else if (vType.includes('debit')) subtype = 'debit note';
+            else if (vType.includes('expense')) subtype = 'expense';
+        } else {
+            const iType = String(record.invoice_type || '').toLowerCase();
+            if (iType.includes('credit')) subtype = 'credit note';
+            else if (iType.includes('debit')) subtype = 'debit note';
+            else subtype = 'sales';
+        }
+
+        const refTableInfo = {
+            parent_table: isPurchase ? 'purchase_vouchers' : 'sales_invoices',
+            child_table: isPurchase ? 'purchase_items' : 'sales_invoice_items',
+            child_fk_column: isPurchase ? 'purchase_id' : 'sales_id',
+            deleted_item_id: itemId || null,
+            deletion_mode: deleteSingleItem ? 'single_item' : 'full_voucher'
+        };
+
+        const extraInfo = {
+            deleted_by: {
+                id: user?.id || user?.sub || null,
+                name: user?.full_name || user?.name || null,
+                email: user?.email || null
+            }
+        };
+
+        const vchr_no = isPurchase ? record.book_vchr_no : record.invoice_number;
+        const vchr_date = isPurchase ? record.book_vchr_date : record.invoice_date;
+        const inv_no = isPurchase ? record.supplier_invoice_no : record.invoice_number;
+        const inv_date = isPurchase ? record.supplier_invoice_date : record.invoice_date;
+
+        // 4. Execute database operations inside a transaction
+        await knex.transaction(async (trx) => {
+            // A. Archive to deleted_invoices
+            await trx('deleted_invoices').insert({
+                type,
+                subtype,
+                tenant_id: tenantId,
+                workspace_id: workspaceId,
+                main_data: JSON.stringify(record),
+                line_items: JSON.stringify(itemsToArchive),
+                ref_table_info: JSON.stringify(refTableInfo),
+                vchr_no,
+                vchr_date,
+                inv_no,
+                inv_date,
+                ip_address: ipAddress,
+                remark: remark || `Deleted by ${user?.full_name || user?.email || 'User'}`,
+                t_extra_info: JSON.stringify(extraInfo)
+            });
+
+            if (isPurchase) {
+                if (deleteSingleItem) {
+                    // B1. Delete only the specific purchase_items row
+                    await trx('purchase_items').where('id', itemId).delete();
+
+                    // B2. If this was the last item, clean up the parent voucher too
+                    if (shouldDeleteParent) {
+                        await trx('reconciliation_results').where('purchase_invoice_id', id).delete();
+                        await trx('reconciliation_results_2a').where('purchase_invoice_id', id).delete();
+                        await trx('reconciliation_status_gst2a_vs_book').where('book_data_id', id).delete();
+                        await trx('reconciliation_status').where('book_data_id', id).delete();
+                        await trx('purchase_vouchers').where('id', id).delete();
+                    }
+                } else {
+                    // B3. Full voucher deletion — remove all dependencies then parent
+                    await trx('reconciliation_results').where('purchase_invoice_id', id).delete();
+                    await trx('reconciliation_results_2a').where('purchase_invoice_id', id).delete();
+                    await trx('reconciliation_status_gst2a_vs_book').where('book_data_id', id).delete();
+                    await trx('reconciliation_status').where('book_data_id', id).delete();
+                    await trx('purchase_items').where('purchase_id', id).delete();
+                    await trx('purchase_vouchers').where('id', id).delete();
+                }
+            } else {
+                // Sales: always full delete
+                await trx('sales_invoice_items').where('sales_id', id).delete();
+                await trx('sales_invoices').where('id', id).delete();
+            }
+        });
+
+        return { id, itemId, type, subtype, deletionMode: deleteSingleItem ? 'single_item' : 'full_voucher' };
+    }
 }
 
 module.exports = BookDataModel;
+
 

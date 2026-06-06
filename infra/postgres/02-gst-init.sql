@@ -2358,3 +2358,35 @@ CREATE INDEX IF NOT EXISTS idx_tig_inbound_outbound_log_created   ON tig_inbound
 
 COMMENT ON TABLE tig_inbound_outbound_log IS 'Audit log for all inbound and outbound API connector requests and responses (Adesk, Tally, Zoho, etc.)';
 
+-- ============================================================
+-- deleted_invoices: Audit log of deleted book data / gst data records
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS deleted_invoices (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type            VARCHAR(50) NOT NULL CHECK (type IN ('book data', 'gst data')),
+    subtype         VARCHAR(100),               -- purchase, sales, credit note, debit note, expense, etc.
+    tenant_id       UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    main_data       JSONB,                      -- snapshot of the parent voucher/invoice row
+    line_items      JSONB,                      -- snapshot of the deleted line item(s)
+    ref_table_info JSONB,
+    vchr_no         VARCHAR(100),
+    vchr_date       DATE,
+    inv_no          VARCHAR(100),
+    inv_date        DATE,
+    ip_address      VARCHAR(45),               -- IPv4 or IPv6 of the request
+    remark          TEXT,                       -- optional deletion reason entered by user
+    deleted_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    t_extra_info    JSONB                       -- deleted_by user info (id, name, email)
+);
+
+-- Indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_deleted_invoices_tenant       ON deleted_invoices (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_deleted_invoices_workspace    ON deleted_invoices (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_deleted_invoices_type_subtype ON deleted_invoices (type, subtype);
+CREATE INDEX IF NOT EXISTS idx_deleted_invoices_deleted_at   ON deleted_invoices (deleted_at DESC);
+
+COMMENT ON TABLE deleted_invoices IS 'Audit log of deleted invoices from book data or gst data. Preserves full snapshot for recovery and compliance.';
+
+

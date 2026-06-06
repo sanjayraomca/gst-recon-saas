@@ -205,5 +205,60 @@ const getBookDataMasters = async (req, res) => {
     }
 };
 
-module.exports = { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters };
+const deleteBookDataById = async (req, res) => {
+    try {
+        const workspaceId = req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+
+        const { id } = req.params;
+        if (!id) return errorResponse(res, 'Voucher/Invoice ID is required', 400);
+
+        const tenantId = req.user?.tenant_id || req.user?.tenantId || req.user?.['custom:tenant_id'];
+        if (tenantId) {
+            const workspace = await knex('workspaces').where({ id: workspaceId, tenant_id: tenantId }).select('id').first();
+            if (!workspace) return errorResponse(res, 'Workspace not found or access denied', 403);
+        }
+
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+        // item_id allows deleting a single line item only; without it the entire voucher is deleted
+        const itemId = req.body.item_id || null;
+
+        const result = await BookDataModel.deleteById(
+            workspaceId,
+            id,
+            tenantId,
+            ipAddress,
+            req.user,
+            req.body.remark,
+            itemId
+        );
+
+        // --- ACTIVITY LOG ---
+        await logActivity({
+            userId: req.user?.db_id || req.user?.id || req.user?.sub,
+            tenantId: tenantId,
+            workspaceId: workspaceId,
+            actionType: `DELETE_BOOK_DATA_ROW`,
+            entityType: 'BOOK_DATA',
+            details: {
+                id,
+                item_id: itemId,
+                deletion_mode: result.deletionMode,
+                type: result.type,
+                subtype: result.subtype,
+                remark: req.body.remark
+            },
+            req
+        });
+
+        return successResponse(res, result, 'Record deleted successfully');
+    } catch (error) {
+        console.error('BookDataController.deleteBookDataById error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+module.exports = { getBookData, getBookDataSummary, getBookDataById, getBookDataMasters, deleteBookDataById };
+
 

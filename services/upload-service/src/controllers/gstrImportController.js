@@ -1400,6 +1400,147 @@ class GSTRImportController {
             return errorResponse(res, error);
         }
     }
+
+    /**
+     * Delete individual GSTR invoice/record
+     * DELETE /gst-import/gstr/invoice/:id
+     */
+    static async deleteGstrInvoice(req, res) {
+        try {
+            const { id } = req.params;
+            const workspaceId = req.headers['x-workspace-id'];
+            const remark = req.body.remark || '';
+            const user = req.user;
+            const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+
+            if (!workspaceId) {
+                return errorResponse(res, { message: 'x-workspace-id header is required', isCustom: true }, 400);
+            }
+
+            // 1. Retrieve the invoice from either normalized_gstr2b_invoices or normalized_gstr2a_invoices
+            let isGstr2b = true;
+            let record = await db('normalized_gstr2b_invoices')
+                .where({ id, workspace_id: workspaceId })
+                .first();
+
+            if (!record) {
+                isGstr2b = false;
+                record = await db('normalized_gstr2a_invoices')
+                    .where({ id, workspace_id: workspaceId })
+                    .first();
+            }
+
+            if (!record) {
+                return errorResponse(res, { message: 'GSTR Invoice not found' }, 404);
+            }
+
+            // 2. Identify subtype (e.g. CDNR -> credit note / debit note, regular -> purchase / sales based on import_type/document_type)
+            const importMaster = await db('gstr_import_master')
+                .where({ import_filing_id: record.import_filing_id })
+                .first();
+
+            const importType = importMaster?.import_type || (isGstr2b ? 'GSTR2B' : 'GSTR2A');
+
+            let subtype = 'purchase';
+            const docCat = String(record.document_category || '').toLowerCase();
+            const docType = String(record.document_type || '').toLowerCase();
+            const sourceSec = String(record.source_section || '').toLowerCase();
+
+            if (docCat.includes('credit') || docType.includes('credit') || sourceSec.includes('cdnr')) {
+                subtype = 'credit note';
+            } else if (docCat.includes('debit') || docType.includes('debit')) {
+                subtype = 'debit note';
+            } else if (docCat.includes('import') || sourceSec.includes('impg')) {
+                subtype = 'import';
+            } else if (docCat.includes('isd') || sourceSec.includes('isd')) {
+                subtype = 'isd';
+            }
+
+            const refTableInfo = {
+                table: isGstr2b ? 'normalized_gstr2b_invoices' : 'normalized_gstr2a_invoices',
+                deleted_id: id,
+                import_type: importType,
+                source_section: record.source_section
+            };
+
+            const extraInfo = {
+                deleted_by: {
+                    id: user?.id || user?.sub || null,
+                    name: user?.full_name || user?.name || null,
+                    email: user?.email || null
+                }
+            };
+
+            // Invoice / voucher values for columns:
+            const docNum = record.document_number_clean || record.document_number_raw || '';
+            const docDate = record.document_date || null;
+
+            // 3. Perform the archiving and deletion within a database transaction
+            await db.transaction(async (trx) => {
+                // A. Archive to deleted_invoices
+                await trx('deleted_invoices').insert({
+                    type: 'gst data',
+                    subtype,
+                    tenant_id: record.tenant_id,
+                    workspace_id: workspaceId,
+                    main_data: JSON.stringify(record),
+                    line_items: JSON.stringify([]),
+                    ref_table_info: JSON.stringify(refTableInfo),
+                    vchr_no: docNum,
+                    vchr_date: docDate,
+                    inv_no: docNum,
+                    inv_date: docDate,
+                    ip_address: ipAddress,
+                    remark: remark || `Deleted GSTR Record by ${user?.full_name || user?.email || 'User'}`,
+                    t_extra_info: JSON.stringify(extraInfo)
+                });
+
+                // B. Remove references from reconciliation tables
+                if (isGstr2b) {
+                    await trx('reconciliation_results').where('gstr2b_invoice_id', id).delete();
+                    await trx('reconciliation_results_2a').where('gstr2b_invoice_id', id).delete();
+                    await trx('reconciliation_status_2a_vs_2b').where('gstr2b_invoice_id', id).delete();
+                } else {
+                    await trx('reconciliation_results').where('gstr2a_invoice_id', id).delete();
+                    await trx('reconciliation_results').where('gstr2a_source_id', id).delete();
+                    await trx('reconciliation_results_2a').where('gstr2a_invoice_id', id).delete();
+                    await trx('reconciliation_results_2a').where('gstr2a_source_id', id).delete();
+                    await trx('reconciliation_status_2a_vs_2b').where('gstr2a_invoice_id', id).delete();
+                }
+
+                await trx('reconciliation_status').where('gstr_data_id', id).delete();
+                await trx('reconciliation_status_gst2a_vs_book').where('gstr_data_id', id).delete();
+
+                // C. Delete the record from its table
+                await trx(isGstr2b ? 'normalized_gstr2b_invoices' : 'normalized_gstr2a_invoices')
+                    .where({ id })
+                    .delete();
+            });
+
+            // Log activity
+            const displayType = (importType === 'GSTR2A') ? 'GSTR-2A' : 'GSTR-2B';
+            await logActivity({
+                userId: user?.db_id || user?.id || user?.sub,
+                tenantId: record.tenant_id,
+                workspaceId,
+                actionType: `DELETE_${importType}_RECORD`,
+                entityType: 'GSTR_DATA',
+                details: {
+                    record_id: id,
+                    document_number: docNum,
+                    document_date: docDate,
+                    display_type: displayType,
+                    remark
+                },
+                req
+            });
+
+            return successResponse(res, null, 'GSTR invoice deleted successfully');
+        } catch (error) {
+            console.error('Delete GSTR Invoice Error:', error);
+            return errorResponse(res, error);
+        }
+    }
 }
 
 module.exports = GSTRImportController;
