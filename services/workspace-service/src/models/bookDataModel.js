@@ -242,7 +242,8 @@ class BookDataModel {
         const {
             search, status, period, gstin, date_from, date_to, year,
             amt_min, amt_max, amt_net_min, amt_net_max,
-            place_of_supply, sort_by, sort_dir = 'desc'
+            place_of_supply, sort_by, sort_dir = 'desc',
+            import_filing_id
         } = filters;
 
         let records = [];
@@ -254,6 +255,10 @@ class BookDataModel {
             // --- sales_invoices ---
             let q = knex('sales_invoices as si')
                 .where('si.workspace_id', workspaceId);
+
+            if (import_filing_id) {
+                q = q.where('si.import_filing_id', import_filing_id);
+            }
 
             // Multi-type OR filter
             q = q.where(function () {
@@ -474,6 +479,10 @@ class BookDataModel {
                 .leftJoin('reconciliation_status as rs', 'ev.id', 'rs.book_data_id')
                 .leftJoin('purchase_items as pi', 'ev.id', 'pi.purchase_id')
                 .where('ev.workspace_id', workspaceId);
+
+            if (import_filing_id) {
+                q = q.where('ev.import_filing_id', import_filing_id);
+            }
 
             // Multi-type OR filter
             q = q.where(function () {

@@ -12,15 +12,24 @@ const dbConfig = {
 };
 
 async function main() {
-    console.log('Applying migration: 001_add_book_api_connector_tables.sql...');
+    const migrationsDir = path.join(__dirname, '../infra/postgres/migrations');
+    const files = fs.readdirSync(migrationsDir)
+        .filter(f => f.endsWith('.sql'))
+        .sort();
+
+    console.log(`Found ${files.length} migration file(s).`);
+
     const client = new Client(dbConfig);
     await client.connect();
 
     try {
-        const sqlPath = path.join(__dirname, '../infra/postgres/migrations/001_add_book_api_connector_tables.sql');
-        const sql = fs.readFileSync(sqlPath, 'utf8');
-        await client.query(sql);
-        console.log('✅ Migration applied successfully.');
+        for (const file of files) {
+            console.log(`Applying migration: ${file}...`);
+            const sqlPath = path.join(migrationsDir, file);
+            const sql = fs.readFileSync(sqlPath, 'utf8');
+            await client.query(sql);
+            console.log(`✅ Migration ${file} applied successfully.`);
+        }
     } catch (err) {
         console.error('❌ Migration failed:', err.message);
     } finally {

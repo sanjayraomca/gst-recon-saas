@@ -386,6 +386,7 @@ class NormalizedGstr2bModel {
             sortBy,
             sortOrder = 'asc',
             importType,
+            importFilingId,
             page = 1,
             pageSize = 50,
             columnFilters,
@@ -400,6 +401,11 @@ class NormalizedGstr2bModel {
         // Build WHERE clauses dynamically
         const conditions = ['workspace_id = ?'];
         const params = [workspaceId];
+
+        if (importFilingId) {
+            conditions.push('import_filing_id = ?');
+            params.push(importFilingId);
+        }
 
         if (returnPeriod && returnPeriod !== 'ALL') {
             if (returnPeriod.startsWith('Q')) {

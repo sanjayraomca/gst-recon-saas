@@ -21,7 +21,8 @@ const getBookData = async (req, res) => {
             type, search, status, period, gstin, date_from, date_to, 
             amt_min, amt_max, minNetAmt, maxNetAmt, place_of_supply, page, page_size, 
             sort_by, sort_dir, export_mode,
-            gstins, parties, supply_type, roundoff_only, column_filters
+            gstins, parties, supply_type, roundoff_only, column_filters,
+            import_filing_id, importFilingId
         } = req.query;
 
         if (!type) {
@@ -71,7 +72,8 @@ const getBookData = async (req, res) => {
                 parties: parseArr(parties),
                 supply_type,
                 roundoff_only,
-                column_filters
+                column_filters,
+                import_filing_id: import_filing_id || importFilingId
             },
             pagination
         );
