@@ -1228,6 +1228,13 @@ class Reconciliation2AModel {
                     knex.raw("COALESCE(tp.period_code, gi.return_period, sa.return_period, gb.return_period, '000000') as period"),
                     knex.raw("UPPER(COALESCE(pi.source_section, gi.source_section, sa.source_section, gb.source_section, 'OTHER')) as category"),
                     'rr.id as result_id',
+                    'rr.id as id',
+                    'rr.id as resultId',
+                    'rr.matched_by',
+                    'rr.match_score',
+                    'rr.match_confidence',
+                    knex.raw("COALESCE(rs.recon_status, 'pending') as reconciliation_status"),
+                    knex.raw("COALESCE(rs.recon_status, 'pending') as action_status"),
                     'rr.match_status',
                     'pi.book_vchr_no as vchr_no',
                     knex.raw("COALESCE(pi.supplier_name, gi.supplier_name, sa.supplier_name, gb.supplier_name, 'Unknown') as supplier_name"),
@@ -1236,10 +1243,19 @@ class Reconciliation2AModel {
                     knex.raw("COALESCE(pi.supplier_invoice_date, gi.document_date, sa.document_date, gb.document_date) as invoice_date"),
                     // Books
                     knex.raw("(COALESCE(pi.total_igst_amount,0) + COALESCE(pi.total_cgst_amount,0) + COALESCE(pi.total_sgst_amount,0) + COALESCE(pi.total_cess_amount,0) + COALESCE(sa.total_tax, 0)) as books_tax"),
+                    knex.raw("(COALESCE(pi.total_igst_amount,0) + COALESCE(pi.total_cgst_amount,0) + COALESCE(pi.total_sgst_amount,0) + COALESCE(pi.total_cess_amount,0) + COALESCE(sa.total_tax, 0)) as purchase_tax"),
                     knex.raw("COALESCE(pi.total_igst_amount, sa.igst, 0) as books_igst"),
+                    knex.raw("COALESCE(pi.total_igst_amount, sa.igst, 0) as purchase_igst"),
                     knex.raw("COALESCE(pi.total_cgst_amount, sa.cgst, 0) as books_cgst"),
+                    knex.raw("COALESCE(pi.total_cgst_amount, sa.cgst, 0) as purchase_cgst"),
                     knex.raw("COALESCE(pi.total_sgst_amount, sa.sgst, 0) as books_sgst"),
+                    knex.raw("COALESCE(pi.total_sgst_amount, sa.sgst, 0) as purchase_sgst"),
                     knex.raw("COALESCE(pi.total_cess_amount, sa.cess, 0) as books_cess"),
+                    knex.raw("COALESCE(pi.total_cess_amount, sa.cess, 0) as purchase_cess"),
+                    knex.raw("COALESCE(pi.taxable_total, sa.taxable_value) as purchase_taxable"),
+                    knex.raw("COALESCE(pi.net_amount, sa.document_value, sa.taxable_value + COALESCE(sa.total_tax, 0)) as purchase_invoice_total"),
+                    knex.raw("COALESCE(pi.supplier_invoice_no, sa.document_number_clean) as purchase_invoice_number"),
+                    knex.raw("COALESCE(pi.supplier_invoice_date, sa.document_date) as purchase_invoice_date"),
                     // GSTR
                     knex.raw("COALESCE(gi.total_tax, gb.total_tax, 0) as gstr_tax"),
                     knex.raw("COALESCE(gi.total_tax, 0) as gstr2a_tax"),
@@ -1250,7 +1266,13 @@ class Reconciliation2AModel {
                     knex.raw("COALESCE(gi.igst, 0) as gstr2a_igst"),
                     knex.raw("COALESCE(gi.cgst, 0) as gstr2a_cgst"),
                     knex.raw("COALESCE(gi.sgst, 0) as gstr2a_sgst"),
-                    knex.raw("COALESCE(gi.cess, 0) as gstr2a_cess")
+                    knex.raw("COALESCE(gi.cess, 0) as gstr2a_cess"),
+                    knex.raw("COALESCE(gi.taxable_value, gb.taxable_value) as gstr_taxable"),
+                    knex.raw("COALESCE(gi.document_value, gb.document_value) as gstr_invoice_total"),
+                    knex.raw("COALESCE(gi.document_number_clean, gb.document_number_clean) as gstr_invoice_number"),
+                    knex.raw("COALESCE(gi.document_date, gb.document_date) as gstr_invoice_date"),
+                    knex.raw("COALESCE(gi.return_period, gb.return_period) as gstr_return_period"),
+                    knex.raw("COALESCE(pi.source_section, gi.source_section, sa.source_section, gb.source_section, 'B2B') as supplier_gst_type")
                 )
                 .limit(50000) // Support high-density analytical sets
         ]);
