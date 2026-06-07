@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS deleted_invoices (
     subtype         VARCHAR(100),
     tenant_id       UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
     main_data       JSONB,
     line_items      JSONB,
     ref_table_info  JSONB,

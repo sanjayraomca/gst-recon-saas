@@ -330,6 +330,8 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
         if (isCDNR) {
             // Processing CDNR Record
             const noteNumRaw = noteNoRaw;
+            // Skip GSTR-2A portal subtotal rows — these appear as "NoteNumber-Total" after each note group
+            if (noteNumRaw && /[-\s]total$/i.test(noteNumRaw.toString().trim())) continue;
             const noteNum = noteNumRaw ? normalizeInvoiceNumber(noteNumRaw.toString()) : '';
             if (!noteNum) continue;
 
@@ -355,6 +357,8 @@ const processB2BSheet = (rows, gstinId, fileReturnPeriod, sheetName, gstrType = 
         } else {
             // Processing B2B Record
             const invNumRaw = invoiceNoRaw;
+            // Skip GSTR-2A portal subtotal rows — these appear as "InvoiceNumber-Total" after each invoice group
+            if (invNumRaw && /[-\s]total$/i.test(invNumRaw.toString().trim())) continue;
             const invNum = invNumRaw ? normalizeInvoiceNumber(invNumRaw.toString()) : '';
             if (!invNum) continue;
 

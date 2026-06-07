@@ -1305,6 +1305,7 @@ class BookDataModel {
                 subtype,
                 tenant_id: tenantId,
                 workspace_id: workspaceId,
+                user_id: user?.db_id || user?.id || user?.sub || null,
                 main_data: JSON.stringify(record),
                 line_items: JSON.stringify(itemsToArchive),
                 ref_table_info: JSON.stringify(refTableInfo),
@@ -1374,8 +1375,14 @@ class BookDataModel {
         const total = parseInt(totalResult?.count || 0, 10);
 
         const rows = await query
-            .select('*')
-            .orderBy('deleted_at', 'desc')
+            .clone()
+            .leftJoin('users', 'deleted_invoices.user_id', 'users.id')
+            .select(
+                'deleted_invoices.*',
+                'users.full_name as user_full_name',
+                'users.email as user_email'
+            )
+            .orderBy('deleted_invoices.deleted_at', 'desc')
             .offset((page - 1) * page_size)
             .limit(page_size);
 

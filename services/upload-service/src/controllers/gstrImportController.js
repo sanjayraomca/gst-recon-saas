@@ -1441,20 +1441,7 @@ class GSTRImportController {
 
             const importType = importMaster?.import_type || (isGstr2b ? 'GSTR2B' : 'GSTR2A');
 
-            let subtype = 'purchase';
-            const docCat = String(record.document_category || '').toLowerCase();
-            const docType = String(record.document_type || '').toLowerCase();
-            const sourceSec = String(record.source_section || '').toLowerCase();
-
-            if (docCat.includes('credit') || docType.includes('credit') || sourceSec.includes('cdnr')) {
-                subtype = 'credit note';
-            } else if (docCat.includes('debit') || docType.includes('debit')) {
-                subtype = 'debit note';
-            } else if (docCat.includes('import') || sourceSec.includes('impg')) {
-                subtype = 'import';
-            } else if (docCat.includes('isd') || sourceSec.includes('isd')) {
-                subtype = 'isd';
-            }
+            const subtype = isGstr2b ? 'GSTR2B' : 'GSTR2A';
 
             const refTableInfo = {
                 table: isGstr2b ? 'normalized_gstr2b_invoices' : 'normalized_gstr2a_invoices',
@@ -1483,6 +1470,7 @@ class GSTRImportController {
                     subtype,
                     tenant_id: record.tenant_id,
                     workspace_id: workspaceId,
+                    user_id: user?.db_id || user?.id || user?.sub || null,
                     main_data: JSON.stringify(record),
                     line_items: JSON.stringify([]),
                     ref_table_info: JSON.stringify(refTableInfo),

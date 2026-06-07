@@ -2368,6 +2368,7 @@ CREATE TABLE IF NOT EXISTS deleted_invoices (
     subtype         VARCHAR(100),               -- purchase, sales, credit note, debit note, expense, etc.
     tenant_id       UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
     main_data       JSONB,                      -- snapshot of the parent voucher/invoice row
     line_items      JSONB,                      -- snapshot of the deleted line item(s)
     ref_table_info JSONB,
