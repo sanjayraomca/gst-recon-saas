@@ -7,7 +7,7 @@ const { logActivity } = require('../../../shared/src/utils/activityLogger');
  */
 const parseKeyDetails = (apiKey) => {
     if (!apiKey) return { tenantId: null, workspaceId: null, rawKeyExcerpt: null };
-    
+
     // Create a safe excerpt for the log so we never log the actual full credential
     const rawKeyExcerpt = apiKey.length > 8 ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : '***';
 

@@ -95,8 +95,8 @@ const login = async (req, res) => {
                 email: user.email,
                 designation: user.designation,
                 is_tenant_owner: isTenantOwner,
-                roles: userTenants.map(t => ({ 
-                    tenant_id: t.id, 
+                roles: userTenants.map(t => ({
+                    tenant_id: t.id,
                     role: t.role,
                     permissions: typeof t.permissions === 'string' ? JSON.parse(t.permissions) : t.permissions
                 }))
@@ -504,7 +504,7 @@ const acceptInvite = async (req, res) => {
                     .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
                     .where('workspace_users.user_id', user.id)
                     .distinct('tenants.id', 'tenants.legal_name', 'tenants.tenant_code');
-                
+
                 if (userTenants.length > 0) {
                     const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
                     const matchedTenant = nameMatch || userTenants[0];
@@ -868,21 +868,21 @@ const thirdPartyLogin = async (req, res) => {
             const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
             orgAccessToken = jwt.sign(
                 {
-                    user_id:           user.id,
-                    email:             user.email,
-                    platform:          platformStr,
-                    workspace_id:      workspace.id,
-                    tenant_id:         workspace.tenant_id,
+                    user_id: user.id,
+                    email: user.email,
+                    platform: platformStr,
+                    workspace_id: workspace.id,
+                    tenant_id: workspace.tenant_id,
                     organization_gstn: workspace.gstn,
                     organization_name: workspace.name,
-                    is_super_admin:    isSuperAdmin
+                    is_super_admin: isSuperAdmin
                 },
                 jwtSecret,
                 { expiresIn: '12h', issuer: 'gst-recon-tool' }
             );
 
             orgInfo = {
-                workspace_id:      workspace.id,
+                workspace_id: workspace.id,
                 organization_name: workspace.name,
                 organization_gstn: workspace.gstn
             };
@@ -1000,24 +1000,24 @@ const generateApiKey = async (req, res) => {
 
         await logActivity({
             userId,
-            tenantId:    workspace.tenant_id,
+            tenantId: workspace.tenant_id,
             workspaceId: workspace.id,
-            actionType:  'api_key_generated',
-            entityType:  'ApiKey',
-            entityId:    workspace.id,
-            details:     { key_name: updatedSettings.third_party_api_key_name, workspace: workspace.name, gstn: workspace.gstn },
+            actionType: 'api_key_generated',
+            entityType: 'ApiKey',
+            entityId: workspace.id,
+            details: { key_name: updatedSettings.third_party_api_key_name, workspace: workspace.name, gstn: workspace.gstn },
             req
         });
 
         return successResponse(res, {
-            id:               workspace.id,
-            api_key:          rawKey,   // Shown ONCE — user must save this
-            key_name:         updatedSettings.third_party_api_key_name,
-            workspace_id:     workspace.id,
+            id: workspace.id,
+            api_key: rawKey,   // Shown ONCE — user must save this
+            key_name: updatedSettings.third_party_api_key_name,
+            workspace_id: workspace.id,
             organization_name: workspace.name,
             organization_gstn: workspace.gstn,
-            platform:         updatedSettings.third_party_api_key_platform,
-            created_at:       updatedSettings.third_party_api_key_created_at
+            platform: updatedSettings.third_party_api_key_platform,
+            created_at: updatedSettings.third_party_api_key_created_at
         }, 'API key generated successfully. Copy it now — it will not be shown again.');
 
     } catch (error) {
@@ -1082,8 +1082,8 @@ const listApiKeys = async (req, res) => {
  */
 const revokeApiKey = async (req, res) => {
     try {
-        const userId  = req.user.db_id || req.user.id;
-        const { id }  = req.params;
+        const userId = req.user.db_id || req.user.id;
+        const { id } = req.params;
 
         const workspace = await knex('workspaces')
             .where({ id })
@@ -1128,12 +1128,12 @@ const revokeApiKey = async (req, res) => {
 
         await logActivity({
             userId,
-            tenantId:    workspace.tenant_id,
+            tenantId: workspace.tenant_id,
             workspaceId: workspace.id,
-            actionType:  'api_key_revoked',
-            entityType:  'ApiKey',
-            entityId:    workspace.id,
-            details:     { key_name: keyName },
+            actionType: 'api_key_revoked',
+            entityType: 'ApiKey',
+            entityId: workspace.id,
+            details: { key_name: keyName },
             req
         });
 

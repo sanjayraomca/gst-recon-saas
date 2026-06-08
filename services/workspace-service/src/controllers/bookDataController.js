@@ -12,9 +12,9 @@ const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const getBookData = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const { 
@@ -107,8 +107,8 @@ const getBookData = async (req, res) => {
 
 const getBookDataSummary = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const { 
             period, year, date_from, date_to,
@@ -161,8 +161,8 @@ const getBookDataSummary = async (req, res) => {
 
 const getBookDataById = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const { id } = req.params;
         if (!id) return errorResponse(res, 'Voucher ID is required', 400);
@@ -185,8 +185,8 @@ const getBookDataById = async (req, res) => {
 
 const getBookDataMasters = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const { type } = req.query;
         if (!type) return errorResponse(res, 'Query param "type" is required', 400);
@@ -207,8 +207,8 @@ const getBookDataMasters = async (req, res) => {
 
 const deleteBookDataById = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const { id } = req.params;
         if (!id) return errorResponse(res, 'Voucher/Invoice ID is required', 400);
@@ -261,10 +261,10 @@ const deleteBookDataById = async (req, res) => {
 
 const getDeletedInvoices = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         console.log('[DEBUG] getDeletedInvoices: workspaceId =', workspaceId);
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const { type, subtype, search, page, page_size } = req.query;

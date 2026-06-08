@@ -12,11 +12,11 @@ const { attachSqlFileLogger } = require('../utils/sqlFileLogger');
  */
 const createRun = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const runData = req.body;
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -69,8 +69,8 @@ const createRun = async (req, res) => {
 
 const getRuns = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const runs = await ReconciliationModel.getRuns(workspaceId, req.query);
         return successResponse(res, runs, 'Reconciliation runs retrieved successfully');
@@ -81,8 +81,8 @@ const getRuns = async (req, res) => {
 
 const getRun = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const run = await ReconciliationModel.getRunById(workspaceId, req.params.run_id);
         if (!run) return errorResponse(res, 'Reconciliation run not found', 404);
@@ -98,9 +98,9 @@ const getRun = async (req, res) => {
  */
 const getReconBookData = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const filters = {
@@ -124,10 +124,10 @@ const getReconBookData = async (req, res) => {
 
 const getRunResults = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const runId = req.params.run_id;
 
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         let finalRunId = runId;
         let model = ReconciliationModel;
@@ -189,9 +189,9 @@ const getRunResults = async (req, res) => {
 
 const getRunTaxSummary = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const runId = req.params.run_id;
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         // Dispatcher: Determine which model to use
         let model = ReconciliationModel;

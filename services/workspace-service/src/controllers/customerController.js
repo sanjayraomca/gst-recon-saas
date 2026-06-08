@@ -6,10 +6,10 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
  */
 const getAllCustomers = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const filters = {

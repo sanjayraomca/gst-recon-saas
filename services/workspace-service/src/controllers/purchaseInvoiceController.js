@@ -40,10 +40,10 @@ const logThirdPartySync = async (req, status, respBody, options = {}) => {
  */
 const getAllInvoices = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const filters = {
@@ -94,11 +94,11 @@ const getAllInvoices = async (req, res) => {
  */
 const getInvoiceById = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const invoiceId = req.params.id;
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const invoice = await PurchaseInvoiceModel.getById(workspaceId, invoiceId);
@@ -119,11 +119,11 @@ const getInvoiceById = async (req, res) => {
  */
 const createInvoice = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const invoiceData = req.body;
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         // Validate required fields
@@ -175,12 +175,12 @@ const createInvoice = async (req, res) => {
  */
 const updateInvoice = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const invoiceId = req.params.id;
         const updateData = req.body;
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const invoice = await PurchaseInvoiceModel.update(workspaceId, invoiceId, updateData);
@@ -212,12 +212,12 @@ const updateInvoice = async (req, res) => {
  */
 const amendInvoice = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const invoiceId = req.params.id;
         const amendmentData = req.body;
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         // Check if invoice exists

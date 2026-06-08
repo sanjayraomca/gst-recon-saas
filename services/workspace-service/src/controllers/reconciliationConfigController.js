@@ -4,8 +4,8 @@ const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const createConfig = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const config = await ReconciliationConfigModel.create(workspaceId, req.body, req.user?.id);
 
@@ -29,9 +29,9 @@ const createConfig = async (req, res) => {
 
 const updateConfig = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const configId = req.params.config_id;
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const config = await ReconciliationConfigModel.update(workspaceId, configId, req.body);
         if (!config) return errorResponse(res, 'Configuration not found', 404);
@@ -55,9 +55,9 @@ const updateConfig = async (req, res) => {
 
 const getConfig = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const configId = req.params.config_id;
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const config = await ReconciliationConfigModel.getById(workspaceId, configId);
         if (!config) return errorResponse(res, 'Configuration not found', 404);
@@ -70,8 +70,8 @@ const getConfig = async (req, res) => {
 
 const listConfigs = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const filters = {
             config_type: req.query.config_type,

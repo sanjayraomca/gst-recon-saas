@@ -1234,7 +1234,7 @@ const updateRolePermissions = async (req, res) => {
 
         await knex('tenants')
             .where({ id })
-            .update({ 
+            .update({
                 metadata: JSON.stringify(metadata),
                 updated_at: new Date()
             });
@@ -1372,7 +1372,7 @@ const logUserActivity = async (req, res) => {
 const listAllUsers = async (req, res) => {
     try {
         const knex = require('../../../shared/src/db/connection');
-        
+
         // ALL-SYSTEM LIST (Every user in the database, excluding superadmin)
         const users = await knex('users')
             .select(
@@ -1436,8 +1436,8 @@ module.exports = {
             const database = require('../../../shared/src/db/connection');
 
             let query = database('audit_log')
-                .leftJoin('users', function() {
-                    this.on(database.raw('audit_log.modified_by::uuid'), '=', 'users.id')
+                .leftJoin('users', function () {
+                    this.on(database.raw('users.id::text'), '=', 'audit_log.modified_by')
                 })
                 .where(function () {
                     this.whereNot('users.email', 'superadmin.dev@gmail.com')
@@ -1451,7 +1451,7 @@ module.exports = {
                 .orderBy('modified_at', 'desc');
 
             if (search) {
-                query = query.where(function() {
+                query = query.where(function () {
                     this.where('audit_log.table_name', 'ilike', `%${search}%`)
                         .orWhere('audit_log.action', 'ilike', `%${search}%`)
                         .orWhere('audit_log.modified_by', 'ilike', `%${search}%`)

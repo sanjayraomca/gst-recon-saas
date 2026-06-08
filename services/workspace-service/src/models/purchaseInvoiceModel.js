@@ -28,16 +28,20 @@ class PurchaseInvoiceModel {
             .leftJoin('purchase_items as pi', 'ev.id', 'pi.purchase_id')
             .where('ev.workspace_id', workspaceId);
 
-        // Apply filters
-        if (gstin_id) query = query.where('ev.gstin_id', gstin_id);
+        // Apply filters — column names match purchase_vouchers schema exactly
+        if (gstin_id) query = query.where('ev.supplier_gstin', gstin_id);         // gstin_id param → supplier_gstin column
         if (supplier_id) query = query.where('ev.supplier_id', supplier_id);
-        if (invoice_date_from) query = query.where('ev.invoice_date', '>=', invoice_date_from);
-        if (invoice_date_to) query = query.where('ev.invoice_date', '<=', invoice_date_to);
-        if (itc_eligibility_status) query = query.where('ev.itc_eligibility_status', itc_eligibility_status);
-        if (reverse_charge !== undefined) query = query.where('ev.reverse_charge', reverse_charge);
+        if (invoice_date_from) query = query.where('ev.supplier_invoice_date', '>=', invoice_date_from);  // invoice_date → supplier_invoice_date
+        if (invoice_date_to) query = query.where('ev.supplier_invoice_date', '<=', invoice_date_to);
+        if (itc_eligibility_status) {
+            // itc_eligible is a boolean column; map string values to boolean
+            const isEligible = itc_eligibility_status === 'eligible' || itc_eligibility_status === 'true' || itc_eligibility_status === true;
+            query = query.where('ev.itc_eligible', isEligible);
+        }
+        if (reverse_charge !== undefined) query = query.where('ev.is_rcm', reverse_charge);  // reverse_charge param → is_rcm column
         if (payment_status) query = query.where('ev.payment_status', payment_status);
         if (search) {
-            query = query.where('ev.invoice_number', 'like', `%${search}%`);
+            query = query.where('ev.supplier_invoice_no', 'ilike', `%${search}%`);  // invoice_number → supplier_invoice_no
         }
 
         // Get total count

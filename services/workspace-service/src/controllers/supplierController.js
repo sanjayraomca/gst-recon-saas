@@ -6,10 +6,10 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
  */
 const getAllSuppliers = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
 
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const filters = {
@@ -73,8 +73,8 @@ const updateSupplierContact = async (req, res) => {
  */
 const getFilingStatusListing = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const filters = {
             search: req.query.search || '',
@@ -116,10 +116,10 @@ const getFilingStatusListing = async (req, res) => {
  */
 const getFilingHistory = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const { gstin } = req.params;
 
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         if (!gstin) return errorResponse(res, 'Supplier GSTIN is required', 400);
 
         const history = await SupplierModel.getFilingHistory(workspaceId, gstin);

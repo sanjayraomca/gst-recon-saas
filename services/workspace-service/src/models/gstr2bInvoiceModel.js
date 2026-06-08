@@ -13,6 +13,7 @@ class Gstr2bInvoiceModel {
             gstin_id,
             period,
             match_status,
+            reconciliation_status,
             supplier_gstin,
             invoice_date_from,
             invoice_date_to
@@ -24,9 +25,11 @@ class Gstr2bInvoiceModel {
         let query = knex('normalized_gstr2b_invoices')
             .where({ workspace_id: workspaceId });
 
-        // Apply filters
+        // Apply filters — column names match normalized_gstr2b_invoices schema
         if (gstin_id) query = query.where({ gstin_id });
-        if (match_status) query = query.where({ match_status });
+        // match_status param → reconciliation_status column (match_status does not exist)
+        const resolvedStatus = reconciliation_status || match_status;
+        if (resolvedStatus) query = query.where({ reconciliation_status: resolvedStatus });
         if (supplier_gstin) query = query.where({ supplier_gstin });
         if (period && period !== 'ALL') query = query.where({ return_period: period });
         if (invoice_date_from) query = query.where('document_date', '>=', invoice_date_from);

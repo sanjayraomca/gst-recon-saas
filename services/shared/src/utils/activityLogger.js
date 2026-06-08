@@ -23,6 +23,12 @@ const logActivity = async ({
     details,
     req
 }) => {
+    // Skip logging read/view actions to prevent database bloat and duplicate logs
+    const actionUpper = actionType ? String(actionType).toUpperCase() : '';
+    if (actionUpper.startsWith('VIEW_')) {
+        return;
+    }
+
     try {
         let ipAddress = null;
         let userAgent = null;

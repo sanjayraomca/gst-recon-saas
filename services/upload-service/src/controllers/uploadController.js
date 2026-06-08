@@ -79,15 +79,8 @@ const uploadFile = async (req, res) => {
             workspace_id: workspaceId
         });
 
-        await logActivity({
-            userId: req.user ? req.user.id : null,
-            tenantId: req.user ? req.user.tenant_id : null,
-            workspaceId,
-            actionType: 'FILE_UPLOAD',
-            entityType: 'File',
-            details: { fileName: req.file.originalname, fileType: upload_type },
-            req
-        });
+        // Skip logActivity for FILE_UPLOAD because we log the actual import action (e.g. IMPORT_GSTR_DATA, PURCHASE_IMPORT) 
+        // once file processing is completed, which avoids duplicate logging.
 
         return successResponse(res, newUpload, 'File uploaded successfully');
     } catch (error) {

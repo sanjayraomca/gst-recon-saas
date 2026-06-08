@@ -6,9 +6,9 @@ const { logAudit } = require('../../../shared/src/utils/auditLogger');
 // Get all decisions
 exports.listDecisions = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const result = await ItcDecisionModel.getAll(workspaceId, req.query, req.query);
@@ -22,9 +22,9 @@ exports.listDecisions = async (req, res) => {
 // Update decision
 exports.updateDecision = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const { id } = req.params;

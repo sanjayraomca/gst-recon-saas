@@ -10,13 +10,13 @@ const path = require('path');
 
 const takeAction = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
         // userId should be the internal UUID (db_id) resolved by authMiddleware
         const userId = req.user.db_id || req.user.sub || req.user.id;
         const actionData = req.body;
 
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const cleanup = attachSqlFileLogger('TakeAction');
         const action = await ReconciliationActionModel.createAction(resultId, actionData, userId);
@@ -42,8 +42,8 @@ const takeAction = async (req, res) => {
 
 const getPendingActions = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const cleanup = attachSqlFileLogger('GetPendingActions');
         const actions = await ReconciliationActionModel.getPendingActions(workspaceId, req.query);
@@ -62,7 +62,7 @@ const updateReconStatus = async (req, res) => {
     const cleanup = attachSqlFileLogger('UpdateReconStatus');
     const trx = await knex.transaction();
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         const resultId = req.params.result_id;
         const userId = req.user.db_id || req.user.sub || req.user.id;
         const { recon_status, run_type = 'PURCHASE_2B', decision_reason, notes } = req.body;
@@ -92,7 +92,7 @@ const updateReconStatus = async (req, res) => {
 
         if (!workspaceId) {
             await trx.rollback();
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         // No parseInt needed for UUIDs
@@ -320,9 +320,9 @@ const updateReconStatus = async (req, res) => {
 
 const notifySupplier = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         console.log(`[notifySupplier] Request received for workspace: ${workspaceId}`);
-        if (!workspaceId) return errorResponse(res, 'X-Workspace-ID header is required', 400);
+        if (!workspaceId) return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
 
         const { to, subject, body, supplier_gstin } = req.body;
         console.log(`[notifySupplier] Payload: to=${to}, subject=${subject}, gstin=${supplier_gstin}`);
