@@ -14,6 +14,7 @@ app.use(express.json());
 app.use('/states', require('./routes/stateRoutes')); // State lookup routes - PUBLIC (for login/org creation)
 app.use('/workspaces', require('./routes/workspaceRoutes'));
 app.use('/purchase-invoices', require('./routes/purchaseInvoiceRoutes'));
+app.use('/sales-invoices', require('./routes/salesInvoiceRoutes'));
 app.use('/gstr2b-invoices', require('./routes/gstr2bInvoiceRoutes'));
 app.use('/reconciliation', require('./routes/reconciliationRoutes'));
 app.use('/connectors', require('./connectors/connectorRoutes')); // API key management for inbound ERP connectors (SUPER_ADMIN only)
