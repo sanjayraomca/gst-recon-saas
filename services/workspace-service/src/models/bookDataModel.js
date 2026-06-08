@@ -439,7 +439,8 @@ class BookDataModel {
                         knex.raw('sum(si.round_off) as "roundOff"'),
                         knex.raw('count(*) as "invoiceCount"'),
                         knex.raw('max(si.place_of_supply) as "placeOfSupply"'),
-                        knex.raw('UPPER(max(si.invoice_type)) as "gstType"')
+                        knex.raw('UPPER(max(si.invoice_type)) as "gstType"'),
+                        knex.raw('max(si.platform) as platform')
                     )
                     .groupByRaw('trim(si.customer_gstin), trim(si.customer_name)')
                     .orderBy(sortCol, sort_dir === 'asc' ? 'asc' : 'desc')
@@ -467,6 +468,7 @@ class BookDataModel {
                         'si.invoice_type as docType',
                         'si.book_type as bookType',
                         'si.round_off as roundOff',
+                        'si.platform',
                         knex.raw("(SELECT description FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as description"),
                         knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1) as \"taxPercent\""),
                         'im.user_email as imported_by_email',

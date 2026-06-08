@@ -1112,6 +1112,7 @@ CREATE TABLE sales_invoices (
     -- GST Category & Extra Raw Data
     gstr_category VARCHAR(50),
     t_extra_info JSONB DEFAULT '{}',
+    platform VARCHAR(50),
 
     -- Uniqueness Constraint
     CONSTRAINT uq_sales_invoice_unique 

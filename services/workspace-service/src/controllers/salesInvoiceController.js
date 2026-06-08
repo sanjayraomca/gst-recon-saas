@@ -259,6 +259,7 @@ const syncThirdPartySales = async (req, res) => {
                 is_amendment: record.is_amendment || false,
                 filing_period: returnPeriod,
                 return_period: returnPeriod,
+                platform: platform || record.platform || null,
                 t_extra_info: {
                     source: 'third_party_api_sync',
                     platform: platform,

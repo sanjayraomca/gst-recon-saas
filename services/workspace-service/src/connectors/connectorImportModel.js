@@ -268,8 +268,8 @@ class ConnectorImportModel {
                             original_invoice_no, original_invoice_date, original_book_vchr_no,
                             original_book_vchr_date, original_net_amount, return_date,
                             original_return_period, original_return_date, source_section,
-                            gstr_category, t_extra_info, import_filing_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gstr_category, t_extra_info, import_filing_id, platform
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, invoice_number, tax_period_id, total_invoice_value)
                         DO UPDATE SET
                             customer_name = EXCLUDED.customer_name,
@@ -294,6 +294,7 @@ class ConnectorImportModel {
                             gstr_category = EXCLUDED.gstr_category,
                             t_extra_info = EXCLUDED.t_extra_info,
                             import_filing_id = COALESCE(EXCLUDED.import_filing_id, sales_invoices.import_filing_id),
+                            platform = EXCLUDED.platform,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
@@ -316,7 +317,8 @@ class ConnectorImportModel {
                         header.source_section || null,
                         header.gstr_category || null,
                         JSON.stringify(header.t_extra_info || {}),
-                        importFilingId
+                        importFilingId,
+                        header.platform || null
                     ]);
 
                     const invoiceId = headerRes.rows[0].id;
