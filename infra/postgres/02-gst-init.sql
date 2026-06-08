@@ -2443,3 +2443,43 @@ CREATE INDEX IF NOT EXISTS idx_customer_master_name    ON customer_master (works
 CREATE INDEX IF NOT EXISTS idx_gstr_import_ws_status   ON gstr_import_master (workspace_id, status, upload_timestamp DESC);
 
 
+-- ============================================================
+-- tig_api_end table (Third-Party Connectors metadata)
+-- ============================================================
+DO $$ BEGIN
+    CREATE TYPE active_inactive_status AS ENUM ('active', 'inactive');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS tig_api_end (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    third_party_code varchar(255) UNIQUE,
+    third_party_name varchar(255),
+    description text,
+    tags text,
+    version text,
+    
+    receive_end_point varchar(255),
+    send_end_point varchar(255),
+    receive_status active_inactive_status DEFAULT 'active',
+    send_status active_inactive_status DEFAULT 'active',
+    type varchar(255),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+-- Insert static connectors
+INSERT INTO tig_api_end (third_party_code, third_party_name, description, tags, version, receive_end_point, send_end_point, receive_status, send_status, type)
+VALUES 
+('tally', 'Tally Prime', 'Direct voucher synchronization and real-world integration with Tally Prime and Tally ERP 9.', 'GSTR-1, GSTR-3B, GSTR-2A, Vouchers', 'v2.1.4', '/connectors/tally/pull-purchase', '/connectors/tally/push', 'active', 'active', 'erp'),
+('gsp-provider', 'GSP Provider', 'High-speed sandbox and production API connector to direct-sync returns and filings with the GST Portal.', 'GSTR-1, GSTR-2B, GSTR-3B, OTP Sync', 'v1.0.0', '/connectors/gstn/sync-gstr2b', '/connectors/gstn/otp-request', 'active', 'active', 'gsp'),
+('adesk-accounting', 'Adesk Accounting', 'Seamless general ledger sync, auto-reconciliation, and multi-tenant ledger bridging with ADESK ERP.', 'Sales Register, Purchase Vouchers, Auto-Recon', 'v1.2.5', '/connectors/adesk/pull-purchase', '/connectors/adesk/push', 'active', 'active', 'cloud'),
+('woocommerce', 'WooCommerce', 'WordPress WooCommerce online storefront tax mapping and automatic sales sync.', 'GSTR-1, GSTR-3B', 'v1.3.2', '/connectors/woocommerce/pull', '/connectors/woocommerce/push', 'active', 'active', 'ecommerce'),
+('quickbooks', 'QuickBooks', 'QuickBooks Online cloud accounting customer tax invoice and purchase matching.', 'GSTR-1, GSTR-3B, GSTR-2A', 'v1.8.1', '/connectors/quickbooks/pull', '/connectors/quickbooks/push', 'active', 'active', 'cloud'),
+('sap-b1', 'SAP Business One', 'Enterprise SAP B1 database level integration mapping and scheduled sync.', 'All GSTR Types, ERP Bridging', 'v3.2.0', '/connectors/sap/pull', '/connectors/sap/push', 'active', 'active', 'erp'),
+('zoho-books', 'Zoho Books', 'Zoho Books cloud accounting transaction mapping and GSTR filing prep.', 'GSTR-1, GSTR-3B', 'v2.0.5', '/connectors/zoho/pull', '/connectors/zoho/push', 'active', 'active', 'cloud')
+ON CONFLICT (third_party_code) DO NOTHING;
+
+
+

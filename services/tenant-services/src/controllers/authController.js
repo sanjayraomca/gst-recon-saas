@@ -817,6 +817,42 @@ const thirdPartyLogin = async (req, res) => {
             primaryTenantId = userTenants[0].id;
         }
 
+        // Fetch workspaces/organizations list that this user has access to
+        const devEmail = 'superadmin.dev@gmail.com';
+        const isSuperAdmin = user.email === devEmail;
+        let workspaces = [];
+
+        if (isSuperAdmin) {
+            workspaces = await knex('workspaces')
+                .select(
+                    'workspaces.id',
+                    'workspaces.name',
+                    'workspaces.gstn',
+                    'workspaces.workspace_type'
+                )
+                .where('workspaces.tenant_id', primaryTenantId)
+                .whereNull('workspaces.deleted_at');
+            workspaces = workspaces.map(w => ({
+                ...w,
+                role: 'SUPER_ADMIN',
+                permissions: { all: true }
+            }));
+        } else {
+            workspaces = await knex('workspace_users')
+                .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                .select(
+                    'workspaces.id',
+                    'workspaces.name',
+                    'workspaces.gstn',
+                    'workspaces.workspace_type',
+                    'workspace_users.role',
+                    'workspace_users.permissions'
+                )
+                .where('workspace_users.user_id', user.id)
+                .whereNull('workspace_users.removed_at')
+                .whereNull('workspaces.deleted_at');
+        }
+
         // ─── Organization-scoped token ────────────────────────────────────────────
         // If organization-gstno header is sent, validate access and issue an
         // org_access_token that cryptographically proves this user can operate
@@ -893,13 +929,27 @@ const thirdPartyLogin = async (req, res) => {
             ...tokenData,
             tenant_id: primaryTenantId,
             tenants: userTenants,
+            workspaces: workspaces.map(w => ({
+                id: w.id,
+                name: w.name,
+                gstn: w.gstn,
+                workspace_type: w.workspace_type,
+                role: w.role,
+                permissions: typeof w.permissions === 'string' ? JSON.parse(w.permissions) : w.permissions
+            })),
             user: {
                 id: user.id,
                 full_name: user.full_name,
                 email: user.email,
+                designation: user.designation,
                 platform: dbUser.platform,
                 last_login_at: dbUser.last_login_at,
-                is_tenant_owner: isTenantOwner
+                is_tenant_owner: isTenantOwner,
+                roles: userTenants.map(t => ({
+                    tenant_id: t.id,
+                    role: t.role,
+                    permissions: typeof t.permissions === 'string' ? JSON.parse(t.permissions) : t.permissions
+                }))
             },
             // org_access_token is only present when organization-gstno header was sent
             ...(orgAccessToken && {
@@ -907,6 +957,18 @@ const thirdPartyLogin = async (req, res) => {
                 organization: orgInfo
             })
         };
+
+        // Explicitly check for SuperAdmin role by email
+        if (user.email === devEmail) {
+            const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
+            if (!hasSuperRole) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
+        }
 
         // Log activity with platform in activity_type
         await logActivity({

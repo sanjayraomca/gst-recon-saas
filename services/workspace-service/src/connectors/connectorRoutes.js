@@ -8,6 +8,7 @@ const {
     regenerateApiKeys,
     deleteApiKeys,
     validateApiKey,
+    getConnectorsList,
     requireSuperAdmin
 } = require('./connectorController');
 
@@ -45,6 +46,9 @@ router.get('/gstn/session-status', authorizeWorkspace, gstnSyncController.getSes
 router.post('/gstn/otp-request', authorizeWorkspace, gstnSyncController.requestOtp);
 router.post('/gstn/verify-otp', authorizeWorkspace, gstnSyncController.verifyOtp);
 router.post('/gstn/sync-gstr2b', authorizeWorkspace, gstnSyncController.syncGstr2b);
+
+// GET /connectors - Fetch list of all third-party connectors
+router.get('/', authorizeWorkspace, getConnectorsList);
 
 // Pull purchase data from Adesk Accounting Cloud connector
 router.post('/adesk/pull-purchase', authorizeWorkspace, require('./adeskSyncController').pullPurchaseData);

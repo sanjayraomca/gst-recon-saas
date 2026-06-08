@@ -355,6 +355,21 @@ const validateApiKey = async (req, res) => {
 };
 
 
+/**
+ * GET /connectors
+ * Fetch list of all third party API endpoints/connectors from tig_api_end table.
+ */
+const getConnectorsList = async (req, res) => {
+    try {
+        const list = await knex('tig_api_end').select('*');
+        return successResponse(res, list, 'Connectors retrieved successfully');
+    } catch (error) {
+        console.error('[ConnectorController.getConnectorsList]', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+
 module.exports = {
     getApiKeys,
     createApiKeys,
@@ -362,5 +377,6 @@ module.exports = {
     regenerateApiKeys,
     deleteApiKeys,
     validateApiKey,
+    getConnectorsList,
     requireSuperAdmin
 };
