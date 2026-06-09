@@ -795,7 +795,7 @@ const listTenantUsers = async (req, res) => {
 const getTenantActivities = async (req, res) => {
     try {
         const { tenantId } = req.params;
-        const { limit = 50, offset = 0, workspaceId } = req.query;
+        const { limit = 50, offset = 0, workspaceId, type, search } = req.query;
 
         if (!tenantId) {
             return res.status(400).json({ error: 'Tenant ID is required' });
@@ -813,6 +813,28 @@ const getTenantActivities = async (req, res) => {
 
         if (workspaceId) {
             query = query.where('activity_logs.workspace_id', workspaceId);
+        }
+
+        if (type && type !== 'ALL') {
+            const typeLower = type.toLowerCase();
+            if (typeLower === 'notices') {
+                query = query.whereIn('activity_logs.entity_type', ['NOTICE', 'GST_NOTICE']);
+            } else if (typeLower === 'tax liabilities') {
+                query = query.whereIn('activity_logs.action_type', ['LIABILITY_DUE', 'PAYMENT_PENDING']);
+            } else if (typeLower === 'user actions') {
+                query = query.whereIn('activity_logs.entity_type', ['USER', 'AUTH']);
+            } else {
+                query = query.where('activity_logs.action_type', type);
+            }
+        }
+
+        if (search) {
+            query = query.where(function () {
+                this.where(database.raw('activity_logs.details::text'), 'ilike', `%${search}%`)
+                    .orWhere('activity_logs.action_type', 'ilike', `%${search}%`)
+                    .orWhere('users.full_name', 'ilike', `%${search}%`)
+                    .orWhere('users.email', 'ilike', `%${search}%`);
+            });
         }
 
         const activities = await query
