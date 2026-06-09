@@ -299,7 +299,7 @@ services:
       - KEYCLOAK_CLIENT_SECRET=admin-api-secret-change-in-production
       - NATS_URL=nats://nats:4222
       - PORT=3002
-      - EXT_API_URL=http://gsp_api_app:3015
+      - EXT_API_URL=http://gsp_api_app:4015
     command: npm run dev
     volumes:
       - ./services/workspace-service/src:/app/services/workspace-service/src

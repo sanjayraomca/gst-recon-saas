@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const ConnectorModel = require('./connectorModel');
 
-const EXT_API_URL = process.env.EXT_API_URL || 'http://gsp_api_app:3015';
+const EXT_API_URL = process.env.EXT_API_URL || 'http://gsp_api_app:4015';
 
 /**
  * Ensures workspace has a valid API key (production_key) generated.
@@ -34,6 +34,9 @@ const getOrCreateWorkspaceKey = async (workspaceId, tenantId) => {
         await ConnectorModel.syncKeysToAllDbs(workspaceId, tenantId, productionKey, sandboxKey, 'active', 'live');
         return inserted || { production_key: productionKey, sandbox_key: sandboxKey };
     }
+
+    // Self-healing: Ensure existing key is synced to GSP DB
+    await ConnectorModel.syncKeysToAllDbs(workspaceId, tenantId, keyRecord.production_key, keyRecord.sandbox_key, keyRecord.status, keyRecord.mode);
 
     return keyRecord;
 };
@@ -466,9 +469,54 @@ const syncGstr2b = async (req, res) => {
     }
 };
 
+/**
+ * GET /connectors/gstn/search-gstin
+ * Search taxpayer details by GSTIN.
+ */
+const searchGstin = async (req, res) => {
+    try {
+        const workspaceId = req.workspace_id;
+        const { gstin } = req.query;
+
+        if (!gstin) {
+            return errorResponse(res, 'gstin query parameter is required', 400);
+        }
+
+        // Validate GSTIN format (15 characters alphanumeric)
+        const gstinRegex = /^[0-9]{2}[a-zA-Z]{5}[0-9]{4}[a-zA-Z]{1}[a-zA-Z0-9]{1}[zZ]{1}[a-zA-Z0-9]{1}$/;
+        if (!gstinRegex.test(gstin)) {
+            return errorResponse(res, 'Invalid GSTIN format', 400);
+        }
+
+        const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        // Ensure GSP API Client keys exist
+        const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
+        const apiKey = keyRecord.production_key;
+
+        console.log(`[GSTN Sync] Searching GSTIN ${gstin} via GSP Provider API...`);
+        const response = await axios.get(`${EXT_API_URL}/ext/gst/search?gstin=${gstin}`, {
+            headers: {
+                'X-API-Key': apiKey,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        return successResponse(res, response.data, 'GSTIN search successful');
+    } catch (error) {
+        console.error('[searchGstin] Error:', error.response?.data || error.message);
+        const errMessage = error.response?.data?.error || error.message;
+        return errorResponse(res, `Failed to search GSTIN: ${errMessage}`, error.response?.status || 500);
+    }
+};
+
 module.exports = {
     getSessionStatus,
     requestOtp,
     verifyOtp,
-    syncGstr2b
+    syncGstr2b,
+    searchGstin
 };

@@ -54,7 +54,7 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
                     clientRecordId = existing.id;
                     // Delete old allowed accesses
                     await db.client('api_conn_allowed_access')
-                        .whereIn('api_key', [existing.production_key, existing.sandbox_key])
+                        .whereIn('api_key', [existing.production_key, existing.app_secret_key])
                         .delete();
 
                     // Update access key
@@ -64,7 +64,7 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
                             client_name: clientName,
                             contact_email: email,
                             production_key: productionKey,
-                            sandbox_key: sandboxKey,
+                            app_secret_key: sandboxKey,
                             status: mappedStatus,
                             mode: 'PRODUCTION',
                             updated_at: db.client.fn.now()
@@ -79,7 +79,7 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
                             contact_email: email,
                             third_party_unique_id: workspaceId,
                             production_key: productionKey,
-                            sandbox_key: sandboxKey,
+                            app_secret_key: sandboxKey,
                             status: mappedStatus,
                             mode: 'PRODUCTION',
                             created_at: db.client.fn.now(),
@@ -143,7 +143,7 @@ const deleteSyncKeys = async (workspaceId) => {
 
             if (existing) {
                 await db.client('api_conn_allowed_access')
-                    .whereIn('api_key', [existing.production_key, existing.sandbox_key])
+                    .whereIn('api_key', [existing.production_key, existing.app_secret_key])
                     .delete();
 
                 await db.client('api_conn_access_key')

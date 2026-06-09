@@ -46,6 +46,7 @@ router.get('/gstn/session-status', authorizeWorkspace, gstnSyncController.getSes
 router.post('/gstn/otp-request', authorizeWorkspace, gstnSyncController.requestOtp);
 router.post('/gstn/verify-otp', authorizeWorkspace, gstnSyncController.verifyOtp);
 router.post('/gstn/sync-gstr2b', authorizeWorkspace, gstnSyncController.syncGstr2b);
+router.get('/gstn/search-gstin', authorizeWorkspace, gstnSyncController.searchGstin);
 
 // GET /connectors - Fetch list of all third-party connectors
 router.get('/', authorizeWorkspace, getConnectorsList);
