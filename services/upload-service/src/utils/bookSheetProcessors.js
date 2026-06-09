@@ -258,10 +258,18 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
         const sgst = cleanAmount(sgstIdx !== null ? row[sgstIdx] : 0);
         const cgst = cleanAmount(cgstIdx !== null ? row[cgstIdx] : 0);
         const cess = cleanAmount(cessIdx !== null ? row[cessIdx] : 0);
-        const rowVal = cleanAmount(invValIdx !== null ? row[invValIdx] : 0);
+        let rowVal = cleanAmount(invValIdx !== null ? row[invValIdx] : 0);
 
         const isAmendment = isAmendmentIdx !== null ? (row[isAmendmentIdx] ?? '').toString().toUpperCase().startsWith('Y') : false;
-        const roundOff = cleanAmount(roundOffIdx !== null ? row[roundOffIdx] : 0);
+        let roundOff = cleanAmount(roundOffIdx !== null ? row[roundOffIdx] : 0);
+
+        // Fix corrupt/incorrect round-off and invoice amount (e.g. round-off of -500000.22 on 500000.22 total)
+        const expectedSum = taxable + igst + cgst + sgst + cess;
+        if (Math.abs(roundOff) > 10.0 || (rowVal > 0 && Math.abs(expectedSum - rowVal) > 10.0)) {
+            const expectedRounded = Math.round(expectedSum);
+            roundOff = Math.round((expectedRounded - expectedSum) * 100) / 100;
+            rowVal = expectedRounded;
+        }
         const description = descIdx !== null ? (row[descIdx] ?? '').toString().trim() || null : null;
         const taxRateStr = taxPerIdx !== null ? (row[taxPerIdx] ?? '').toString().replace(/%/g, '').trim() : '';
         const taxRate = taxRateStr ? parseFloat(taxRateStr) : null;
@@ -539,9 +547,18 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
         const sgst = cleanAmount(sgstIdx !== null ? row[sgstIdx] : 0);
         const cgst = cleanAmount(cgstIdx !== null ? row[cgstIdx] : 0);
         const cess = cleanAmount(cessIdx !== null ? row[cessIdx] : 0);
-        const rowVal = cleanAmount(invValIdx !== null ? row[invValIdx] : 0);
+        let rowVal = cleanAmount(invValIdx !== null ? row[invValIdx] : 0);
+        let roundOff = cleanAmount(roundOffIdx !== null ? row[roundOffIdx] : 0);
+
+        // Fix corrupt/incorrect round-off and invoice amount (e.g. round-off of -500000.22 on 500000.22 total)
+        const expectedSum = taxable + igst + cgst + sgst + cess;
+        if (Math.abs(roundOff) > 10.0 || (rowVal > 0 && Math.abs(expectedSum - rowVal) > 10.0)) {
+            const expectedRounded = Math.round(expectedSum);
+            roundOff = Math.round((expectedRounded - expectedSum) * 100) / 100;
+            rowVal = expectedRounded;
+        }
+
         const itemTotal = cleanAmount(rowInvValIdx !== null ? row[rowInvValIdx] : (taxable + igst + cgst + sgst + cess));
-        const roundOff = cleanAmount(roundOffIdx !== null ? row[roundOffIdx] : 0);
 
         const description = descIdx !== null ? (row[descIdx] ?? '').toString().trim() : null;
         let taxRate = 0;

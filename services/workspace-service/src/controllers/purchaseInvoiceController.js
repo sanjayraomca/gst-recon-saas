@@ -434,11 +434,20 @@ const syncThirdPartyPurchases = async (req, res) => {
             }
 
             const taxableTotal = parseFloat(record.taxable_value || record.taxable_amount || record.total_taxable_amount || 0);
-            const netAmount = parseFloat(record.row_wise_total_amount || record.net_amount || record.total_value || record.invoice_amount || 0);
+            let netAmount = parseFloat(record.row_wise_total_amount || record.net_amount || record.total_value || record.invoice_amount || 0);
             const totalIgstAmount = parseFloat(record.igst || record.igst_amount || record.total_igst_tax_amount || 0);
             const totalCgstAmount = parseFloat(record.cgst || record.cgst_amount || record.total_cgst_tax_amount || 0);
             const totalSgstAmount = parseFloat(record.sgst || record.sgst_amount || record.total_sgst_tax_amount || 0);
             const totalCessAmount = parseFloat(record.cess || record.cess_amount || record.total_cess_tax_amount || 0);
+            let roundOff = parseFloat(record.round_off || record.round_off_amount || 0);
+
+            // Fix corrupt/incorrect round-off and invoice amount
+            const expectedSum = taxableTotal + totalIgstAmount + totalCgstAmount + totalSgstAmount + totalCessAmount;
+            if (Math.abs(roundOff) > 10.0 || (netAmount > 0 && Math.abs(expectedSum - netAmount) > 10.0)) {
+                const expectedRounded = Math.round(expectedSum);
+                roundOff = Math.round((expectedRounded - expectedSum) * 100) / 100;
+                netAmount = expectedRounded;
+            }
 
             const header = {
                 tenant_id: workspace.tenant_id,
@@ -455,7 +464,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 total_cgst_amount: totalCgstAmount,
                 total_sgst_amount: totalSgstAmount,
                 total_cess_amount: totalCessAmount,
-                round_off: parseFloat(record.round_off || record.round_off_amount || 0),
+                round_off: roundOff,
                 discount: parseFloat(record.discount || 0),
                 total_qty: parseFloat(record.total_qty || 0),
                 place_of_supply: record.place_of_supply || record.party_state_id || null,

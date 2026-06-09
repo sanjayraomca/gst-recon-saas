@@ -298,6 +298,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
         filing_period: record.filing_period || returnPeriod,
         return_period: returnPeriod,
         tax_period_id: null,
+        platform: 'Adesk Accounting',
 
         t_extra_info: { source: 'adesk_cloud_connector', connector_ref: record.connector_ref || null }
     };
@@ -319,7 +320,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cess_amount: parseFloat(item.cess_amount || 0),
             row_total: parseFloat(item.row_total || item.total_amount_with_tax || 0),
             invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
-            platform: 'Adesk GST',
+            platform: 'Adesk Accounting',
             t_extra_info: {}
         }));
     } else {
@@ -337,7 +338,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
             cess_amount: totalCessAmount,
             row_total: netAmount,
             invoice_amount: parseFloat(record.invoice_amount || record.net_amount || record.total_value || netAmount || 0),
-            platform: 'Adesk GST',
+            platform: 'Adesk Accounting',
             t_extra_info: {}
         }];
     }
@@ -431,6 +432,7 @@ const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
         filing_period: returnPeriod,
         return_period: returnPeriod,
         tax_period_id: null,
+        platform: 'Adesk Accounting',
 
         t_extra_info: { source: 'adesk_cloud_connector', connector_ref: record.connector_ref || null }
     };
@@ -997,5 +999,7 @@ const testConnection = async (req, res) => {
 
 module.exports = {
     pullPurchaseData,
-    testConnection
+    testConnection,
+    mapPurchaseRecord,
+    mapSalesRecord
 };

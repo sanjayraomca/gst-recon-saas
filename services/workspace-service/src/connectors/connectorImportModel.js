@@ -107,8 +107,8 @@ class ConnectorImportModel {
                             is_amendment, original_supplier_invoice_no, original_supplier_invoice_date,
                             original_book_vchr_no, original_book_vchr_date, original_net_amount,
                             return_date, original_return_period, original_return_date, source_section,
-                            gstr_category, t_extra_info, import_filing_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gstr_category, t_extra_info, import_filing_id, platform
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (tenant_id, workspace_id, book_type, tax_period_id, book_vchr_no, net_amount)
                         DO UPDATE SET
                             book_vchr_no = EXCLUDED.book_vchr_no,
@@ -144,40 +144,42 @@ class ConnectorImportModel {
                             gstr_category = EXCLUDED.gstr_category,
                             t_extra_info = EXCLUDED.t_extra_info,
                             import_filing_id = COALESCE(EXCLUDED.import_filing_id, purchase_vouchers.import_filing_id),
+                            platform = EXCLUDED.platform,
                             updated_at = NOW()
                         RETURNING id, (xmax = 0) AS is_inserted
                     `, [
-                        header.tenant_id, header.workspace_id, header.tax_period_id || null,
-                        header.voucher_type || null, header.book_type || 'PR',
-                        header.book_vchr_no || null, header.book_vchr_date || null,
-                        String(header.supplier_invoice_no || '').substring(0, 50),
-                        header.supplier_invoice_date || null,
-                        String(header.supplier_name || '').substring(0, 255),
-                        header.supplier_gstin || null,
-                        header.place_of_supply || null, header.is_interstate || 'No',
-                        header.is_rcm || false, header.round_off || 0,
-                        header.status || 'DRAFT', header.remarks || null,
-                        header.total_qty || 0, header.discount || 0,
-                        header.taxable_total || 0, header.net_amount || 0,
-                        header.total_cgst_amount || 0, header.total_sgst_amount || 0,
-                        header.total_igst_amount || 0, header.total_cess_amount || 0,
-                        header.itc_eligible !== undefined ? header.itc_eligible : null,
-                        header.itc_claimed !== undefined ? header.itc_claimed : null,
-                        header.filing_period || null, header.return_period || header.filing_period || null,
-                        header.is_amendment || false,
-                        header.original_supplier_invoice_no || null,
-                        header.original_supplier_invoice_date || null,
-                        header.original_book_vchr_no || null,
-                        header.original_book_vchr_date || null,
-                        header.original_net_amount || 0,
-                        header.return_date || null,
-                        header.original_return_period || null,
-                        header.original_return_date || null,
-                        header.source_section || null,
-                        header.gstr_category || null,
-                        JSON.stringify(header.t_extra_info || {}),
-                        importFilingId
-                    ]);
+                         header.tenant_id, header.workspace_id, header.tax_period_id || null,
+                         header.voucher_type || null, header.book_type || 'PR',
+                         header.book_vchr_no || null, header.book_vchr_date || null,
+                         String(header.supplier_invoice_no || '').substring(0, 50),
+                         header.supplier_invoice_date || null,
+                         String(header.supplier_name || '').substring(0, 255),
+                         header.supplier_gstin || null,
+                         header.place_of_supply || null, header.is_interstate || 'No',
+                         header.is_rcm || false, header.round_off || 0,
+                         header.status || 'DRAFT', header.remarks || null,
+                         header.total_qty || 0, header.discount || 0,
+                         header.taxable_total || 0, header.net_amount || 0,
+                         header.total_cgst_amount || 0, header.total_sgst_amount || 0,
+                         header.total_igst_amount || 0, header.total_cess_amount || 0,
+                         header.itc_eligible !== undefined ? header.itc_eligible : null,
+                         header.itc_claimed !== undefined ? header.itc_claimed : null,
+                         header.filing_period || null, header.return_period || header.filing_period || null,
+                         header.is_amendment || false,
+                         header.original_supplier_invoice_no || null,
+                         header.original_supplier_invoice_date || null,
+                         header.original_book_vchr_no || null,
+                         header.original_book_vchr_date || null,
+                         header.original_net_amount || 0,
+                         header.return_date || null,
+                         header.original_return_period || null,
+                         header.original_return_date || null,
+                         header.source_section || null,
+                         header.gstr_category || null,
+                         JSON.stringify(header.t_extra_info || {}),
+                         importFilingId,
+                         header.platform || null
+                     ]);
 
                     const voucherId = headerRes.rows[0].id;
                     const isInserted = headerRes.rows[0].is_inserted;
