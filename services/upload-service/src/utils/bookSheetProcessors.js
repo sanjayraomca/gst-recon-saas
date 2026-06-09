@@ -1,5 +1,48 @@
 const { isValidGSTIN, normalizeInvoiceNumber, parseExcelDate, cleanAmount } = require('./validation');
 
+const VALID_GST_STATE_CODES = new Set([
+    "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+    "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+    "21", "22", "23", "24", "26", "27", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "97"
+]);
+
+function derivePlaceOfSupply(partyState, partyGstin, orgGstin) {
+    let pos = null;
+    
+    // 1. Try partyState
+    if (partyState) {
+        const clean = String(partyState).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 2. Try partyGstin prefix (first 2 digits)
+    if (!pos && partyGstin && partyGstin.length >= 2) {
+        const clean = String(partyGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 3. Try orgGstin prefix (first 2 digits)
+    if (!pos && orgGstin && orgGstin.length >= 2) {
+        const clean = String(orgGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 4. Default to Gujarat (24) instead of Arunachal Pradesh (12)
+    if (!pos) {
+        pos = "24";
+    }
+    
+    return pos;
+}
+
+
 /**
  * Book Data Sheet Processors
  * Maps Sales/Purchase Register CSV columns to Database Schema.
@@ -251,7 +294,11 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
 
         const vchType = vTypeIdx !== null ? (row[vTypeIdx] ?? '').toString().trim() : 'SA';
         const bookType = resolveSalesBookType(vchType);
-        const invType = resolveSalesInvoiceType(vchType, custGstinClean);
+        const rawGstrCategory = gstrCategoryIdx !== null ? (row[gstrCategoryIdx] ?? '').toString().trim() : '';
+        // Override invoice_type to EXPORT when gstr_category indicates export (e.g. ExportWithOutPaymentOfTax, ExportWithPaymentOfTax)
+        const invType = rawGstrCategory.toLowerCase().includes('export')
+            ? 'EXPORT'
+            : resolveSalesInvoiceType(vchType, custGstinClean);
 
         const taxable = cleanAmount(taxableIdx !== null ? row[taxableIdx] : 0);
         const igst = cleanAmount(igstIdx !== null ? row[igstIdx] : 0);
@@ -283,7 +330,7 @@ const processSalesSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPerio
 
         if (!invoiceMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
-            const pos = partyState || (custGstinClean ? custGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
+            const pos = derivePlaceOfSupply(partyState, custGstinClean, orgGstin);
             const isInter = interIdx !== null
                 ? (row[interIdx] ?? '').toString().toUpperCase().startsWith('Y')
                 : (orgGstin && custGstinClean ? orgGstin.substring(0, 2) !== custGstinClean.substring(0, 2) : false);
@@ -574,7 +621,7 @@ const processPurchaseSheet = (rows, tenantId, workspaceId, taxPeriodId, returnPe
 
         if (!voucherMap.has(groupKey)) {
             const partyState = stateIdx !== null ? (row[stateIdx] ?? '').toString().trim() || null : null;
-            const pos = partyState || (supplierGstinClean ? supplierGstinClean.substring(0, 2) : (orgGstin ? orgGstin.substring(0, 2) : null));
+            const pos = derivePlaceOfSupply(partyState, supplierGstinClean, orgGstin);
             const isInter = interIdx !== null
                 ? (row[interIdx] ?? '').toString().toUpperCase().startsWith('Y')
                 : (orgGstin && supplierGstinClean ? orgGstin.substring(0, 2) !== supplierGstinClean.substring(0, 2) : false);

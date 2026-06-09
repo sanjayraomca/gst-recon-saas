@@ -7,6 +7,57 @@ const ConnectorImportModel = require('./connectorImportModel');
 const { isValidGSTIN } = require('./validation');
 const axios = require('axios');
 
+const VALID_GST_STATE_CODES = new Set([
+    "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+    "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+    "21", "22", "23", "24", "26", "27", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "97"
+]);
+
+function derivePlaceOfSupply(recordPos, recordPartyState, partyGstin, orgGstin) {
+    let pos = null;
+    
+    // 1. Try recordPos
+    if (recordPos) {
+        const clean = String(recordPos).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 2. Try recordPartyState
+    if (!pos && recordPartyState) {
+        const clean = String(recordPartyState).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 3. Try partyGstin prefix (first 2 digits)
+    if (!pos && partyGstin && partyGstin.length >= 2) {
+        const clean = String(partyGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 4. Try orgGstin prefix (first 2 digits)
+    if (!pos && orgGstin && orgGstin.length >= 2) {
+        const clean = String(orgGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 5. Hard default to Gujarat (24) instead of Arunachal Pradesh (12)
+    if (!pos) {
+        pos = "24";
+    }
+    
+    return pos;
+}
+
+
 /**
  * Helper: Group mapped documents by invoice/voucher identity, summing up the totals
  * and merging the item lists.
@@ -168,7 +219,7 @@ const getPeriodFromDate = (dateStr) => {
  * Map individual purchase records from Adesk Accounting schema to our standard connector format.
  * Incorporates robust data validation checks same as book data import.
  */
-const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
+const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod, orgGstin = null) => {
     const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
     const returnPeriod = vchrDate ? getPeriodFromDate(vchrDate) : defaultReturnPeriod;
 
@@ -184,6 +235,9 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
     ).trim();
     const supplierGstin = String(record.supplier_gstin || record.party_gstn_no || '').trim().toUpperCase();
     const supplierName = String(record.supplier_name || record.party_name || 'Generic Supplier').trim();
+
+    // Derive Place of Supply (POS) state code
+    const pos = derivePlaceOfSupply(record.place_of_supply, record.party_state, supplierGstin, orgGstin);
 
     let bookType = (record.book_type || record.vchr_prefix || 'PA').trim().toUpperCase();
     let voucherType = (record.voucher_type || record.vchr_type || 'PURCHASE').trim().toUpperCase();
@@ -273,7 +327,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
         total_qty: parseFloat(record.total_qty || 0),
 
         // GST Fields
-        place_of_supply: record.place_of_supply || null,
+        place_of_supply: pos || null,
         is_interstate: record.is_interstate || (record.inter_state === 'Yes') || false,
         is_rcm: record.is_rcm || (record.reverse_charge === 'Yes') || false,
         voucher_type: voucherType,
@@ -350,13 +404,16 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, defaultReturnPeriod) =
  * Map individual sales records from Adesk Accounting schema to our standard connector format.
  * Incorporates robust data validation checks same as book data import.
  */
-const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
+const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod, orgGstin = null) => {
     const vchrDate = record.supplier_invoice_date || record.vchr_date || null;
     const returnPeriod = vchrDate ? getPeriodFromDate(vchrDate) : defaultReturnPeriod;
 
     const invoiceNumber = String(record.supplier_invoice_no || record.vchr_full_number || record.vchr_no || '').trim();
     const customerGstin = String(record.party_gstn_no || '').trim().toUpperCase();
     const customerName = String(record.party_name || 'Generic Customer').trim();
+
+    // Derive Place of Supply (POS) state code
+    const pos = derivePlaceOfSupply(record.place_of_supply, record.party_state, customerGstin, orgGstin);
 
     let bookType = (record.book_type || record.vchr_prefix || 'SA').trim().toUpperCase();
     let invoiceType = (record.voucher_type || record.vchr_type || 'B2B').trim().toUpperCase();
@@ -419,7 +476,7 @@ const mapSalesRecord = (record, tenantId, workspaceId, defaultReturnPeriod) => {
         discount: parseFloat(record.discount || 0),
 
         // GST Fields
-        place_of_supply: record.place_of_supply || null,
+        place_of_supply: pos || null,
         reverse_charge: record.reverse_charge === 'Yes' || record.reverse_charge === true,
         is_amendment: record.is_amendment === 'Yes' || record.is_amendment === true,
         book_type: bookType,
@@ -748,8 +805,8 @@ const pullPurchaseData = async (req, res) => {
         for (const record of records) {
             try {
                 const doc = isSales
-                    ? mapSalesRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod)
-                    : mapPurchaseRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod);
+                    ? mapSalesRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod, workspace.gstn)
+                    : mapPurchaseRecord(record, workspace.tenant_id, workspace.id, defaultReturnPeriod, workspace.gstn);
                 documents.push(doc);
             } catch (valErr) {
                 console.warn('[Validation Warning] Skipped invalid voucher:', valErr.message);

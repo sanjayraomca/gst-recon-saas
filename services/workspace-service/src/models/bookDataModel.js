@@ -118,6 +118,9 @@ class BookDataModel {
     static _applyColumnFilters(q, columnFilters, mapping, useHaving = false) {
         if (!columnFilters || Object.keys(columnFilters).length === 0) return q;
 
+        const numericFields = ['taxableAmt', 'igst', 'cgst', 'sgst', 'cess', 'totalAmt', 'net', 'netAmount', 'roundOff', 'invoice_amount', 'row_total', 'tax_per', 'taxPer', 'taxRate'];
+        const dateFields = ['date', 'ref_vchr_date', 'bookVchrDate', 'voucher_date', 'purchase_invoice_date', 'invoice_date'];
+
         Object.entries(columnFilters).forEach(([colKey, filter]) => {
             if (!filter || (!filter.val && !['nu', 'nn'].includes(filter.op))) return;
 
@@ -132,48 +135,61 @@ class BookDataModel {
                 else q.whereRaw(sql, params);
             };
 
-            switch (op) {
-                case 'eq': apply(`LOWER(CAST(${dbCol} AS TEXT)) = ?`, [lowVal]); break;
-                case 'ne': apply(`LOWER(CAST(${dbCol} AS TEXT)) != ?`, [lowVal]); break;
-                case 'bw': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
-                case 'bn': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`${lowVal}%`]); break;
-                case 'ew': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
-                case 'en': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
-                case 'cn': apply(`LOWER(CAST(${dbCol} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
-                case 'nc': apply(`LOWER(CAST(${dbCol} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
-                case 'lt':
-                    if (useHaving) q.having(knex.raw(dbCol), '<', val);
-                    else q.where(dbCol, '<', val);
-                    break;
-                case 'le':
-                    if (useHaving) q.having(knex.raw(dbCol), '<=', val);
-                    else q.where(dbCol, '<=', val);
-                    break;
-                case 'gt':
-                    if (useHaving) q.having(knex.raw(dbCol), '>', val);
-                    else q.where(dbCol, '>', val);
-                    break;
-                case 'ge':
-                    if (useHaving) q.having(knex.raw(dbCol), '>=', val);
-                    else q.where(dbCol, '>=', val);
-                    break;
-                case 'in':
-                    const vals = String(val).split(',').map(v => v.trim()).filter(Boolean);
-                    if (vals.length > 0) {
-                        if (useHaving) q.havingRaw(`${dbCol} = ANY(?)`, [vals]);
-                        else q.whereIn(dbCol, vals);
-                    }
-                    break;
-                case 'nu': apply(`CAST(${dbCol} AS TEXT) IS NULL OR CAST(${dbCol} AS TEXT) = ''`, []); break;
-                case 'nn': apply(`CAST(${dbCol} AS TEXT) IS NOT NULL AND CAST(${dbCol} AS TEXT) != ''`, []); break;
+            const isNumeric = numericFields.includes(colKey);
+            const isDate = dateFields.includes(colKey);
+            const colSql = (dbCol && typeof dbCol === 'object') ? dbCol.toString() : dbCol;
 
-                case 'today':
-                case 'yesterday':
-                case 'last7':
-                case 'last30':
-                case 'custom':
-                    if (val) apply(`${dbCol}::date = ?::date`, [val]);
-                    break;
+            if (isNumeric) {
+                const num = parseFloat(val);
+                if (isNaN(num) && !['nu', 'nn'].includes(op)) return;
+                const baseSql = `ROUND(COALESCE((${colSql})::numeric, 0)::numeric, 2)`;
+
+                switch (op) {
+                    case 'eq': apply(`${baseSql} = ?`, [num]); break;
+                    case 'ne': apply(`${baseSql} != ?`, [num]); break;
+                    case 'lt': apply(`${baseSql} < ?`, [num]); break;
+                    case 'le': apply(`${baseSql} <= ?`, [num]); break;
+                    case 'gt': apply(`${baseSql} > ?`, [num]); break;
+                    case 'ge': apply(`${baseSql} >= ?`, [num]); break;
+                    case 'nu': apply(`(${colSql}) IS NULL`); break;
+                    case 'nn': apply(`(${colSql}) IS NOT NULL`); break;
+                    default: apply(`${baseSql} = ?`, [num]);
+                }
+            } else if (isDate) {
+                let dbDate = val;
+                const dateParts = String(val).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (dateParts) {
+                    dbDate = `${dateParts[3]}-${dateParts[2]}-${dateParts[1]}`;
+                }
+
+                switch (op) {
+                    case 'eq': apply(`(${colSql})::date = ?::date`, [dbDate]); break;
+                    case 'ne': apply(`(${colSql})::date != ?::date`, [dbDate]); break;
+                    case 'lt': apply(`(${colSql})::date < ?::date`, [dbDate]); break;
+                    case 'le': apply(`(${colSql})::date <= ?::date`, [dbDate]); break;
+                    case 'gt': apply(`(${colSql})::date > ?::date`, [dbDate]); break;
+                    case 'ge': apply(`(${colSql})::date >= ?::date`, [dbDate]); break;
+                    case 'cn': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
+                    case 'bw': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
+                    case 'ew': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
+                    case 'nu': apply(`(${colSql}) IS NULL`); break;
+                    case 'nn': apply(`(${colSql}) IS NOT NULL`); break;
+                    default: apply(`(${colSql})::date = ?::date`, [dbDate]);
+                }
+            } else {
+                switch (op) {
+                    case 'eq': apply(`LOWER(CAST(${colSql} AS TEXT)) = ?`, [lowVal]); break;
+                    case 'ne': apply(`LOWER(CAST(${colSql} AS TEXT)) != ?`, [lowVal]); break;
+                    case 'bw': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`${lowVal}%`]); break;
+                    case 'bn': apply(`LOWER(CAST(${colSql} AS TEXT)) NOT LIKE ?`, [`${lowVal}%`]); break;
+                    case 'ew': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`%${lowVal}`]); break;
+                    case 'en': apply(`LOWER(CAST(${colSql} AS TEXT)) NOT LIKE ?`, [`%${lowVal}`]); break;
+                    case 'cn': apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`%${lowVal}%`]); break;
+                    case 'nc': apply(`LOWER(CAST(${colSql} AS TEXT)) NOT LIKE ?`, [`%${lowVal}%`]); break;
+                    case 'nu': apply(`CAST(${colSql} AS TEXT) IS NULL OR CAST(${colSql} AS TEXT) = ''`, []); break;
+                    case 'nn': apply(`CAST(${colSql} AS TEXT) IS NOT NULL AND CAST(${colSql} AS TEXT) != ''`, []); break;
+                    default: apply(`LOWER(CAST(${colSql} AS TEXT)) LIKE ?`, [`%${lowVal}%`]);
+                }
             }
         });
         return q;
@@ -409,6 +425,9 @@ class BookDataModel {
                 else if (sort_by === 'cess') sortCol = knex.raw(' sum(si.total_cess) ');
                 else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(si.round_off) ');
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) ');
+                else if (sort_by === 'placeOfSupply') sortCol = knex.raw(' max(si.place_of_supply) ');
+                else if (sort_by === 'gstType') sortCol = knex.raw(' max(si.invoice_type) ');
+                else if (sort_by === 'platform') sortCol = knex.raw(' max(si.platform) ');
                 else sortCol = 'party'; // Fallback
             } else {
                 if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
@@ -422,6 +441,11 @@ class BookDataModel {
                 else if (sort_by === 'sgst') sortCol = 'si.total_sgst';
                 else if (sort_by === 'cess') sortCol = 'si.total_cess';
                 else if (sort_by === 'roundOff') sortCol = 'si.round_off';
+                else if (sort_by === 'placeOfSupply') sortCol = 'si.place_of_supply';
+                else if (sort_by === 'gstType') sortCol = 'si.invoice_type';
+                else if (sort_by === 'platform') sortCol = 'si.platform';
+                else if (sort_by === 'isInterstate') sortCol = 'si.is_interstate';
+                else if (sort_by === 'taxPercent') sortCol = knex.raw("(SELECT gst_rate_percent FROM sales_invoice_items WHERE invoice_id = si.id ORDER BY line_number ASC LIMIT 1)");
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) OVER (PARTITION BY COALESCE(NULLIF(si.customer_gstin, \'\'), si.customer_name)) ');
             }
 
@@ -673,6 +697,9 @@ class BookDataModel {
                 else if (sort_by === 'cess') sortCol = knex.raw(' sum(pi.cess_amount) ');
                 else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(ev.round_off) ');
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(distinct ev.id) ');
+                else if (sort_by === 'placeOfSupply') sortCol = knex.raw(' max(ev.place_of_supply) ');
+                else if (sort_by === 'gstType') sortCol = knex.raw(' max(pi.invoice_type) ');
+                else if (sort_by === 'platform') sortCol = knex.raw(' max(pi.platform) ');
                 else sortCol = 'party'; // Default fallback that is safe for GROUP BY
             } else {
                 if (sort_by === 'invoiceNo' || sort_by === 'ref_vchr_no') sortCol = 'ev.supplier_invoice_no';
@@ -690,6 +717,12 @@ class BookDataModel {
                 else if (sort_by === 'sgst') sortCol = 'pi.sgst_amount';
                 else if (sort_by === 'cess') sortCol = 'pi.cess_amount';
                 else if (sort_by === 'roundOff') sortCol = 'ev.round_off';
+                else if (sort_by === 'placeOfSupply') sortCol = 'ev.place_of_supply';
+                else if (sort_by === 'gstType') sortCol = 'pi.invoice_type';
+                else if (sort_by === 'platform') sortCol = 'pi.platform';
+                else if (sort_by === 'isInterstate') sortCol = 'ev.is_interstate';
+                else if (sort_by === 'reverseCharge') sortCol = 'ev.is_rcm';
+                else if (sort_by === 'taxPercent') sortCol = 'pi.gst_rate_percent';
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(ev.id) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, \'\'), ev.supplier_name)) ');
             }
 

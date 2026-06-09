@@ -276,6 +276,7 @@ class ConnectorImportModel {
                         DO UPDATE SET
                             customer_name = EXCLUDED.customer_name,
                             customer_gstin = EXCLUDED.customer_gstin,
+                            place_of_supply = EXCLUDED.place_of_supply,
                             total_invoice_value = EXCLUDED.total_invoice_value,
                             total_taxable_value = EXCLUDED.total_taxable_value,
                             total_igst = EXCLUDED.total_igst,

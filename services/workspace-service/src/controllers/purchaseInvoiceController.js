@@ -3,6 +3,57 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const jwt = require('jsonwebtoken');
 
+const VALID_GST_STATE_CODES = new Set([
+    "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+    "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+    "21", "22", "23", "24", "26", "27", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "97"
+]);
+
+function derivePlaceOfSupply(recordPos, recordPartyState, partyGstin, orgGstin) {
+    let pos = null;
+    
+    // 1. Try recordPos
+    if (recordPos) {
+        const clean = String(recordPos).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 2. Try recordPartyState
+    if (!pos && recordPartyState) {
+        const clean = String(recordPartyState).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 3. Try partyGstin prefix (first 2 digits)
+    if (!pos && partyGstin && partyGstin.length >= 2) {
+        const clean = String(partyGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 4. Try orgGstin prefix (first 2 digits)
+    if (!pos && orgGstin && orgGstin.length >= 2) {
+        const clean = String(orgGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 5. Hard default to Gujarat (24) instead of Arunachal Pradesh (12)
+    if (!pos) {
+        pos = "24";
+    }
+    
+    return pos;
+}
+
+
 const logThirdPartySync = async (req, status, respBody, options = {}) => {
     try {
         const knex = require('../../../shared/src/db/connection');
@@ -467,7 +518,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 round_off: roundOff,
                 discount: parseFloat(record.discount || 0),
                 total_qty: parseFloat(record.total_qty || 0),
-                place_of_supply: record.place_of_supply || record.party_state_id || null,
+                place_of_supply: derivePlaceOfSupply(record.place_of_supply, record.party_state, supplierGstin, workspace.gstn),
                 is_interstate: record.is_interstate || (record.inter_state === 'Yes') || false,
                 is_rcm: record.is_rcm || (record.reverse_charge === 'Yes') || false,
                 voucher_type: voucherType,

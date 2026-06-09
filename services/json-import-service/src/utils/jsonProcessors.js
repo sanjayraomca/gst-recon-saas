@@ -80,7 +80,11 @@ const processSalesJson = (data, tenantId, workspaceId, taxPeriodId, returnPeriod
 
         const vchType = row.vchr_type || 'SA';
         const bookType = resolveSalesBookType(vchType);
-        const invType = resolveSalesInvoiceType(vchType, custGstinClean);
+        const rawGstrCategory = (row.gstr_category || '').toString().trim();
+        // Override invoice_type to EXPORT when gstr_category indicates export (e.g. ExportWithOutPaymentOfTax, ExportWithPaymentOfTax)
+        const invType = rawGstrCategory.toLowerCase().includes('export')
+            ? 'EXPORT'
+            : resolveSalesInvoiceType(vchType, custGstinClean);
 
         const taxable = cleanAmount(row.total_taxable_amount || row.taxable_value || 0);
         const igst = cleanAmount(row.total_igst_tax_amount || row.igst_amount || 0);

@@ -4,6 +4,57 @@ const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { publishMessage } = require('../../../shared/src/nats/client');
 const TaxPeriodService = require('../../../shared/src/services/taxPeriodService');
 
+const VALID_GST_STATE_CODES = new Set([
+    "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+    "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+    "21", "22", "23", "24", "26", "27", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "97"
+]);
+
+function derivePlaceOfSupply(recordPos, recordPartyState, partyGstin, orgGstin) {
+    let pos = null;
+    
+    // 1. Try recordPos
+    if (recordPos) {
+        const clean = String(recordPos).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 2. Try recordPartyState
+    if (!pos && recordPartyState) {
+        const clean = String(recordPartyState).trim().padStart(2, '0');
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 3. Try partyGstin prefix (first 2 digits)
+    if (!pos && partyGstin && partyGstin.length >= 2) {
+        const clean = String(partyGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 4. Try orgGstin prefix (first 2 digits)
+    if (!pos && orgGstin && orgGstin.length >= 2) {
+        const clean = String(orgGstin).trim().substring(0, 2);
+        if (VALID_GST_STATE_CODES.has(clean)) {
+            pos = clean;
+        }
+    }
+    
+    // 5. Hard default to Gujarat (24) instead of Arunachal Pradesh (12)
+    if (!pos) {
+        pos = "24";
+    }
+    
+    return pos;
+}
+
+
 // Self-contained model — same SQL as BookModel + GSTRImportModel in upload-service
 // but lives inside workspace-service container (no cross-service file dependency)
 const ConnectorImportModel = require('./connectorImportModel');
@@ -151,7 +202,7 @@ const TYPE_TO_IMPORT_TYPE = {
  * Map a single incoming purchase JSON record into the { header, items } format
  * that BookModel.bulkInsertPurchase() expects.
  */
-const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
+const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod, orgGstin) => {
     // Determine the voucher number: prefer vchr_full_number first, then vchr_no, voucher_no
     const vchrNo = String(record.vchr_full_number || record.vchr_no || record.voucher_no || '').trim();
 
@@ -207,7 +258,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
         total_qty: parseFloat(record.total_qty || 0),
 
         // GST fields
-        place_of_supply: record.place_of_supply || null,
+        place_of_supply: derivePlaceOfSupply(record.place_of_supply, record.party_state || record.state, record.supplier_gstin || record.party_gstn_no, orgGstin),
         is_interstate: record.inter_state || (record.is_interstate ? 'Yes' : 'No'),
         is_rcm: record.reverse_charge ? (record.reverse_charge.toLowerCase() === 'yes') : (record.is_rcm || false),
         voucher_type: dbVoucherType,
@@ -270,7 +321,7 @@ const mapPurchaseRecord = (record, tenantId, workspaceId, returnPeriod) => {
  * Map a single incoming sales JSON record into the { header, items } format
  * that BookModel.bulkInsertSales() expects.
  */
-const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
+const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod, orgGstin) => {
     const header = {
         tenant_id: tenantId,
         workspace_id: workspaceId,
@@ -295,7 +346,7 @@ const mapSalesRecord = (record, tenantId, workspaceId, returnPeriod) => {
         round_off: parseFloat(record.round_off || 0),
 
         // GST fields
-        place_of_supply: record.place_of_supply || null,
+        place_of_supply: derivePlaceOfSupply(record.place_of_supply, record.party_state || record.state, record.party_gstin || record.customer_gstin, orgGstin),
         reverse_charge: record.reverse_charge || false,
         gstr_category: record.gstr_category || null,
         source_section: record.source_section || null,
@@ -418,6 +469,14 @@ const importBookData = async (req, res) => {
 
         const { type, return_period, records } = req.body;
 
+        // Fetch organization GSTIN to use as fallback
+        const workspace = await db('workspaces')
+            .leftJoin('gstin_master', 'workspaces.gstin_id', 'gstin_master.id')
+            .select('gstin_master.gstin')
+            .where('workspaces.id', workspaceId)
+            .first();
+        const orgGstin = workspace ? workspace.gstin : null;
+
         if (!records || !Array.isArray(records) || records.length === 0) {
             await logBookActivity(req, 'Failed', 'CONNECTOR_BOOK_IMPORT_INVALID_INPUT', { error: 'records array is required and must not be empty' });
             return errorResponse(res, 'records array is required and must not be empty', 400);
@@ -474,8 +533,8 @@ const importBookData = async (req, res) => {
         // ── Map incoming JSON → BookModel format ───────────────────────────
         const documents = records.map(record =>
             isSales
-                ? mapSalesRecord(record, tenantId, workspaceId, resolvedReturnPeriod)
-                : mapPurchaseRecord(record, tenantId, workspaceId, resolvedReturnPeriod)
+                ? mapSalesRecord(record, tenantId, workspaceId, resolvedReturnPeriod, orgGstin)
+                : mapPurchaseRecord(record, tenantId, workspaceId, resolvedReturnPeriod, orgGstin)
         );
 
         const groupedDocuments = groupMappedDocuments(documents, isSales);
