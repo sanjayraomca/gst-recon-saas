@@ -1082,7 +1082,7 @@ class BookDataModel {
 
         if (record) {
             const items = await knex('sales_invoice_items')
-                .where('sales_id', id)
+                .where('invoice_id', id)
                 .orderBy('id', 'asc');
             record.items = items;
             return record;
@@ -1291,7 +1291,7 @@ class BookDataModel {
         } else {
             // Sales invoices: always full delete (no item_id support yet)
             itemsToArchive = await knex('sales_invoice_items')
-                .where('sales_id', id)
+                .where('invoice_id', id)
                 .orderBy('id', 'asc');
             shouldDeleteParent = true;
         }
@@ -1314,7 +1314,7 @@ class BookDataModel {
         const refTableInfo = {
             parent_table: isPurchase ? 'purchase_vouchers' : 'sales_invoices',
             child_table: isPurchase ? 'purchase_items' : 'sales_invoice_items',
-            child_fk_column: isPurchase ? 'purchase_id' : 'sales_id',
+            child_fk_column: isPurchase ? 'purchase_id' : 'invoice_id',
             deleted_item_id: itemId || null,
             deletion_mode: deleteSingleItem ? 'single_item' : 'full_voucher'
         };
@@ -1377,7 +1377,7 @@ class BookDataModel {
                 }
             } else {
                 // Sales: always full delete
-                await trx('sales_invoice_items').where('sales_id', id).delete();
+                await trx('sales_invoice_items').where('invoice_id', id).delete();
                 await trx('sales_invoices').where('id', id).delete();
             }
         });
