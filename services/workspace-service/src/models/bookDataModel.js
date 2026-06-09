@@ -399,8 +399,8 @@ class BookDataModel {
 
             let sortCol = 'si.invoice_date';
             if (group_by_supplier) {
-                if (sort_by === 'party') sortCol = 'si.customer_name';
-                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = knex.raw(' trim(si.customer_gstin) ');
+                if (sort_by === 'party') sortCol = 'party';
+                else if (sort_by === 'gstin' || sort_by === 'gstNo') sortCol = 'gstin';
                 else if (sort_by === 'taxableAmt') sortCol = knex.raw(' sum(si.total_taxable_value) ');
                 else if (sort_by === 'totalAmt' || sort_by === 'netAmount' || sort_by === 'net') sortCol = knex.raw(' sum(si.total_invoice_value) ');
                 else if (sort_by === 'igst') sortCol = knex.raw(' sum(si.total_igst) ');
@@ -409,7 +409,7 @@ class BookDataModel {
                 else if (sort_by === 'cess') sortCol = knex.raw(' sum(si.total_cess) ');
                 else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(si.round_off) ');
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(*) ');
-                else sortCol = 'si.customer_name'; // Fallback
+                else sortCol = 'party'; // Fallback
             } else {
                 if (sort_by === 'invoiceNo') sortCol = 'si.invoice_number';
                 else if (sort_by === 'party') sortCol = 'si.customer_name';
@@ -428,8 +428,8 @@ class BookDataModel {
             if (group_by_supplier) {
                 records = await q
                     .select(
-                        knex.raw('max(si.customer_name) as party'),
-                        knex.raw('max(si.customer_gstin) as gstin'),
+                        knex.raw('trim(si.customer_name) as party'),
+                        knex.raw('trim(si.customer_gstin) as gstin'),
                         knex.raw('sum(si.total_taxable_value) as "taxableAmt"'),
                         knex.raw('sum(si.total_cgst) as cgst'),
                         knex.raw('sum(si.total_sgst) as sgst'),
