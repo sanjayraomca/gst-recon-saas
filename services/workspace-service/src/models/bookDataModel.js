@@ -698,7 +698,7 @@ class BookDataModel {
                 else if (sort_by === 'roundOff') sortCol = knex.raw(' sum(ev.round_off) ');
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(distinct ev.id) ');
                 else if (sort_by === 'placeOfSupply') sortCol = knex.raw(' max(ev.place_of_supply) ');
-                else if (sort_by === 'gstType') sortCol = knex.raw(' max(pi.invoice_type) ');
+                else if (sort_by === 'gstType') sortCol = knex.raw("COALESCE(NULLIF(UPPER(max(ev.source_section)), 'EXPENSE'), NULLIF(UPPER(max(ev.voucher_type)), 'EXPENSE'), 'NONGST')");
                 else if (sort_by === 'platform') sortCol = knex.raw(' max(pi.platform) ');
                 else sortCol = 'party'; // Default fallback that is safe for GROUP BY
             } else {
@@ -718,11 +718,11 @@ class BookDataModel {
                 else if (sort_by === 'cess') sortCol = 'pi.cess_amount';
                 else if (sort_by === 'roundOff') sortCol = 'ev.round_off';
                 else if (sort_by === 'placeOfSupply') sortCol = 'ev.place_of_supply';
-                else if (sort_by === 'gstType') sortCol = 'pi.invoice_type';
+                else if (sort_by === 'gstType') sortCol = knex.raw("COALESCE(NULLIF(UPPER(ev.source_section), 'EXPENSE'), NULLIF(UPPER(ev.voucher_type), 'EXPENSE'), 'NONGST')");
                 else if (sort_by === 'platform') sortCol = 'pi.platform';
                 else if (sort_by === 'isInterstate') sortCol = 'ev.is_interstate';
                 else if (sort_by === 'reverseCharge') sortCol = 'ev.is_rcm';
-                else if (sort_by === 'taxPercent') sortCol = 'pi.gst_rate_percent';
+                else if (sort_by === 'taxPercent') sortCol = 'pi.tax_per';
                 else if (sort_by === 'invoiceCount' || sort_by === 'rows_len') sortCol = knex.raw(' count(ev.id) OVER (PARTITION BY COALESCE(NULLIF(ev.supplier_gstin, \'\'), ev.supplier_name)) ');
             }
 
