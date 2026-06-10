@@ -189,7 +189,8 @@ const requestOtp = async (req, res) => {
     } catch (error) {
         console.error('[requestOtp] Error:', error.response?.data || error.message);
         const errMessage = error.response?.data?.error || error.message;
-        return errorResponse(res, `Failed to request OTP: ${errMessage}`, error.response?.status || 500);
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `Failed to request OTP: ${errMessage}`, statusCode);
     }
 };
 
@@ -241,7 +242,8 @@ const verifyOtp = async (req, res) => {
     } catch (error) {
         console.error('[verifyOtp] Error:', error.response?.data || error.message);
         const errMessage = error.response?.data?.error || error.message;
-        return errorResponse(res, `OTP Verification failed: ${errMessage}`, error.response?.status || 500);
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `OTP Verification failed: ${errMessage}`, statusCode);
     }
 };
 
@@ -498,7 +500,7 @@ const searchGstin = async (req, res) => {
         const apiKey = keyRecord.production_key;
 
         console.log(`[GSTN Sync] Searching GSTIN ${gstin} via GSP Provider API...`);
-        const response = await axios.get(`${EXT_API_URL}/ext/gst/search?gstin=${gstin}`, {
+        const response = await axios.post(`${EXT_API_URL}/ext/gst/search`, { gstin }, {
             headers: {
                 'X-API-Key': apiKey,
                 'Content-Type': 'application/json'
@@ -509,7 +511,8 @@ const searchGstin = async (req, res) => {
     } catch (error) {
         console.error('[searchGstin] Error:', error.response?.data || error.message);
         const errMessage = error.response?.data?.error || error.message;
-        return errorResponse(res, `Failed to search GSTIN: ${errMessage}`, error.response?.status || 500);
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `Failed to search GSTIN: ${errMessage}`, statusCode);
     }
 };
 

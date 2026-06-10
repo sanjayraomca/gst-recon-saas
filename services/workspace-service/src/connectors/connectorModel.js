@@ -43,6 +43,13 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
 
         for (const db of dbs) {
             try {
+                // Ensure platform exists
+                await db.client.raw(`
+                    INSERT INTO platform (name) 
+                    VALUES (?) 
+                    ON CONFLICT (name) DO NOTHING
+                `, ['TENANT_PORTAL']);
+
                 // Find existing access key by third_party_unique_id
                 const existing = await db.client('api_conn_access_key')
                     .where({ third_party_unique_id: workspaceId })
