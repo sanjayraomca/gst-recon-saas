@@ -47,6 +47,9 @@ router.post('/gstn/otp-request', authorizeWorkspace, gstnSyncController.requestO
 router.post('/gstn/verify-otp', authorizeWorkspace, gstnSyncController.verifyOtp);
 router.post('/gstn/sync-gstr2b', authorizeWorkspace, gstnSyncController.syncGstr2b);
 router.get('/gstn/search-gstin', authorizeWorkspace, gstnSyncController.searchGstin);
+router.post('/gstn/rettrack', authorizeWorkspace, gstnSyncController.trackReturns);
+router.post('/gstn/preferences', authorizeWorkspace, gstnSyncController.getPreferences);
+router.post('/gstn/unregistered-applicants', authorizeWorkspace, gstnSyncController.unregisteredApplicants);
 
 // GET /connectors - Fetch list of all third-party connectors
 router.get('/', authorizeWorkspace, getConnectorsList);

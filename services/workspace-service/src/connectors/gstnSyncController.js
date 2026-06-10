@@ -516,10 +516,119 @@ const searchGstin = async (req, res) => {
     }
 };
 
+/**
+ * POST /connectors/gstn/rettrack
+ * Track returns by GSTIN.
+ */
+const trackReturns = async (req, res) => {
+    try {
+        const workspaceId = req.workspace_id;
+        const { gstin, fy, type } = req.body;
+
+        if (!gstin || !fy) {
+            return errorResponse(res, 'gstin and fy are required', 400);
+        }
+
+        const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
+        const apiKey = keyRecord.production_key;
+
+        const response = await axios.post(`${EXT_API_URL}/ext/gst/rettrack`, { gstin, fy, type }, {
+            headers: {
+                'X-API-Key': apiKey,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        return successResponse(res, response.data, 'Return track successful');
+    } catch (error) {
+        console.error('[trackReturns] Error:', error.response?.data || error.message);
+        const errMessage = error.response?.data?.error || error.message;
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `Failed to track returns: ${errMessage}`, statusCode);
+    }
+};
+
+/**
+ * POST /connectors/gstn/preferences
+ * Get filing preferences by GSTIN.
+ */
+const getPreferences = async (req, res) => {
+    try {
+        const workspaceId = req.workspace_id;
+        const { gstin, fy } = req.body;
+
+        if (!gstin || !fy) {
+            return errorResponse(res, 'gstin and fy are required', 400);
+        }
+
+        const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
+        const apiKey = keyRecord.production_key;
+
+        const response = await axios.post(`${EXT_API_URL}/ext/gst/preferences`, { gstin, fy }, {
+            headers: {
+                'X-API-Key': apiKey,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        return successResponse(res, response.data, 'Preferences fetched successfully');
+    } catch (error) {
+        console.error('[getPreferences] Error:', error.response?.data || error.message);
+        const errMessage = error.response?.data?.error || error.message;
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `Failed to fetch preferences: ${errMessage}`, statusCode);
+    }
+};
+
+/**
+ * POST /connectors/gstn/unregistered-applicants
+ * Search unregistered applicants.
+ */
+const unregisteredApplicants = async (req, res) => {
+    try {
+        const workspaceId = req.workspace_id;
+        
+        const workspace = await knex('workspaces').where({ id: workspaceId }).first();
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        const keyRecord = await getOrCreateWorkspaceKey(workspaceId, workspace.tenant_id);
+        const apiKey = keyRecord.production_key;
+
+        const response = await axios.post(`${EXT_API_URL}/ext/gst/unregistered-applicants`, req.body, {
+            headers: {
+                'X-API-Key': apiKey,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        return successResponse(res, response.data, 'Unregistered applicants fetch successful');
+    } catch (error) {
+        console.error('[unregisteredApplicants] Error:', error.response?.data || error.message);
+        const errMessage = error.response?.data?.error || error.message;
+        const statusCode = error.response?.status === 401 ? 400 : (error.response?.status || 500);
+        return errorResponse(res, `Failed to fetch unregistered applicants: ${errMessage}`, statusCode);
+    }
+};
+
 module.exports = {
     getSessionStatus,
     requestOtp,
     verifyOtp,
     syncGstr2b,
-    searchGstin
+    searchGstin,
+    trackReturns,
+    getPreferences,
+    unregisteredApplicants
 };
