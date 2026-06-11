@@ -25,7 +25,7 @@ app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing 
 app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
 app.use('/customers', require('./routes/customerRoutes')); // Customer listing aggregated from all sources
 app.use('/connector-logs', require('./routes/connectorLogRoutes')); // TIG Inbound/Outbound connector log viewer
-
+app.use('/workspaces/user-preferences', require('./routes/userPreferencesRoutes')); // Recent views and Favourites
 
 
 app.get('/health', (req, res) => {

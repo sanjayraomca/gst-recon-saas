@@ -2484,3 +2484,29 @@ ON CONFLICT (third_party_code) DO NOTHING;
 
 
 
+create table recent_view(
+    id uuid primary key default gen_random_uuid(),
+    tenant_id uuid not null,
+    workspace_id uuid not null,
+    user_id uuid not null,
+    title varchar(255),
+    page_url varchar(255),
+    t_extra_info JSONB,
+    
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
+
+create table favourite_master(
+    id uuid primary key default gen_random_uuid(),
+    tenant_id uuid not null,
+    workspace_id uuid not null,
+    user_id uuid not null,
+    
+    title varchar(255),
+    page_url varchar(255),
+    t_extra_info JSONB,
+    
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
