@@ -41,6 +41,20 @@ const getOrCreateWorkspaceKey = async (workspaceId, tenantId) => {
     return keyRecord;
 };
 
+const getTrackingHeaders = (req, apiKey, workspace) => {
+    const user = req.user || {};
+    return {
+        'X-API-Key': apiKey,
+        'X-Platform': 'Adesk GST',
+        'X-Tenant-Id': workspace?.tenant_id || user.tenant_id || '',
+        'X-Workspace-Id': req.workspace_id || '',
+        'X-User-Id': user.db_id || user.sub || '',
+        'X-User-Email': user.email || '',
+        'X-User-Name': user.name || user.preferred_username || '',
+        'Content-Type': 'application/json'
+    };
+};
+
 /**
  * GET /connectors/gstn/session-status
  * Checks if there is an active OTP auth session in ext_gstn_auth_sessions.
@@ -156,10 +170,7 @@ const requestOtp = async (req, res) => {
                 state_code: gstin.substring(0, 2),
                 legal_name: workspace.legal_name || workspace.name
             }, {
-                headers: {
-                    'X-API-Key': apiKey,
-                    'Content-Type': 'application/json'
-                }
+                headers: getTrackingHeaders(req, apiKey, workspace)
             });
             console.log(`[GSTN Sync] GSTIN ${gstin} registered successfully with GSP Provider API.`);
         } catch (regErr) {
@@ -175,10 +186,7 @@ const requestOtp = async (req, res) => {
             gstin,
             gst_username: usernameToUse
         }, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         const responseData = response.data || {};
@@ -232,10 +240,7 @@ const verifyOtp = async (req, res) => {
             otp,
             txn
         }, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         return successResponse(res, response.data, 'OTP verified and session stored successfully');
@@ -501,10 +506,7 @@ const searchGstin = async (req, res) => {
 
         console.log(`[GSTN Sync] Searching GSTIN ${gstin} via GSP Provider API...`);
         const response = await axios.post(`${EXT_API_URL}/ext/gst/search`, { gstin }, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         return successResponse(res, response.data, 'GSTIN search successful');
@@ -538,10 +540,7 @@ const trackReturns = async (req, res) => {
         const apiKey = keyRecord.production_key;
 
         const response = await axios.post(`${EXT_API_URL}/ext/gst/rettrack`, { gstin, fy, type }, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         return successResponse(res, response.data, 'Return track successful');
@@ -575,10 +574,7 @@ const getPreferences = async (req, res) => {
         const apiKey = keyRecord.production_key;
 
         const response = await axios.post(`${EXT_API_URL}/ext/gst/preferences`, { gstin, fy }, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         return successResponse(res, response.data, 'Preferences fetched successfully');
@@ -607,10 +603,7 @@ const unregisteredApplicants = async (req, res) => {
         const apiKey = keyRecord.production_key;
 
         const response = await axios.post(`${EXT_API_URL}/ext/gst/unregistered-applicants`, req.body, {
-            headers: {
-                'X-API-Key': apiKey,
-                'Content-Type': 'application/json'
-            }
+            headers: getTrackingHeaders(req, apiKey, workspace)
         });
 
         return successResponse(res, response.data, 'Unregistered applicants fetch successful');
