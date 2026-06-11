@@ -48,7 +48,7 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
                     INSERT INTO platform (name) 
                     VALUES (?) 
                     ON CONFLICT (name) DO NOTHING
-                `, ['TENANT_PORTAL']);
+                `, ['Adesk GST']);
 
                 // Find existing access key by third_party_unique_id
                 const existing = await db.client('api_conn_access_key')
@@ -81,7 +81,7 @@ const syncKeysToAllDbs = async (workspaceId, tenantId, productionKey, sandboxKey
                     const [inserted] = await db.client('api_conn_access_key')
                         .insert({
                             id,
-                            platform: 'TENANT_PORTAL',
+                            platform: 'Adesk GST',
                             client_name: clientName,
                             contact_email: email,
                             third_party_unique_id: workspaceId,
