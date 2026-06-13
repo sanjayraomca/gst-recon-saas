@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   # ==================== NETWORK & PROXY ====================
@@ -521,7 +520,7 @@ services:
       - ../recon_frontend:/app
       - /app/node_modules
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - gst-network
     labels:
