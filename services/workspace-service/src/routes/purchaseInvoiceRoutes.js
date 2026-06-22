@@ -6,11 +6,28 @@ const {
     getInvoiceById,
     createInvoice,
     updateInvoice,
-    amendInvoice
+    amendInvoice,
+    syncThirdPartyPurchases
 } = require('../controllers/purchaseInvoiceController');
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
-// All routes require authentication
+// Third-party sync route:
+// - If x-api-key header is present: no Bearer JWT needed (API key is self-contained auth)
+// - If x-org-token or Bearer headers used: verifyToken applies
+const optionalVerifyToken = (req, res, next) => {
+    if (req.headers['x-api-key']) {
+        // API key path — skip JWT verification entirely
+        return next();
+    }
+    // All other paths require a valid Bearer JWT
+    return verifyToken(req, res, next);
+};
+router.post('/third-party/sync', optionalVerifyToken, syncThirdPartyPurchases);
+
+
+// All routes require authentication and workspace authorization
 router.use(verifyToken);
+router.use(authorizeWorkspace);
 
 // GET /purchase-invoices - List all invoices with filters
 router.get('/', getAllInvoices);

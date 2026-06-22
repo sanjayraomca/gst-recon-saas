@@ -1,14 +1,48 @@
-const successResponse = (res, data, message = 'Success', statusCode = 200) => {
+const successResponse = (res, data, message = 'Success', statusCode = 200, extra = {}) => {
     return res.status(statusCode).json({
         success: true,
         message,
-        data
+        data,
+        ...extra
     });
 };
 
 const errorResponse = (res, error, statusCode = 500) => {
     console.error('Error:', error);
-    const message = typeof error === 'string' ? error : (error.message || 'Internal Server Error');
+
+    let message = typeof error === 'string' ? error : (error.message || 'Internal Server Error');
+
+    // Map technical errors to user-friendly messages if not already customized
+    if (statusCode === 409) {
+        if (message.includes('already exists') || message.includes('23505')) {
+            message = 'This information already exists in our system. Please check for duplicates.';
+        }
+    } else if (statusCode === 401) {
+        const isApiKeyError = message.toLowerCase().includes('api-key') ||
+            message.toLowerCase().includes('api_key') ||
+            message.toLowerCase().includes('api key') ||
+            message.toLowerCase().includes('x-api-key') ||
+            message.toLowerCase().includes('key');
+        if (!isApiKeyError) {
+            message = 'User name/email or password is incorrect.';
+        }
+    } else if (statusCode === 403) {
+        message = 'You do not have permission to perform this action.';
+    } else if (statusCode === 400 && !error.isCustom) {
+        // Only use generic message if the original message is missing or very generic
+        if (!message || message === 'Error' || message === 'Bad Request') {
+            message = 'Some information is missing or incorrect. Please check your input and try again.';
+        }
+    } else if (statusCode === 500) {
+        message = 'Something went wrong on our end. Please try again in a few minutes.';
+    } else if (statusCode === 502) {
+        // Only use generic message if there's no meaningful custom message already
+        if (!message || message === 'Error' || message === 'Bad Gateway' || message === 'Internal Server Error') {
+            message = 'Something went wrong on our end. Please try again in a few minutes.';
+        }
+        // Otherwise preserve the specific message (e.g. "ngrok URL returned 404")
+    }
+
     return res.status(statusCode).json({
         success: false,
         error: message

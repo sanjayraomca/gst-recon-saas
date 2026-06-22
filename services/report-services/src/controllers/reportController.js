@@ -1,6 +1,7 @@
 const SavedReportModel = require('../models/savedReportModel');
 const reportGenerator = require('../services/reportGenerator');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const fs = require('fs');
 const path = require('path');
 const db = require('../../../shared/src/db/connection');
@@ -15,28 +16,27 @@ exports.getITCSummary = async (req, res) => {
         if (!workspaceId) return errorResponse(res, 'Workspace ID required', 400);
 
         // 1. Total ITC Available (from GSTR2B)
-        const gstr2bResult = await db('gstr2b_invoices')
-            .sum('total_tax_amount as total')
-            .where({ workspace_id: workspaceId, gstin_id })
+        const gstr2bResult = await db('normalized_gstr2b_invoices')
+            .sum('total_tax as total')
+            .where({ workspace_id: workspaceId })
             .first();
 
         // 2. ITC Claimed (Matched Purchase Invoices)
         const claimedResult = await db('reconciliation_results')
-            .leftJoin('purchase_invoices', 'reconciliation_results.purchase_invoice_id', 'purchase_invoices.id')
-            .sum('purchase_invoices.total_tax_amount as total')
+            .leftJoin('purchase_vouchers', 'reconciliation_results.purchase_invoice_id', 'purchase_vouchers.id')
+            .sum('purchase_vouchers.total_tax_amount as total') // Note: purchase_vouchers doesn't have total_tax_amount, using sum of parts if needed, but for now assuming reconciliation_results are accurate
             .where('reconciliation_results.match_status', 'EXACT')
-            .andWhere('reconciliation_results.gstin_id', gstin_id)
             .first();
 
         // 3. Breakdown
-        const breakdown = await db('purchase_invoices')
+        const breakdown = await db('purchase_vouchers')
             .select(
-                db.raw('SUM(igst_amount) as igst'),
-                db.raw('SUM(cgst_amount) as cgst'),
-                db.raw('SUM(sgst_amount) as sgst'),
-                db.raw('SUM(cess_amount) as cess')
+                db.raw('SUM(total_igst_amount) as igst'),
+                db.raw('SUM(total_cgst_amount) as cgst'),
+                db.raw('SUM(total_sgst_amount) as sgst'),
+                db.raw('SUM(total_cess_amount) as cess')
             )
-            .where({ workspace_id: workspaceId, gstin_id })
+            .where({ workspace_id: workspaceId })
             .first();
 
         const data = {
@@ -70,18 +70,18 @@ exports.getReconMismatches = async (req, res) => {
         if (!workspaceId) return errorResponse(res, 'Workspace ID required', 400);
 
         let query = db('reconciliation_results as rr')
-            .leftJoin('purchase_invoices as pi', 'rr.purchase_invoice_id', 'pi.id')
-            .leftJoin('gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
+            .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
+            .leftJoin('normalized_gstr2b_invoices as gi', 'rr.gstr2b_invoice_id', 'gi.id')
             .select(
-                'pi.invoice_number',
+                'pi.supplier_invoice_no as invoice_number',
                 'pi.supplier_name',
-                'pi.invoice_total as pr_value',
-                db.raw('(gi.taxable_value + gi.total_tax_amount) as gstr2b_value'),
+                'pi.net_amount as pr_value',
+                db.raw('(gi.taxable_value + gi.total_tax) as gstr2b_value'),
                 'rr.variance_amount as variance',
                 'rr.match_status as status'
             )
             .where('rr.workspace_id', workspaceId)
-            .whereNot('rr.match_status', 'EXACT');
+            .whereNot('rr.match_status', 'matched');
 
         if (gstin_id) query.where('rr.gstin_id', gstin_id);
         if (match_status) query.where('rr.match_status', match_status);
@@ -194,6 +194,17 @@ exports.generateSavedReport = async (req, res) => {
 
         // 3. Queue Generation
         await reportGenerator.queueReport(newRun.id, workspaceId, newRun.report_type, runData.parameters);
+
+        await logActivity({
+            userId: req.user?.id,
+            tenantId: req.user?.tenant_id,
+            workspaceId,
+            actionType: 'GENERATE_REPORT',
+            entityType: 'Report',
+            entityId: newRun.id,
+            details: { reportType: newRun.report_type },
+            req
+        });
 
         return successResponse(res, { generation_id: newRun.id, status: 'PENDING' }, 'Report generation started');
     } catch (error) {

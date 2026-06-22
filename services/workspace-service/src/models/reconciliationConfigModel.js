@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 class ReconciliationConfigModel {
     static async create(workspaceId, data, userId) {
@@ -17,9 +17,9 @@ class ReconciliationConfigModel {
             is_default = false
         } = data;
 
-        const [config] = await db('reconciliation_configs')
+        const [config] = await knex('reconciliation_configs')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 config_name,
                 config_type,
@@ -36,8 +36,8 @@ class ReconciliationConfigModel {
                 rule_set_version: '1.0.0',
                 rule_set_hash: 'default_rules_v1', // Placeholder hash
                 created_by: userId,
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -58,9 +58,9 @@ class ReconciliationConfigModel {
             if (data[field] !== undefined) updateData[field] = data[field];
         }
 
-        updateData.updated_at = db.fn.now();
+        updateData.updated_at = knex.fn.now();
 
-        const [config] = await db('reconciliation_configs')
+        const [config] = await knex('reconciliation_configs')
             .where({ id: configId, workspace_id: workspaceId })
             .update(updateData)
             .returning('*');
@@ -69,7 +69,7 @@ class ReconciliationConfigModel {
     }
 
     static async getById(workspaceId, configId) {
-        return db('reconciliation_configs')
+        return knex('reconciliation_configs')
             .where({ id: configId, workspace_id: workspaceId })
             .first();
     }
@@ -78,7 +78,7 @@ class ReconciliationConfigModel {
         const { page = 1, page_size = 20 } = pagination;
         const offset = (page - 1) * page_size;
 
-        const query = db('reconciliation_configs')
+        const query = knex('reconciliation_configs')
             .where({ workspace_id: workspaceId });
 
         if (filters.config_type) query.where({ config_type: filters.config_type });

@@ -4,9 +4,9 @@ const { successResponse, errorResponse } = require('../../../shared/src/utils/re
 // Get all reversals
 exports.listReversals = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const result = await ItcReversalModel.getAll(workspaceId, req.query, req.query);
@@ -20,9 +20,9 @@ exports.listReversals = async (req, res) => {
 // Reclaim reversal
 exports.reclaimReversal = async (req, res) => {
     try {
-        const workspaceId = req.headers['x-workspace-id'];
+        const workspaceId = req.workspace_id || req.headers['x-workspace-id'];
         if (!workspaceId) {
-            return errorResponse(res, 'X-Workspace-ID header is required', 400);
+            return errorResponse(res, 'Workspace ID is required (provide x-workspace-id header)', 400);
         }
 
         const { id } = req.params;

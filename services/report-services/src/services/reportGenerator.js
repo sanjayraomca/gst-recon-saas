@@ -56,7 +56,7 @@ class ReportGenerator {
 
             if (type === 'MISMATCH_REPORT') {
                 const results = await db('reconciliation_results as rr')
-                    .leftJoin('purchase_invoices as pi', 'rr.purchase_invoice_id', 'pi.id')
+                    .leftJoin('purchase_vouchers as pi', 'rr.purchase_invoice_id', 'pi.id')
                     .select(
                         'rr.id',
                         'pi.invoice_number as ref',

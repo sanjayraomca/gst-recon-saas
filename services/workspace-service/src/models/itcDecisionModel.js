@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * ITC Decision Model
@@ -22,12 +22,12 @@ class ItcDecisionModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('itc_decisions')
-            .join('purchase_invoices', 'itc_decisions.purchase_invoice_id', 'purchase_invoices.id')
+        let query = knex('itc_decisions')
+            .join('purchase_vouchers', 'itc_decisions.purchase_invoice_id', 'purchase_vouchers.id')
             .where({ 'itc_decisions.workspace_id': workspaceId });
 
         // Apply filters
-        if (gstin_id) query = query.where({ 'purchase_invoices.gstin_id': gstin_id }); // Filter on joined table
+        if (gstin_id) query = query.where({ 'purchase_vouchers.gstin_id': gstin_id }); // Filter on joined table
         if (period_id) query = query.where({ 'itc_decisions.period_id': period_id });
         if (purchase_invoice_id) query = query.where({ 'itc_decisions.purchase_invoice_id': purchase_invoice_id });
         if (decision) query = query.where({ decision });
@@ -61,7 +61,7 @@ class ItcDecisionModel {
      * Get single decision by ID
      */
     static async getById(workspaceId, id) {
-        return await db('itc_decisions')
+        return await knex('itc_decisions')
             .where({
                 id,
                 workspace_id: workspaceId
@@ -73,9 +73,9 @@ class ItcDecisionModel {
      * Create new decision
      */
     static async create(workspaceId, data) {
-        const [decision] = await db('itc_decisions')
+        const [decision] = await knex('itc_decisions')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 // gstin_id removed as per schema
                 period_id: data.period_id,
@@ -87,8 +87,8 @@ class ItcDecisionModel {
                 decision_reason: data.decision_reason,
                 notes: data.notes,
                 created_by: data.user_id, // assuming passed from context
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -114,9 +114,9 @@ class ItcDecisionModel {
             }
         });
 
-        filteredData.updated_at = db.fn.now();
+        filteredData.updated_at = knex.fn.now();
 
-        const [decision] = await db('itc_decisions')
+        const [decision] = await knex('itc_decisions')
             .where({
                 id,
                 workspace_id: workspaceId

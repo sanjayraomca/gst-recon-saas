@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * ITC Reversal Model
@@ -23,7 +23,7 @@ class ItcReversalModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('itc_reversal_register')
+        let query = knex('itc_reversal_register')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
@@ -68,7 +68,7 @@ class ItcReversalModel {
      * Get single reversal by ID
      */
     static async getById(workspaceId, id) {
-        return await db('itc_reversal_register')
+        return await knex('itc_reversal_register')
             .where({
                 id,
                 workspace_id: workspaceId
@@ -80,9 +80,9 @@ class ItcReversalModel {
      * Create new reversal entry (usually automated, but can be manual)
      */
     static async create(workspaceId, data) {
-        const [reversal] = await db('itc_reversal_register')
+        const [reversal] = await knex('itc_reversal_register')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 gstin_id: data.gstin_id,
                 period_id: data.period_id,
@@ -95,8 +95,8 @@ class ItcReversalModel {
                 cess_amount: data.cess_amount || 0,
                 is_reclaimable: data.is_reclaimable || false,
                 notes: data.notes,
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -121,9 +121,9 @@ class ItcReversalModel {
             }
         });
 
-        filteredData.updated_at = db.fn.now();
+        filteredData.updated_at = knex.fn.now();
 
-        const [reversal] = await db('itc_reversal_register')
+        const [reversal] = await knex('itc_reversal_register')
             .where({
                 id,
                 workspace_id: workspaceId

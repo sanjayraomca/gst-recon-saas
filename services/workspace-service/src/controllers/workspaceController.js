@@ -1,50 +1,95 @@
 const Workspace = require('../models/workspace');
 const TenantWorkspace = require('../models/tenantWorkspace');
+const DashboardModel = require('../models/dashboardModel');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const knex = require('../../../shared/src/db/connection');
+const { encrypt } = require('../../../shared/src/utils/encryption');
+
+const keycloakService = require('../services/keycloakService');
+const { publishMessage } = require('../../../shared/src/nats/client');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const createWorkspace = async (req, res) => {
     const trx = await knex.transaction();
     try {
         console.log("createWorkspace: Body", req.body);
         console.log("createWorkspace: User", req.user);
-        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId } = req.body;
-        const tenantId = bodyTenantId || (req.user ? req.user.tenant_id : null);
-
+        const { code, name, type, industry_type, compliance_level, settings, tenant_id: bodyTenantId, legal_name, address, trade_name, state, city, filing_frequency, gstn_password, gst_username, gst_user_name, email } = req.body;
+        // code is treated as GSTIN here per request context
+        const gstin = code;
 
         // Basic Validation
         if (!code || !name) {
-            return res.status(400).json({ error: 'Code and Name are required' });
+            return res.status(400).json({ error: 'Please provide both the GSTIN (Tax ID) and the Organization Name to continue.' });
         }
 
-        // 1. Create Workspace
-        const workspaceId = uuidv4();
-        const [workspace] = await trx('workspaces').insert({
-            id: workspaceId,
-            workspace_code: code,
-            name,
-            workspace_type: type || 'COMPANY',
-            compliance_level: compliance_level || 'STANDARD',
-            settings: settings || {},
-            is_active: true,
-            created_at: new Date(),
-            updated_at: new Date()
-        }).returning('*');
+        // Map filing_frequency (monthly, quarterly) to filing_type (m, q)
+        let filingType = 'm'; // Default
+        if (filing_frequency === 'quarterly') filingType = 'q';
+        else if (filing_frequency === 'monthly') filingType = 'm';
 
-        // 2. Link to Tenant
-        // For now, if we don't have a tenant in context, we'll fetch the first one or create a default one for stability.
-        // In a real scenario, the user MUST belong to a tenant.
+        // 1. Resolve Tenant Context
+        let targetTenantId = bodyTenantId || (req.user ? req.user.tenant_id : null);
+        let tenantGroupId = null;
 
-        let targetTenantId = tenantId;
+        // If no explicit tenant ID, try to derive from Keycloak groups
+        if (!targetTenantId && req.user && req.user.groups && req.user.groups.length > 0) {
+            const tokenGroupValue = req.user.groups[0];
+
+            // The token value might be an ID or a Name/Path depending on Keycloak mapper config.
+            // Let's deduce the real ID.
+
+            // 1. Try treating it as an ID
+            const groupById = await keycloakService.getGroupById(tokenGroupValue);
+
+            if (groupById) {
+                tenantGroupId = groupById.id;
+            } else {
+                // 2. If not found by ID, try treating it as a Name (strip leading slash if path)
+                const searchName = tokenGroupValue.startsWith('/') ? tokenGroupValue.substring(1) : tokenGroupValue;
+                const groupByName = await keycloakService.getGroupByName(searchName);
+
+                if (groupByName) {
+                    tenantGroupId = groupByName.id;
+                }
+            }
+
+            if (tenantGroupId) {
+                // Try to find a local tenant that matches this group ID in metadata
+                const matchingTenant = await trx('tenants')
+                    .whereRaw("metadata->'keycloak_groups'->>'tenant_group_id' = ?", [tenantGroupId])
+                    .first();
+
+                if (matchingTenant) {
+                    targetTenantId = matchingTenant.id;
+                } else {
+                    console.warn(`Resolved Keycloak Group ID ${tenantGroupId} but no matching local tenant found.`);
+                }
+            } else {
+                console.warn(`Could not resolve Keycloak group from token value: ${tokenGroupValue}`);
+            }
+        }
 
         if (!targetTenantId) {
-            console.warn("No tenant_id in user token. Attempting to find a fallback tenant...");
+            // Fallback: This is likely where the "Mock Data" issue comes from. 
+            // If we can't identify the tenant, we default to the first one. 
+            // Better to try finding a tenant linked to the user?
+            const userId = req.user ? (req.user.sub || req.user.id) : null;
+            if (userId) {
+                const textUser = await trx('users').where('auth_provider_id', userId).first();
+                if (textUser && textUser.tenant_id) {
+                    targetTenantId = textUser.tenant_id;
+                }
+            }
+        }
+
+        if (!targetTenantId) {
             const firstTenant = await trx('tenants').first();
             if (firstTenant) {
                 targetTenantId = firstTenant.id;
             } else {
-                console.warn("No tenants found! Creating a default tenant...");
+                // Create default if absolutely nothing exists
                 const defaultTenantId = uuidv4();
                 await trx('tenants').insert({
                     id: defaultTenantId,
@@ -57,6 +102,136 @@ const createWorkspace = async (req, res) => {
             }
         }
 
+        // 2. Check GSTIN Master & Tenant Constraints
+        let gstinId = null;
+        const existingGstin = await trx('gstin_master').where('gstin', gstin).first();
+
+        if (existingGstin) {
+            gstinId = existingGstin.id;
+            // Check if this tenant already has a workspace for this GSTIN
+            const conflict = await trx('workspaces')
+                .where({ tenant_id: targetTenantId, gstin_id: gstinId })
+                .first(); // Assuming workspaces.tenant_id is reliable. Or join tenant_workspaces.
+
+            if (conflict) {
+                return errorResponse(res, 'GSTN Number already registered for this tenant. Note: For one tenant, only one time GSTN number is allowed for adding.', 409);
+            }
+        } else {
+            // Create new GSTIN in master (decoupled)
+            gstinId = uuidv4();
+            const stateCode = gstin.substring(0, 2);
+
+            // Encrypt GSTN password if provided
+            let encryptedPassword = null;
+            if (gstn_password) {
+                try {
+                    encryptedPassword = encrypt(gstn_password);
+                } catch (encryptError) {
+                    console.error('Password encryption failed:', encryptError);
+                    await trx.rollback();
+                    return res.status(500).json({ error: 'We could not securely save the GSTN password. Please try again or contact support.' });
+                }
+            }
+
+            await trx('gstin_master').insert({
+                id: gstinId,
+                gstin: gstin,
+                legal_name: legal_name || name,
+                trade_name: trade_name || name,
+                state_code: stateCode || state || 'UNKNOWN',
+                registration_type: 'REGULAR',
+                address: address ? JSON.stringify(address) : JSON.stringify({ city: city, state: stateCode }),
+                gstin_pwd_encrypted: encryptedPassword,
+                gst_user_name: gst_username || gst_user_name || null,
+                contact_email: email || null,
+                password_updated_at: encryptedPassword ? new Date() : null,
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+        }
+
+        // 3. Create Workspace Linked to GSTIN
+        const workspaceId = uuidv4();
+        const [workspace] = await trx('workspaces').insert({
+            id: workspaceId,
+            workspace_code: code,
+            name,
+            gstn: code,
+            tenant_id: targetTenantId,
+            gstin_id: gstinId, // Link to GSTIN Master
+            workspace_type: type || 'COMPANY',
+            compliance_level: compliance_level || 'STANDARD',
+            filing_type: filingType,
+            industry_type: industry_type,
+            state: state,
+            city: city,
+            settings: settings || {},
+            is_active: true,
+            created_at: new Date(),
+            updated_at: new Date()
+        }).returning('*');
+
+        // 4. Create Keycloak Subgroup (New Requirement)
+        // If we derived tenantGroupId from the token earlier, use it.
+        // Otherwise, try to fetch from tenant metadata.
+        if (!tenantGroupId) {
+            const tenant = await trx('tenants').where('id', targetTenantId).first();
+            tenantGroupId = tenant?.metadata?.keycloak_groups?.tenant_group_id;
+
+            // If still not found, fallback to fetching by ID (if ID is name-like) or Name
+            if (!tenantGroupId) {
+                // Warning: targetTenantId is a UUID, usually not the group name in Keycloak unless mapped.
+                // But previous code assumed it might be.
+                const kcGroup = await keycloakService.getGroupByName(targetTenantId); // or tenant.legal_name?
+                if (kcGroup) {
+                    tenantGroupId = kcGroup.id;
+                }
+            }
+        }
+
+        if (tenantGroupId) {
+            try {
+                // Create organization (GSTIN) subgroup under tenant group
+                const orgSubgroup = await keycloakService.createSubgroup(tenantGroupId, gstin, {
+                    workspace_id: workspaceId,
+                    gstin: gstin,
+                    type: 'ORGANIZATION'
+                });
+
+                if (orgSubgroup && orgSubgroup.id) {
+                    console.log(`Created organization subgroup ${gstin} under tenant group`);
+
+                    // Create role subgroups under the organization group
+                    const roles = [
+                        'Super Admin',
+                        'Tenant Admin',
+                        'Organization Admin',
+                        'Accountant',
+                        'Viewer'
+                    ];
+
+                    for (const roleName of roles) {
+                        try {
+                            await keycloakService.createSubgroup(orgSubgroup.id, roleName, {
+                                type: 'ROLE',
+                                organization: gstin
+                            });
+                            console.log(`Created role subgroup '${roleName}' under organization ${gstin}`);
+                        } catch (roleError) {
+                            console.warn(`Failed to create role subgroup '${roleName}':`, roleError.message);
+                        }
+                    }
+                }
+            } catch (kcError) {
+                console.warn(`Failed to create Keycloak subgroup for GSTIN ${gstin}:`, kcError.message);
+            }
+        } else {
+            console.warn("Tenant Keycloak Group ID not found. Skipping subgroup creation.");
+        }
+
+
+        // 5. Link to Tenant
         await trx('tenant_workspaces').insert({
             id: uuidv4(),
             tenant_id: targetTenantId,
@@ -64,59 +239,409 @@ const createWorkspace = async (req, res) => {
             access_type: 'OWNER'
         });
 
-        // 3. Link User to Workspace (if user info is available)
-        // Ensure we have a valid user ID from the token (sub or id)
+        // 7. Link User
         const userId = req.user ? (req.user.sub || req.user.id) : null;
+        let userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        const userFullName = (req.user && (req.user.name || req.user.full_name)) || 'User';
 
-        if (userId) {
-            // We need to check if this user exists in our local DB first.
-            // If the user came from Keycloak but isn't in 'users' table (rare but possible during dev), sync it?
-            // Ideally, 'authMiddleware' ensures the user exists. 
-            // Let's assume the ID in req.user matches a local user ID or auth_provider_id.
+        if (userEmail) userEmail = userEmail.toLowerCase();
 
-            // NOTE: The 'users' table ID might differ from Keycloak ID depending on how we sync.
-            // If req.user.id is the local DB ID, use it.
-            // If req.user.sub is Keycloak ID, we need to find the local ID.
+        const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
-            let localUser = await trx('users').where('auth_provider_id', userId).orWhere('id', userId).first();
+        if (userId || userEmail) {
+            let query = trx('users');
+            query = query.where(function () {
+                if (userId) {
+                    this.where('auth_provider_id', userId);
+                    if (isUuid(userId)) {
+                        this.orWhere('id', userId);
+                    }
+                }
+                if (userEmail) {
+                    this.orWhere('email', userEmail);
+                }
+            });
+            let localUser = await query.first();
 
             if (localUser) {
+                // For now, per user request "when a tenant creates an organization you have to give tenant as a tenant admin by default",
+                // we assume the creator IS the tenant/admin.
+                const userRole = 'TENANT_ADMIN';
+
+                // Update user's tenant_id if not set (First Org scenario)
+                if (!localUser.tenant_id) {
+                    await trx('users').where({ id: localUser.id }).update({
+                        tenant_id: targetTenantId,
+                        updated_at: new Date()
+                    });
+                    console.log(`Updated user ${localUser.id} with tenant_id ${targetTenantId}`);
+                }
+
+                // Resolve permissions from Tenant-level policy if available
+                let permissions = { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true };
+
+                const tenantRecord = await trx('tenants').where({ id: targetTenantId }).first();
+                if (tenantRecord && tenantRecord.metadata && tenantRecord.metadata.role_policies) {
+                    const policies = typeof tenantRecord.metadata.role_policies === 'string'
+                        ? JSON.parse(tenantRecord.metadata.role_policies)
+                        : tenantRecord.metadata.role_policies;
+
+                    if (policies[userRole]) {
+                        permissions = policies[userRole];
+                        console.log(`Applied tenant-level permissions for ${userRole}`);
+                    }
+                }
+
                 await trx('workspace_users').insert({
                     id: uuidv4(),
                     workspace_id: workspaceId,
                     user_id: localUser.id,
-                    role: 'WORKSPACE_ADMIN',
-                    permissions: {
-                        can_upload: true,
-                        can_reconcile: true,
-                        can_override: true,
-                        can_export: true,
-                        can_invite: true,
-                        can_configure: true
-                    },
-                    invitation_status: 'ACTIVE'
+                    role: userRole,
+                    permissions: JSON.stringify(permissions),
                 });
-            } else {
-                console.warn(`User ${userId} not found in local DB. Skipping workspace_users link.`);
+
+                // 6. Add User to Keycloak Groups (Tenant Admin & Users) for this Organization
+                if (tenantGroupId && localUser.auth_provider_id) {
+                    try {
+                        const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
+                        if (orgGroup) {
+                            // Add to Tenant Admin Group
+                            const tenantAdminGroup = await keycloakService.getSubgroupByName(orgGroup.id, 'Tenant Admin');
+                            if (tenantAdminGroup) {
+                                await keycloakService.addUserToGroup(localUser.auth_provider_id, tenantAdminGroup.id);
+                                console.log('Added user to Keycloak Tenant Admin group');
+                            }
+
+                            // Add to Users Group (if exists, usually 'Viewer' or just 'Users'?)
+                            // Code above created roles: Super Admin, Tenant Admin, Organization Admin, Accountant, Viewer.
+                            // User request says "in users group too".
+                            // I assume they mean the generic 'users' subgroup under the TENANT (created in createTenant),
+                            // OR a 'Users' role under the organization?
+                            // "in keycloak you have to add in tenant admin group and in users group"
+                            // If they mean the Tenant-level 'users' group, we should have added them already (e.g. in provisionUser or register).
+                            // But let's check if we can add them to the Org-level 'Viewer' or similar if that's what 'users group' implies.
+                            // However, usually 'Users' group is the Tenant-level one.
+                            // Let's safe-add to Tenant-level 'users' group if not already there.
+                            const tenantUsersGroup = await keycloakService.getSubgroupByName(tenantGroupId, 'users');
+                            if (tenantUsersGroup) {
+                                await keycloakService.addUserToGroup(localUser.auth_provider_id, tenantUsersGroup.id);
+                                console.log('Added user to Keycloak Tenant Users group');
+                            }
+                        }
+                    } catch (kcErr) {
+                        console.warn('Failed to link user to Keycloak groups:', kcErr.message);
+                    }
+                }
             }
-        } else {
-            console.warn("No user context found. Skipping workspace_users link.");
         }
 
+        // --- DEV SUPER ADMIN LOGIC START ---
+        const devEmail = 'superadmin.dev@gmail.com';
+        let devUser = await trx('users').where('email', devEmail).first();
+        let devKeycloakId = null;
+
+        // 1. Ensure Dev User Exists (Keycloak + DB)
+        try {
+            // Check Keycloak first
+            const kcDevUser = await keycloakService.getUserByEmail(devEmail);
+            if (kcDevUser) {
+                devKeycloakId = kcDevUser.id;
+            } else {
+                // Create in Keycloak
+                devKeycloakId = await keycloakService.createUser({
+                    email: devEmail,
+                    password: 'superadmin@123',
+                    firstName: 'Dev',
+                    lastName: 'SuperAdmin'
+                });
+            }
+
+            if (!devUser && devKeycloakId) {
+                // Create in Local DB
+                const [newDevUser] = await trx('users').insert({
+                    id: uuidv4(),
+                    email: devEmail,
+                    full_name: 'Dev SuperAdmin',
+                    auth_provider_id: devKeycloakId,
+                    auth_provider_type: 'KEYCLOAK',
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                    is_active: true
+                }).returning('*');
+                devUser = newDevUser;
+            } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
+                // Link if missing
+                await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
+            }
+
+        } catch (devErr) {
+            console.warn('Failed to ensure Dev Super Admin exists:', devErr.message);
+        }
+
+        // 2. Link Dev User to Workspace
+        if (devUser) {
+            try {
+                await trx('workspace_users').insert({
+                    id: uuidv4(),
+                    workspace_id: workspaceId,
+                    user_id: devUser.id,
+                    role: 'SUPER_ADMIN', // Internal role
+                    permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true }, // Full permissions
+                    invitation_status: 'ACTIVE'
+                }).onConflict(['workspace_id', 'user_id']).merge(); // Safety
+
+                // 3. Add to Keycloak 'Super Admin' Subgroup
+                if (tenantGroupId) {
+                    // We need the ID of the 'Super Admin' role subgroup under this Organization
+                    // Hierarchy: Tenant -> Organization (gstin) -> Role (Super Admin)
+                    // We created these in Step 4.
+                    // We can try to fetch it dynamically or assume the structure.
+                    // safely we find it.
+                    try {
+                        // We already have orgSubgroup from step 4 if it ran.
+                        // But scope is local there. Let's refetch or reorganize.
+                        // Re-fetching robustly:
+                        const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
+                        if (orgGroup) {
+                            const superAdminGroup = await keycloakService.getSubgroupByName(orgGroup.id, 'Super Admin');
+                            if (superAdminGroup && devKeycloakId) {
+                                await keycloakService.addUserToGroup(devKeycloakId, superAdminGroup.id);
+                                console.log('Added Dev Super Admin to Keycloak Super Admin group');
+                            }
+                        }
+                    } catch (kcLinkErr) {
+                        console.warn('Failed to link Dev Super Admin to Keycloak group:', kcLinkErr.message);
+                    }
+                }
+
+            } catch (linkErr) {
+                console.warn('Failed to link Dev Super Admin to workspace:', linkErr.message);
+            }
+        }
+        // --- DEV SUPER ADMIN LOGIC END ---
+
         await trx.commit();
+
+        // NATS: Publish Event
+        try {
+            // Count total organizations for this tenant
+            const orgCount = await knex('workspaces').where('tenant_id', targetTenantId).count('id as count').first();
+            const totalOrgs = orgCount ? orgCount.count : 1;
+
+            publishMessage('ORGANIZATION_CREATED', {
+                user_email: userEmail || 'unknown@example.com', // Fallback
+                full_name: userFullName,
+                org_name: name,
+                total_count: totalOrgs,
+                tenant_id: targetTenantId,
+                workspace_id: workspaceId,
+                gstin: gstin
+            });
+            console.log(`Published ORGANIZATION_CREATED event for ${name}`);
+        } catch (natsError) {
+            console.warn('Failed to publish NATS event:', natsError.message);
+            // Don't fail the request if notification fails
+        }
+
+        // Resolve Local User ID for logging (Must be the UUID from users table for proper join)
+        let logUserId = null;
+        if (req.user) {
+            const authId = req.user.sub || req.user.id;
+            const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+            if (authId) {
+                let query = knex('users').where('auth_provider_id', authId);
+                if (isUuid(authId)) {
+                    query = query.orWhere('id', authId);
+                }
+                const localUserRecord = await query.first();
+                if (localUserRecord) {
+                    logUserId = localUserRecord.id;
+                }
+            }
+        }
+
+        // Log Organization Creation
+        await logActivity({
+            userId: logUserId || null,
+            tenantId: targetTenantId,
+            workspaceId: workspaceId,
+            actionType: 'create_org',
+            entityType: 'Organization',
+            entityId: workspaceId,
+            details: { org_name: name, gstin: gstin },
+            req: req
+        });
+
         return successResponse(res, workspace, 'Workspace created successfully');
     } catch (error) {
         await trx.rollback();
+        // Handle unique constraint on (tenant_id, gstin_id) if we rely on DB, but we checked in code.
+        // Also workspaces_workspace_code_key logic might still be valid if we keep workspace_code unique?
+        // User didn't ask to drop workspace_code unique constraint.
+        if (error.code === '23505' && (error.constraint === 'workspaces_workspace_code_key' || error.constraint === 'workspaces_tenant_workspace_code_key')) {
+            return errorResponse(res, 'This Organization/GSTIN is already registered for your account. Please check your existing organizations.', 409);
+        }
         return errorResponse(res, error);
     }
 };
 
 const listWorkspaces = async (req, res) => {
     try {
-        // filter by tenant if implicit
-        const workspaces = await Workspace.findAll();
+        console.log('listWorkspaces: Request received');
+        const { tenant_id } = req.query; // Support explicit tenant filtering
+
+        const userId = req.user ? (req.user.sub || req.user.id) : null;
+        let userEmail = req.user ? (req.user.email || req.user.preferred_username) : null;
+        if (userEmail) userEmail = userEmail.toLowerCase();
+
+        if (!userId && !userEmail) {
+            console.warn('listWorkspaces: No user identity found in request');
+            return successResponse(res, [], 'No user context found');
+        }
+
+        console.log(`listWorkspaces: Looking up user ID=${userId}, Email=${userEmail}`);
+
+        const isUuid = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+        // 1. Get Local User and their Tenant Context - Safely
+        let userQuery = knex('users');
+        userQuery = userQuery.where(function () {
+            if (userId) {
+                this.where('auth_provider_id', userId);
+                if (isUuid(userId)) {
+                    this.orWhere('id', userId);
+                }
+            }
+            if (userEmail) {
+                this.orWhere('email', userEmail);
+            }
+        });
+
+        const localUser = await userQuery.first();
+        console.log(`listWorkspaces: localUser found=${!!localUser}, tenant_id=${localUser?.tenant_id}`);
+
+        if (!localUser) {
+            console.warn(`listWorkspaces: User not found locally (ID: ${userId}, Email: ${userEmail})`);
+            return errorResponse(res, 'User not found in local database', 404);
+        }
+
+        const effectiveTenantId = tenant_id || localUser.tenant_id;
+
+        let workspaces = [];
+        if (effectiveTenantId) {
+            const isSuperAdmin = localUser.email === 'superadmin.dev@gmail.com' ||
+                req.user.role === 'SUPER_ADMIN' ||
+                (req.user.groups && req.user.groups.includes('super-admin'));
+
+            // Only perform the tenant mismatch check if the user HAS a tenant_id assigned
+            // and it's different from the requested one. If they have NO tenant_id (null),
+            // we rely solely on the workspace_users check below.
+            // REMOVED REDUNDANT SECURITY CHECK: The main query below already joins with workspace_users 
+            // and filters by user_id, ensuring the user only sees workspaces they have access to.
+
+
+            // Fetch workspaces
+            let query;
+            if (isSuperAdmin) {
+                query = knex('workspaces')
+                    .select('workspaces.*', knex.raw("'SUPER_ADMIN' as user_role"), 'tenants.legal_name as tenant_name')
+                    .select(knex.raw('true as is_tenant_owner'))
+                    .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
+                    .where('workspaces.tenant_id', effectiveTenantId)
+                    .whereNull('workspaces.deleted_at');
+            } else {
+                query = knex('workspaces')
+                    .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
+                    .select(
+                        knex.raw('CASE WHEN tenants.owner_user_id = ? THEN true ELSE false END as is_tenant_owner', [localUser.id])
+                    )
+                    .innerJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                    .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
+                    .where('workspace_users.user_id', localUser.id)
+                    .andWhere('workspaces.tenant_id', effectiveTenantId)
+                    .whereNull('workspaces.deleted_at')
+                    .whereNull('workspace_users.removed_at');
+            }
+
+            workspaces = await query.orderBy('workspaces.created_at', 'desc');
+
+            // Also fetch workspaces from OTHER tenants the user has been given access to
+            // ONLY if we are NOT filtering by a specific tenant_id (i.e. showing "My Workspaces")
+            if (!tenant_id) {
+                const crossTenantWorkspaces = await knex('workspaces')
+                    .distinct('workspaces.*', 'workspace_users.role as user_role', 'tenants.legal_name as tenant_name')
+                    .select(knex.raw('false as is_tenant_owner'))
+                    .innerJoin('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                    .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
+                    .where('workspace_users.user_id', localUser.id)
+                    .andWhere('workspace_users.invitation_status', 'ACTIVE')
+                    .whereNull('workspace_users.removed_at')
+                    .whereNull('workspaces.deleted_at')
+                    .andWhereNot('workspaces.tenant_id', effectiveTenantId)
+                    .orderBy('workspaces.created_at', 'desc');
+
+                // Merge: own-tenant workspaces first, then cross-tenant ones
+                if (crossTenantWorkspaces.length > 0) {
+                    workspaces = [...workspaces, ...crossTenantWorkspaces];
+                }
+            }
+        } else {
+            // Fallback: fetch only workspaces explicitly assigned to the user
+            const userWorkspaces = await knex('workspace_users')
+                .where('user_id', localUser.id)
+                .andWhere('invitation_status', 'ACTIVE')
+                .whereNull('removed_at')
+                .select('workspace_id', 'role');
+
+            const workspaceIds = userWorkspaces.map(uw => uw.workspace_id);
+            if (workspaceIds.length > 0) {
+                workspaces = await knex('workspaces')
+                    .select('workspaces.*', 'tenants.legal_name as tenant_name')
+                    .select(
+                        knex.raw('CASE WHEN tenants.owner_user_id = ? THEN true ELSE false END as is_tenant_owner', [localUser.id])
+                    )
+                    .leftJoin('tenants', 'workspaces.tenant_id', 'tenants.id')
+                    .whereIn('workspaces.id', workspaceIds)
+                    .whereNull('workspaces.deleted_at')
+                    .orderBy('workspaces.created_at', 'desc');
+
+                // Add user_role to each workspace
+                workspaces = workspaces.map(w => {
+                    const userWorkspace = userWorkspaces.find(uw => uw.workspace_id === w.id);
+                    return {
+                        ...w,
+                        gstins: w.gstins || [],
+                        user_role: userWorkspace ? userWorkspace.role : null
+                    };
+                });
+            }
+        }
+
+        // Fetch GSTINs for these workspaces
+        if (workspaces.length > 0) {
+            const gstinIds = workspaces.map(w => w.gstin_id).filter(id => id); // Get gstin_id from workspace
+
+            if (gstinIds.length > 0) {
+                const gstins = await knex('gstin_master').whereIn('id', gstinIds);
+
+                // Attach GSTINs to workspaces
+                workspaces = workspaces.map(w => {
+                    const workspaceGstin = gstins.find(g => g.id === w.gstin_id);
+                    return {
+                        ...w,
+                        gstins: workspaceGstin ? [workspaceGstin] : [],
+                        gstin_id: w.gstin_id
+                    };
+                });
+            } else {
+                workspaces = workspaces.map(w => ({ ...w, gstins: [], gstin_id: null }));
+            }
+        }
+
         return successResponse(res, workspaces, 'Workspaces fetched');
     } catch (error) {
+        console.error('listWorkspaces Error:', error);
         return errorResponse(res, error);
     }
 };
@@ -151,10 +676,259 @@ const inviteUser = async (req, res) => {
     }
 };
 
+const getDashboardMetrics = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const { year } = req.query; // optional financial year
+        const metrics = await DashboardModel.getMetrics(id, year);
+        return successResponse(res, metrics, 'Dashboard metrics fetched successfully');
+    } catch (error) {
+        console.error('getDashboardMetrics Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getLatestPeriod = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const result = await DashboardModel.getLatestPeriod(id);
+        return successResponse(res, result, 'Latest period fetched successfully');
+    } catch (error) {
+        console.error('getLatestPeriod Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getSidebarCounts = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const counts = await DashboardModel.getSidebarCounts(id);
+        return successResponse(res, counts, 'Sidebar counts fetched successfully');
+    } catch (error) {
+        console.error('getSidebarCounts Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getFinancialYears = async (req, res) => {
+    try {
+        const years = await DashboardModel.getFinancialYears();
+        return successResponse(res, years, 'Financial years fetched successfully');
+    } catch (error) {
+        console.error('getFinancialYears Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getTaxPeriods = async (req, res) => {
+    try {
+        const periods = await knex('tax_periods as tp')
+            .leftJoin('financial_years as fy', 'tp.fy_id', 'fy.id')
+            .select('tp.*', 'fy.fy_code')
+            .orderBy('tp.year', 'desc')
+            .orderBy('tp.month', 'desc');
+        return successResponse(res, periods, 'Tax periods fetched successfully');
+    } catch (error) {
+        console.error('getTaxPeriods Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const getDataDateRange = async (req, res) => {
+    try {
+        const { id } = req.params; // workspace ID
+        const { type } = req.query; // 'books', 'gstr', or 'recon'
+
+        let minDates = [];
+        let maxDates = [];
+
+        // 1. Fetch Sales/Purchase dates if type is 'books' or 'recon'
+        if (!type || type === 'books' || type === 'recon') {
+            const salesRange = await knex('sales_invoices')
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(invoice_date) as min_date'),
+                    knex.raw('MAX(invoice_date) as max_date')
+                )
+                .first();
+
+            const purchaseRange = await knex('purchase_vouchers')
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(supplier_invoice_date) as min_date'),
+                    knex.raw('MAX(supplier_invoice_date) as max_date')
+                )
+                .first();
+
+            if (salesRange?.min_date) minDates.push(salesRange.min_date);
+            if (salesRange?.max_date) maxDates.push(salesRange.max_date);
+            if (purchaseRange?.min_date) minDates.push(purchaseRange.min_date);
+            if (purchaseRange?.max_date) maxDates.push(purchaseRange.max_date);
+        }
+
+        // 2. Fetch GSTR dates if type is 'gstr', 'gstr2b', 'gstr2a', or 'recon'
+        if (!type || type.startsWith('gstr') || type === 'recon') {
+            const gstrTable = type === 'gstr2a' ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+            const gstrRange = await knex(gstrTable)
+                .where('workspace_id', id)
+                .select(
+                    knex.raw('MIN(document_date) as min_date'),
+                    knex.raw('MAX(document_date) as max_date')
+                )
+                .first();
+
+            // If we are looking for generic 'gstr' or 'recon', also check the other table if first was empty
+            if ((!type || type === 'gstr' || type === 'recon') && !gstrRange?.min_date) {
+                const otherTable = gstrTable === 'normalized_gstr2b_invoices' ? 'normalized_gstr2a_invoices' : 'normalized_gstr2b_invoices';
+                const otherRange = await knex(otherTable)
+                    .where('workspace_id', id)
+                    .select(
+                        knex.raw('MIN(document_date) as min_date'),
+                        knex.raw('MAX(document_date) as max_date')
+                    )
+                    .first();
+                if (otherRange?.min_date) minDates.push(otherRange.min_date);
+                if (otherRange?.max_date) maxDates.push(otherRange.max_date);
+            }
+
+            if (gstrRange?.min_date) minDates.push(gstrRange.min_date);
+            if (gstrRange?.max_date) maxDates.push(gstrRange.max_date);
+        }
+
+        const absoluteMin = minDates.length > 0 ? new Date(Math.min(...minDates.map(d => new Date(d)))) : null;
+        const absoluteMax = maxDates.length > 0 ? new Date(Math.max(...maxDates.map(d => new Date(d)))) : null;
+
+        return successResponse(res, {
+            min_date: absoluteMin ? absoluteMin.toISOString().split('T')[0] : null,
+            max_date: absoluteMax ? absoluteMax.toISOString().split('T')[0] : null
+        }, 'Data date range fetched successfully');
+    } catch (error) {
+        console.error('getDataDateRange Error:', error);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+const updateWorkspace = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { settings, name, description } = req.body;
+
+        const trx = await knex.transaction();
+
+        try {
+            const workspace = await trx('workspaces').where('id', id).first();
+            if (!workspace) {
+                await trx.rollback();
+                return errorResponse(res, 'Workspace not found', 404);
+            }
+
+            const updateData = { updated_at: new Date() };
+            if (name !== undefined) updateData.name = name;
+            if (description !== undefined) updateData.description = description;
+
+            if (settings !== undefined) {
+                const currentSettings = typeof workspace.settings === 'string'
+                    ? JSON.parse(workspace.settings)
+                    : (workspace.settings || {});
+
+                updateData.settings = {
+                    ...currentSettings,
+                    ...settings
+                };
+
+                // Sync/Upsert Adesk API key in workspace_api_keys if present in settings
+                const adeskConfig = settings.adeskCloudConnector;
+                if (adeskConfig && adeskConfig.apiToken) {
+                    try {
+                        const token = adeskConfig.apiToken;
+                        let decoded = token;
+                        if (!token.includes('@@')) {
+                            try {
+                                decoded = Buffer.from(token, 'base64').toString('ascii');
+                            } catch (e) {
+                                // Ignore decode error
+                            }
+                        }
+                        const parts = decoded.split('@@');
+                        if (parts.length === 3) {
+                            const [projectCode, orgCode, gstin] = parts;
+
+                            const isSandbox = decoded.endsWith('_sandbox');
+                            const productionKeyVal = isSandbox ? Buffer.from(`${projectCode}@@${orgCode}@@${gstin.replace('_sandbox', '')}`).toString('base64') : token;
+
+                            const extraInfo = {
+                                project_code: projectCode,
+                                org_code: orgCode,
+                                adesk_api_key: productionKeyVal
+                            };
+
+                            // Check if a key already exists for this workspace
+                            const existingKey = await trx('workspace_api_keys')
+                                .where({ workspace_id: id })
+                                .first();
+
+                            const sandboxKey = isSandbox ? token : Buffer.from(`${projectCode}@@${orgCode}@@${gstin}_sandbox`).toString('base64');
+
+                            if (existingKey) {
+                                await trx('workspace_api_keys')
+                                    .where({ id: existingKey.id })
+                                    .update({
+                                        third_party_name: 'Adesk',
+                                        extrainfo: JSON.stringify(extraInfo),
+                                        updated_at: new Date()
+                                    });
+                            } else {
+                                await trx('workspace_api_keys')
+                                    .insert({
+                                        id: uuidv4(),
+                                        workspace_id: id,
+                                        tenant_id: workspace.tenant_id,
+                                        production_key: productionKeyVal,
+                                        sandbox_key: sandboxKey,
+                                        status: 'active',
+                                        mode: 'live',
+                                        third_party_name: 'Adesk',
+                                        extrainfo: JSON.stringify(extraInfo),
+                                        created_at: new Date(),
+                                        updated_at: new Date()
+                                    });
+                            }
+                            console.log(`[Workspace Update] Successfully synced Adesk API key for workspace ${id} to workspace_api_keys.`);
+                        }
+                    } catch (syncErr) {
+                        console.error('[Workspace Update] Failed to sync Adesk API key:', syncErr.message);
+                    }
+                }
+            }
+
+            const [updatedWorkspace] = await trx('workspaces')
+                .where('id', id)
+                .update(updateData)
+                .returning('*');
+
+            await trx.commit();
+            return successResponse(res, updatedWorkspace, 'Workspace updated successfully');
+        } catch (error) {
+            await trx.rollback();
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error updating workspace:', error);
+        return errorResponse(res, error.message || 'Failed to update workspace');
+    }
+};
+
 module.exports = {
     createWorkspace,
     listWorkspaces,
     getWorkspace,
     listWorkspaceUsers,
-    inviteUser
+    inviteUser,
+    getDashboardMetrics,
+    getLatestPeriod,
+    getSidebarCounts,
+    getFinancialYears,
+    getTaxPeriods,
+    getDataDateRange,
+    updateWorkspace
 };

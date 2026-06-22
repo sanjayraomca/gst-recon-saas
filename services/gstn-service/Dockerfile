@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Copy shared modules first
 COPY services/shared /app/services/shared
+WORKDIR /app/services/shared
+RUN npm install
 
 # Set working directory to service
 WORKDIR /app/services/gstn-service

@@ -23,10 +23,10 @@
     "defaultSignatureAlgorithm": "RS256",
     "offlineSessionMaxLifespanEnabled": false,
     "offlineSessionMaxLifespan": 5184000,
-    "accessTokenLifespan": 300,
+    "accessTokenLifespan": 43200,
     "accessTokenLifespanForImplicitFlow": 900,
-    "ssoSessionIdleTimeout": 1800,
-    "ssoSessionMaxLifespan": 36000,
+    "ssoSessionIdleTimeout": 43200,
+    "ssoSessionMaxLifespan": 43200,
     "accessCodeLifespan": 60,
     "accessCodeLifespanUserAction": 300,
     "accessCodeLifespanLogin": 1800,
@@ -75,9 +75,9 @@
                 "saml.authnstatement": "false",
                 "display.on.consent.screen": "false",
                 "saml.onetimeuse.condition": "false",
-                "access.token.lifespan": "300",
-                "client.session.idle.timeout": "1800",
-                "client.session.max.lifespan": "36000"
+                "access.token.lifespan": "43200",
+                "client.session.idle.timeout": "43200",
+                "client.session.max.lifespan": "43200"
             },
             "fullScopeAllowed": true,
             "nodeReRegistrationTimeout": -1,
@@ -267,52 +267,23 @@
             ]
         }
     },
-    "groups": [
-        {
-            "name": "Administrators",
-            "path": "/Administrators",
-            "attributes": {},
-            "realmRoles": [
-                "admin"
-            ],
-            "clientRoles": {
-                "admin-api": [
-                    "manage-users",
-                    "manage-groups",
-                    "manage-authorization",
-                    "view-users",
-                    "view-groups"
-                ]
-            },
-            "subGroups": []
-        },
-        {
-            "name": "Managers",
-            "path": "/Managers",
-            "attributes": {},
-            "realmRoles": [
-                "manager"
-            ],
-            "clientRoles": {
-                "admin-api": [
-                    "view-users",
-                    "view-groups"
-                ]
-            },
-            "subGroups": []
-        },
-        {
-            "name": "Users",
-            "path": "/Users",
-            "attributes": {},
-            "realmRoles": [
-                "user"
-            ],
-            "clientRoles": {},
-            "subGroups": []
-        }
-    ],
+    "groups": [],
     "users": [
+        {
+            "username": "service-account-admin-api",
+            "enabled": true,
+            "emailVerified": true,
+            "serviceAccountClientId": "admin-api",
+            "clientRoles": {
+                "realm-management": [
+                    "manage-users",
+                    "view-users",
+                    "query-users",
+                    "query-groups",
+                    "manage-groups"
+                ]
+            }
+        },
         {
             "username": "admin",
             "enabled": true,
@@ -339,9 +310,7 @@
                     "view-groups"
                 ]
             },
-            "groups": [
-                "/Administrators"
-            ]
+            "groups": []
         }
     ],
     "clientScopes": [

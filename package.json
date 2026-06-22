@@ -1,0 +1,31 @@
+{
+  "name": "gst-recon-saas",
+  "version": "1.0.0",
+  "description": "",
+  "main": "e2e_test.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sanjayraomca/gst-recon-saas.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/sanjayraomca/gst-recon-saas/issues"
+  },
+  "homepage": "https://github.com/sanjayraomca/gst-recon-saas#readme",
+  "dependencies": {
+    "cross-fetch": "^4.1.0",
+    "dotenv": "^17.3.1",
+    "form-data": "^4.0.5",
+    "minio": "^8.0.7",
+    "pg": "^8.20.0"
+  }
+}

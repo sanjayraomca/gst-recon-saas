@@ -1,6 +1,7 @@
 const Upload = require('../models/upload');
 const { v4: uuidv4 } = require('uuid');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const { publishEvent } = require('../nats/natsClient');
 const multer = require('multer');
 const path = require('path');
@@ -77,6 +78,9 @@ const uploadFile = async (req, res) => {
             type: upload_type,
             workspace_id: workspaceId
         });
+
+        // Skip logActivity for FILE_UPLOAD because we log the actual import action (e.g. IMPORT_GSTR_DATA, PURCHASE_IMPORT) 
+        // once file processing is completed, which avoids duplicate logging.
 
         return successResponse(res, newUpload, 'File uploaded successfully');
     } catch (error) {

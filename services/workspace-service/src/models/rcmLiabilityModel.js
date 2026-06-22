@@ -1,4 +1,4 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 
 /**
  * RCM Liability Model
@@ -22,7 +22,7 @@ class RcmLiabilityModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('rcm_liability_register')
+        let query = knex('rcm_liability_register')
             .where({ workspace_id: workspaceId });
 
         // Apply filters
@@ -59,7 +59,7 @@ class RcmLiabilityModel {
      * Get single liability by ID
      */
     static async getById(workspaceId, id) {
-        return await db('rcm_liability_register')
+        return await knex('rcm_liability_register')
             .where({
                 id,
                 workspace_id: workspaceId
@@ -71,9 +71,9 @@ class RcmLiabilityModel {
      * Create new liability
      */
     static async create(workspaceId, data) {
-        const [liability] = await db('rcm_liability_register')
+        const [liability] = await knex('rcm_liability_register')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 gstin_id: data.gstin_id,
                 period_id: data.period_id,
@@ -82,8 +82,8 @@ class RcmLiabilityModel {
                 tax_amount: data.tax_amount,
                 liability_status: data.liability_status || 'PENDING',
                 notes: data.notes,
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -111,9 +111,9 @@ class RcmLiabilityModel {
             }
         });
 
-        filteredData.updated_at = db.fn.now();
+        filteredData.updated_at = knex.fn.now();
 
-        const [liability] = await db('rcm_liability_register')
+        const [liability] = await knex('rcm_liability_register')
             .where({
                 id,
                 workspace_id: workspaceId

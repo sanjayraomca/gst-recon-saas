@@ -37,9 +37,12 @@ temp/
 # Database files
 *.db
 *.sqlite
+*.sql
+!infra/**/*.sql
 
 # Secrets and credentials
 *.pem
 *.key
 *.cert
 secrets/
+services/workspace-service/src/queries/

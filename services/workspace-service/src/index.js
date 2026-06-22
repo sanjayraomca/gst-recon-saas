@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { connectNATS } = require('./config/nats'); // Will create this next
-const db = require('../../shared/src/db/connection'); // Use shared DB connection
+const { connectNats } = require('../../shared/src/nats/client');
+const knex = require('../../shared/src/db/connection'); // Use shared DB connection
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -11,23 +11,46 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
+app.use('/states', require('./routes/stateRoutes')); // State lookup routes - PUBLIC (for login/org creation)
 app.use('/workspaces', require('./routes/workspaceRoutes'));
 app.use('/purchase-invoices', require('./routes/purchaseInvoiceRoutes'));
+app.use('/sales-invoices', require('./routes/salesInvoiceRoutes'));
 app.use('/gstr2b-invoices', require('./routes/gstr2bInvoiceRoutes'));
 app.use('/reconciliation', require('./routes/reconciliationRoutes'));
-app.use('/', require('./routes/itcRoutes')); // mounts /itc-decisions and /itc-reversals
+app.use('/connectors', require('./connectors/connectorRoutes')); // API key management for inbound ERP connectors (SUPER_ADMIN only)
+app.use('/itc-decisions', require('./routes/itcRoutes'));   // ITC decisions
+app.use('/itc-reversals', require('./routes/itcRoutes'));   // ITC reversals
 app.use('/rcm-liabilities', require('./routes/rcmRoutes'));
-app.use('/notices', require('./routes/noticeRoutes'));
-app.use('/vendor-communications', require('./routes/vendorCommRoutes'));
+app.use('/book-data', require('./routes/bookDataRoutes')); // Book data listing (CN, DN, Sales, Purchase)
+app.use('/suppliers', require('./routes/supplierRoutes')); // Supplier listing aggregated from all sources
+app.use('/customers', require('./routes/customerRoutes')); // Customer listing aggregated from all sources
+app.use('/connector-logs', require('./routes/connectorLogRoutes')); // TIG Inbound/Outbound connector log viewer
+app.use('/workspaces/user-preferences', require('./routes/userPreferencesRoutes')); // Recent views and Favourites
 
 
 app.get('/health', (req, res) => {
     res.json({ status: 'UP', service: 'workspace-service' });
 });
 
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled Error:', err);
+    res.status(500).json({
+        success: false,
+        error: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+});
+
+const ReconciliationTriggerService = require('./services/reconciliationTriggerService');
+
 const startServer = async () => {
     try {
-        await connectNATS();
+        await connectNats();
+
+        // Initialize automated reconciliation listeners
+        ReconciliationTriggerService.init();
+
         app.listen(PORT, () => {
             console.log(`Workspace Service running on port ${PORT}`);
         });

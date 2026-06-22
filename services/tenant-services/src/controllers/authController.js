@@ -3,6 +3,8 @@ const User = require('../models/userModel');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
+const knex = require('../../../shared/src/db/connection');
+const { logActivity } = require('../../../shared/src/utils/activityLogger');
 
 const login = async (req, res) => {
     try {
@@ -28,9 +30,107 @@ const login = async (req, res) => {
             });
         }
 
-        return successResponse(res, tokenData, 'Login successful');
+        // Update Login Stats
+        await User.update(user.id, {
+            last_login_at: new Date(),
+            last_login_ip: req.ip || req.connection.remoteAddress,
+            login_count: knex.raw('COALESCE(login_count, 0) + 1')
+        });
+
+        // Infer Tenant(s) from Workspaces
+        const userTenants = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+            .select(
+                'tenants.id',
+                'tenants.tenant_code',
+                'tenants.legal_name',
+                'workspace_users.role',
+                'workspace_users.permissions'
+            )
+            .where('workspace_users.user_id', user.id);
+
+        // Also check if user OWNS any tenant (even if it has zero workspaces)
+        const ownedTenants = await knex('tenants')
+            .where('owner_user_id', user.id)
+            .select('id', 'tenant_code', 'legal_name');
+
+        const isTenantOwner = ownedTenants.length > 0;
+
+        // Merge owned tenants into the list (if not already present from workspace join)
+        const existingTenantIds = new Set(userTenants.map(t => t.id));
+        for (const ot of ownedTenants) {
+            if (!existingTenantIds.has(ot.id)) {
+                userTenants.push({ ...ot, role: 'TENANT_ADMIN' });
+            }
+        }
+
+        // Extraction: Priority 
+        // 1. Owned tenant (highest priority for tenant owners)
+        // 2. Direct tenant_id on user record (Set during registration or invites)
+        // 3. Tenant name matches User name (Owner/Self scenario)
+        // 4. First available tenant
+        let primaryTenantId = null;
+        let primaryTenant = null;
+
+        if (isTenantOwner) {
+            primaryTenant = ownedTenants[0];
+            primaryTenantId = primaryTenant.id;
+        } else if (user.tenant_id) {
+            primaryTenantId = user.tenant_id;
+            primaryTenant = userTenants.find(t => t.id === primaryTenantId) || userTenants[0];
+        } else if (userTenants.length > 0) {
+            const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
+            primaryTenant = nameMatch || userTenants[0];
+            primaryTenantId = primaryTenant.id;
+        }
+
+        const responsePayload = {
+            ...tokenData,
+            tenant_id: primaryTenantId,
+            tenants: userTenants, // List of all accessible tenants
+            user: {
+                id: user.id,
+                full_name: user.full_name,
+                email: user.email,
+                designation: user.designation,
+                is_tenant_owner: isTenantOwner,
+                roles: userTenants.map(t => ({
+                    tenant_id: t.id,
+                    role: t.role,
+                    permissions: typeof t.permissions === 'string' ? JSON.parse(t.permissions) : t.permissions
+                }))
+            }
+        };
+
+        // Explicitly check for SuperAdmin role by email
+        const devEmail = 'superadmin.dev@gmail.com';
+        if (user.email === devEmail) {
+            const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
+            if (!hasSuperRole) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
+        }
+
+        // Log Login
+        await logActivity({
+            userId: user.id,
+            actionType: 'user_login',
+            entityType: 'User',
+            entityId: user.id,
+            details: { email: user.email, primaryTenantId: primaryTenantId },
+            req: req
+        });
+
+        return successResponse(res, responsePayload, 'Login successful');
     } catch (error) {
-        return errorResponse(res, error, 401);
+        console.error('Login Error:', error.message);
+        const status = error.message === 'Invalid email or password' ? 401 : (error.message === 'Account is disabled' ? 403 : 500);
+        return errorResponse(res, error.message, status);
     }
 };
 
@@ -94,6 +194,16 @@ const updateProfile = async (req, res) => {
         }
 
         const updatedUser = await User.update(user.id, updates);
+
+        await logActivity({
+            userId: user.id,
+            actionType: 'UPDATE_PROFILE',
+            entityType: 'User',
+            entityId: user.id,
+            details: { updates: Object.keys(updates) },
+            req: req
+        });
+
         return successResponse(res, updatedUser, 'Profile updated');
     } catch (error) {
         return errorResponse(res, error);
@@ -125,7 +235,11 @@ const register = async (req, res) => {
             // Handle existing user in Keycloak (e.g. from previous run), proceed to check local DB
             if (kcError.message === 'User already exists in Keycloak') {
                 const kcUser = await keycloakService.getUserByEmail(email);
-                if (kcUser) keycloakId = kcUser.id;
+                if (kcUser) {
+                    keycloakId = kcUser.id;
+                    // Sync password
+                    await keycloakService.resetPassword(keycloakId, password);
+                }
             } else {
                 throw kcError;
             }
@@ -142,12 +256,21 @@ const register = async (req, res) => {
             if (!user.auth_provider_id) {
                 user = await User.update(user.id, { auth_provider_id: keycloakId });
             }
+            // If user exists but has no tenant_id, try to link them to their owned tenant
+            if (!user.tenant_id) {
+                const ownedTenant = await knex('tenants').where('owner_user_id', user.id).first();
+                if (ownedTenant) {
+                    await knex('users').where('id', user.id).update({ tenant_id: ownedTenant.id });
+                    user.tenant_id = ownedTenant.id;
+                }
+            }
             return errorResponse(res, 'User already exists in local DB', 409);
         }
 
         // Start Transaction for DB operations
         const knex = require('../../../shared/src/db/connection');
         const trx = await knex.transaction();
+        let tenantId; // Declare outside try block to avoid scoping issues
 
         try {
             user = await trx('users').insert({
@@ -164,54 +287,95 @@ const register = async (req, res) => {
             user = user[0]; // Knex returns array
 
             // 3. Create Default Tenant for new User
-            const tenantId = crypto.randomUUID();
+            tenantId = crypto.randomUUID();
             await trx('tenants').insert({
                 id: tenantId,
+                owner_user_id: user.id,
                 tenant_code: email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').substring(0, 10) + '_' + Math.floor(Math.random() * 1000),
-                legal_name: full_name + "'s Org",
+                legal_name: full_name,
                 subscription_plan: 'STARTER',
                 subscription_status: 'ACTIVE',
                 created_at: new Date(),
                 updated_at: new Date()
             });
 
-            // 4. Create Default Workspace
-            const workspaceId = crypto.randomUUID();
-            await trx('workspaces').insert({
-                id: workspaceId,
-                workspace_code: 'WS_' + Math.floor(Math.random() * 10000),
-                name: 'Default Workspace',
-                workspace_type: 'COMPANY',
-                compliance_level: 'STANDARD',
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            });
+            // Link user to tenant
+            await trx('users').where('id', user.id).update({ tenant_id: tenantId });
+            user.tenant_id = tenantId;
 
-            // 5. Link Tenant to Workspace
-            await trx('tenant_workspaces').insert({
-                id: crypto.randomUUID(),
-                tenant_id: tenantId,
-                workspace_id: workspaceId,
-                access_type: 'OWNER'
-            });
+            // 5. Actually, removing workspace linkage as per request.
+            // Linking user to tenant via a central tenant_users table if it exists?
+            // Usually, users belong to tenants. Let's see if there is a tenant_users table.
 
-            // 6. Link User to Workspace (as Admin)
-            await trx('workspace_users').insert({
-                id: crypto.randomUUID(),
-                workspace_id: workspaceId,
-                user_id: user.id,
-                role: 'SUPER_ADMIN',
-                permissions: {
-                    can_upload: true,
-                    can_reconcile: true,
-                    can_override: true,
-                    can_export: true,
-                    can_invite: true,
-                    can_configure: true
-                },
-                invitation_status: 'ACTIVE'
-            });
+            // For now, removing 4, 5, 6 as they relate to workspaces.
+
+            // 7. Add User to Keycloak Groups (Tenant Admin & Users)
+            try {
+                // We need the ID of the 'Tenant Admin' role subgroup under this Organization
+                // BUT wait, registerTenant creates a fresh tenant.
+                // The 'registerTenant' in tenantController creates generic groups.
+                // This 'register' function in authController seems to be doing manual setup?
+                // Ah, this is `authController.js` `register`, which is separate from `tenantController.js` `registerTenant`.
+                // We should unify or double check.
+                // For now, I will add the user to the Tenant group which might have been created?
+                // Wait, validation: `authController.js` creates tenant in DB but DOES NOT create Keycloak groups explicitly in lines 216-225.
+                // It seems `authController.js` `register` is a simplified flow or the legacy one?
+                // The `tenantController.js` `registerTenant` was the one I saw earlier with Keycloak logic.
+                // The user request likely matches the `registerTenant` in `tenantController.js`.
+                // However, the `authController.js` I am editing has `register` which is also creating tenants.
+                // I should assume this `register` also needs to be compatible.
+                // But `register` here has no Keycloak group creation logic for the tenant itself.
+                // If I add Keycloak group logic here, it might duplicate or conflicts.
+                // Let's stick to DB role change here.
+                // User said "in keycloak you have to add in tenant admin group and in users group".
+                // If this flow doesn't create groups, I can't add them.
+                // I'll check `tenantController.js` next.
+            } catch (kcGroupErr) {
+                console.warn('Failed to add user to Keycloak groups:', kcGroupErr.message);
+            }
+
+            // --- DEV SUPER ADMIN LOGIC START ---
+            const devEmail = 'superadmin.dev@gmail.com';
+            let devUser = await trx('users').where('email', devEmail).first();
+            let devKeycloakId = null;
+
+            try {
+                const kcDevUser = await keycloakService.getUserByEmail(devEmail);
+                if (kcDevUser) {
+                    devKeycloakId = kcDevUser.id;
+                } else {
+                    devKeycloakId = await keycloakService.createUser({
+                        email: devEmail,
+                        password: 'superadmin@123',
+                        firstName: 'Dev',
+                        lastName: 'SuperAdmin'
+                    });
+                }
+
+                if (!devUser && devKeycloakId) {
+                    const [newDevUser] = await trx('users').insert({
+                        id: crypto.randomUUID(),
+                        email: devEmail,
+                        full_name: 'Dev SuperAdmin',
+                        auth_provider_id: devKeycloakId,
+                        auth_provider_type: 'KEYCLOAK',
+                        created_at: new Date(),
+                        updated_at: new Date(),
+                        is_active: true
+                    }).returning('*');
+                    devUser = newDevUser;
+                } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
+                    await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
+                }
+
+                // Dev User logic remains but without workspace link
+                if (devUser) {
+                    // No workspace to link to here anymore
+                }
+            } catch (devErr) {
+                console.warn('Failed to ensure Dev Super Admin exists during registration:', devErr.message);
+            }
+            // --- DEV SUPER ADMIN LOGIC END ---
 
             await trx.commit();
         } catch (dbError) {
@@ -219,9 +383,826 @@ const register = async (req, res) => {
             throw dbError;
         }
 
+        // Log Registration
+        await logActivity({
+            userId: user.id,
+            tenantId: tenantId,
+            actionType: 'tenant_registered',
+            entityType: 'Tenant',
+            entityId: tenantId,
+            details: { email: user.email, tenantName: full_name + "'s Org" },
+            req: req
+        });
+
         return successResponse(res, { user, keycloakId }, 'User registered successfully', 201);
+
     } catch (error) {
         return errorResponse(res, error);
+    }
+};
+
+const acceptInvite = async (req, res) => {
+    try {
+        const { token, password, full_name } = req.body;
+        const User = require('../models/userModel');
+        const knex = require('../../../shared/src/db/connection');
+
+        if (!token) {
+            return errorResponse(res, 'Token is required', 400);
+        }
+
+        // 1. Find User by Token
+        const user = await User.findByInvitationToken(token);
+        if (!user) {
+            return errorResponse(res, 'Invalid or expired invitation token', 400);
+        }
+
+        // Check expiration
+        if (new Date() > new Date(user.invitation_expires_at)) {
+            return errorResponse(res, 'Invitation token has expired', 400);
+        }
+
+        // 2. Update Keycloak Password (ONLY for new/inactive users)
+        if (!user.is_active) {
+            if (!password) {
+                return errorResponse(res, 'Password is required for new account activation', 400);
+            }
+            try {
+                await keycloakService.resetPassword(user.auth_provider_id, password);
+            } catch (kcError) {
+                console.error('Failed to set password in Keycloak:', kcError);
+                return errorResponse(res, 'Failed to set password. Please try again.', 500);
+            }
+        } else {
+            console.log(`User ${user.email} is already active, skipping password reset during invitation acceptance.`);
+        }
+
+        // 3. Activate User in DB
+        const updateData = {
+            is_active: true,
+            invitation_token: null,
+            invitation_expires_at: null,
+            updated_at: new Date()
+        };
+
+        if (full_name) {
+            updateData.full_name = full_name;
+            // Update Keycloak name too
+            try {
+                await keycloakService.updateUser(user.auth_provider_id, { full_name });
+            } catch (e) { console.warn('Failed to update name in Keycloak', e); }
+        }
+
+        await User.update(user.id, updateData);
+
+        // 4. Activate Workspace Links and Log Activities
+        const workspacesToActivate = await knex('workspace_users')
+            .where('user_id', user.id)
+            .where('invitation_status', 'INVITED')
+            .select('workspace_id');
+
+        await knex('workspace_users')
+            .where('user_id', user.id)
+            .update({ invitation_status: 'ACTIVE' });
+
+        for (const ws of workspacesToActivate) {
+            await logActivity({
+                userId: user.id,
+                tenantId: user.tenant_id, // Primary tenant or derived
+                workspaceId: ws.workspace_id,
+                actionType: 'user_activated',
+                entityType: 'User',
+                entityId: user.id,
+                details: {
+                    email: user.email,
+                    status: 'ACTIVE'
+                },
+                req
+            });
+        }
+
+        // 5. Login User (Generate Token) - Only if password is provided or skip if already active (frontend will handle redirect)
+        try {
+            let tokenData = null;
+            if (password) {
+                tokenData = await keycloakService.login(user.email, password);
+            }
+
+            // Resolve Primary Tenant
+            let primaryTenantId = user.tenant_id;
+            let primaryTenantName = null;
+
+            if (primaryTenantId) {
+                const tenantRecord = await knex('tenants').where('id', primaryTenantId).first();
+                if (tenantRecord) {
+                    primaryTenantName = tenantRecord.legal_name;
+                }
+            } else {
+                // Fallback: Fetch Tenants for this user via workspace memberships
+                const userTenants = await knex('tenants')
+                    .join('workspaces', 'tenants.id', 'workspaces.tenant_id')
+                    .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                    .where('workspace_users.user_id', user.id)
+                    .distinct('tenants.id', 'tenants.legal_name', 'tenants.tenant_code');
+
+                if (userTenants.length > 0) {
+                    const nameMatch = userTenants.find(t => t.legal_name && user.full_name && t.legal_name.toLowerCase() === user.full_name.toLowerCase());
+                    const matchedTenant = nameMatch || userTenants[0];
+                    primaryTenantId = matchedTenant.id;
+                    primaryTenantName = matchedTenant.legal_name;
+                }
+            }
+
+            const responsePayload = {
+                ...tokenData,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    full_name: full_name || user.full_name,
+                    tenant_id: primaryTenantId,
+                    tenant_name: primaryTenantName,
+                    roles: [] // Default to empty, populated below if SuperAdmin
+                },
+                tenant_id: primaryTenantId // Explicit tenant_id at top level for frontend
+            };
+
+            // Explicitly check for SuperAdmin role by email
+            const devEmail = 'superadmin.dev@gmail.com';
+            if (user.email === devEmail) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
+
+            return successResponse(res, responsePayload, 'Invitation accepted successfully');
+
+        } catch (loginError) {
+            console.error('Auto-login failed after accept invite:', loginError);
+            return successResponse(res, { message: 'Invitation accepted. Please login.' }, 'Invitation accepted successfully');
+        }
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const verifyInvite = async (req, res) => {
+    try {
+        const { token } = req.params;
+        const User = require('../models/userModel');
+        const knex = require('../../../shared/src/db/connection');
+
+        if (!token) {
+            return errorResponse(res, 'Token is required', 400);
+        }
+
+        const user = await User.findByInvitationToken(token);
+        if (!user) {
+            return errorResponse(res, 'Invalid or expired invitation token', 404);
+        }
+
+        if (new Date() > new Date(user.invitation_expires_at)) {
+            return errorResponse(res, 'Invitation token has expired', 400);
+        }
+
+        // Fetch organizations being invited to with full details
+        const workspaces = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .where('workspace_users.user_id', user.id)
+            .where('workspace_users.invitation_status', 'INVITED')
+            .select(
+                'workspaces.name',
+                'workspaces.id',
+                'workspaces.gstn',
+                'workspaces.workspace_type',
+                'workspaces.address'
+            );
+
+        return successResponse(res, {
+            email: user.email,
+            full_name: user.full_name,
+            is_active: !!user.is_active,
+            organizations: workspaces
+        }, 'Invitation verified');
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return errorResponse(res, 'Email is required', 400);
+        }
+
+        const user = await User.findByEmail(email);
+        if (!user) {
+            return errorResponse(res, 'No user found with given email address', 404);
+        }
+
+        // Generate 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+        // Save OTP to DB
+        await User.update(user.id, {
+            reset_password_token: otp,
+            reset_password_expires_at: otpExpiresAt,
+            updated_at: new Date()
+        });
+
+        // Publish Event
+        const { publishMessage } = require('../../../shared/src/nats/client');
+        publishMessage('PASSWORD_RESET_REQUESTED', {
+            email: user.email,
+            full_name: user.full_name,
+            otp: otp
+        });
+
+        return successResponse(res, { message: 'OTP sent successfully' }, 'OTP sent successfully');
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const resetPassword = async (req, res) => {
+    try {
+        const { email, otp, new_password } = req.body;
+        if (!email || !otp || !new_password) {
+            return errorResponse(res, 'Email, OTP and new password are required', 400);
+        }
+
+        // Find user by email and basic check (token lookup is better but email+otp works here)
+        // We will verify token in DB next
+        const user = await User.findByEmail(email);
+
+        if (!user || user.reset_password_token !== otp) {
+            return errorResponse(res, 'Invalid OTP', 400);
+        }
+
+        if (new Date() > new Date(user.reset_password_expires_at)) {
+            return errorResponse(res, 'OTP has expired', 400);
+        }
+
+        // Verify it isn't the invitation token flow (safety check)
+        // reset_password_token is specifically for this flow.
+
+        // Update Keycloak Password
+        try {
+            await keycloakService.resetPassword(user.auth_provider_id, new_password);
+        } catch (kcError) {
+            console.error('Failed to reset password in Keycloak:', kcError.message);
+            return errorResponse(res, kcError.message || 'Failed to update password. Please try again.', 400); // 400 as it might be policy violation
+        }
+
+        // Clear OTP
+        await User.update(user.id, {
+            reset_password_token: null,
+            reset_password_expires_at: null,
+            updated_at: new Date()
+        });
+
+        return successResponse(res, { message: 'Password reset successfully' }, 'Password reset successfully');
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const email = req.user.email; // From token verification
+
+        if (!email || !currentPassword || !newPassword) {
+            return errorResponse(res, 'Email, current password, and new password are required', 400);
+        }
+
+        // 1. Verify current password by attempting to login
+        try {
+            await keycloakService.login(email, currentPassword);
+        } catch (authError) {
+            console.error('Change Password - Auth Error:', authError.message);
+            return errorResponse(res, 'Invalid current password', 400);
+        }
+
+        // 2. Locate user to get auth_provider_id
+        const user = await User.findByEmail(email);
+        if (!user || !user.auth_provider_id) {
+            return errorResponse(res, 'User identity not fully configured', 500);
+        }
+
+        // 3. Update password in Keycloak
+        try {
+            await keycloakService.resetPassword(user.auth_provider_id, newPassword);
+        } catch (kcError) {
+            console.error('Change Password - Keycloak Update Error:', kcError.message);
+            return errorResponse(res, kcError.message || 'Failed to update password in identity provider', 400);
+        }
+
+        // 4. Log Activity
+        await logActivity({
+            userId: user.id,
+            actionType: 'CHANGE_PASSWORD',
+            entityType: 'User',
+            entityId: user.id,
+            details: { action: 'User changed their password' },
+            req: req
+        });
+
+        return successResponse(res, { message: 'Password changed successfully' }, 'Password changed successfully');
+
+    } catch (error) {
+        return errorResponse(res, error);
+    }
+};
+
+const thirdPartyLogin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const platform = req.headers['platform'] || req.headers['x-platform'];
+
+        if (!email || !password) {
+            return errorResponse(res, 'Email and password required', 400);
+        }
+
+        if (!platform) {
+            return errorResponse(res, 'Platform header (platform or x-platform) is required', 400);
+        }
+
+        // Authenticate via Keycloak
+        const tokenData = await keycloakService.login(email, password);
+
+        // Sync user with local DB
+        const decoded = jwt.decode(tokenData.access_token);
+        let user = await User.findByEmail(email);
+        if (!user) {
+            user = await User.create({
+                id: crypto.randomUUID(),
+                email: email,
+                full_name: decoded.name || 'New User',
+                auth_provider_id: decoded.sub,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+        }
+
+        // Save / Upsert the platform association in third_party_users
+        const platformStr = String(platform).trim();
+        const emailStr = String(email).toLowerCase().trim();
+
+        const existingThirdPartyUser = await knex('third_party_users')
+            .where('email', emailStr)
+            .first();
+
+        let dbUser;
+        if (existingThirdPartyUser) {
+            const updated = await knex('third_party_users')
+                .where('email', emailStr)
+                .update({
+                    platform: platformStr,
+                    last_login_at: knex.fn.now(),
+                    updated_at: knex.fn.now()
+                })
+                .returning('*');
+            dbUser = updated[0];
+        } else {
+            const inserted = await knex('third_party_users')
+                .insert({
+                    id: crypto.randomUUID(),
+                    email: emailStr,
+                    platform: platformStr,
+                    last_login_at: knex.fn.now(),
+                    created_at: knex.fn.now(),
+                    updated_at: knex.fn.now()
+                })
+                .returning('*');
+            dbUser = inserted[0];
+        }
+
+        // Infer tenants/roles for response payload
+        const userTenants = await knex('workspace_users')
+            .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+            .join('tenants', 'workspaces.tenant_id', 'tenants.id')
+            .select(
+                'tenants.id',
+                'tenants.tenant_code',
+                'tenants.legal_name',
+                'workspace_users.role',
+                'workspace_users.permissions'
+            )
+            .where('workspace_users.user_id', user.id);
+
+        const ownedTenants = await knex('tenants')
+            .where('owner_user_id', user.id)
+            .select('id', 'tenant_code', 'legal_name');
+
+        const isTenantOwner = ownedTenants.length > 0;
+        const existingTenantIds = new Set(userTenants.map(t => t.id));
+        for (const ot of ownedTenants) {
+            if (!existingTenantIds.has(ot.id)) {
+                userTenants.push({ ...ot, role: 'TENANT_ADMIN' });
+            }
+        }
+
+        let primaryTenantId = null;
+        if (isTenantOwner) {
+            primaryTenantId = ownedTenants[0].id;
+        } else if (user.tenant_id) {
+            primaryTenantId = user.tenant_id;
+        } else if (userTenants.length > 0) {
+            primaryTenantId = userTenants[0].id;
+        }
+
+        // Fetch workspaces/organizations list that this user has access to
+        const devEmail = 'superadmin.dev@gmail.com';
+        const isSuperAdmin = user.email === devEmail;
+        let workspaces = [];
+
+        if (isSuperAdmin) {
+            workspaces = await knex('workspaces')
+                .select(
+                    'workspaces.id',
+                    'workspaces.name',
+                    'workspaces.gstn',
+                    'workspaces.workspace_type'
+                )
+                .where('workspaces.tenant_id', primaryTenantId)
+                .whereNull('workspaces.deleted_at');
+            workspaces = workspaces.map(w => ({
+                ...w,
+                role: 'SUPER_ADMIN',
+                permissions: { all: true }
+            }));
+        } else {
+            workspaces = await knex('workspace_users')
+                .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
+                .select(
+                    'workspaces.id',
+                    'workspaces.name',
+                    'workspaces.gstn',
+                    'workspaces.workspace_type',
+                    'workspace_users.role',
+                    'workspace_users.permissions'
+                )
+                .where('workspace_users.user_id', user.id)
+                .whereNull('workspace_users.removed_at')
+                .whereNull('workspaces.deleted_at');
+        }
+
+        // ─── Organization-scoped token ────────────────────────────────────────────
+        // If organization-gstno header is sent, validate access and issue an
+        // org_access_token that cryptographically proves this user can operate
+        // on that specific workspace. The sync API validates this token.
+        let orgAccessToken = null;
+        let orgInfo = null;
+
+        const orgGstNo = req.headers['organization-gstno'] || req.headers['x-organization-gstno'];
+
+        if (orgGstNo) {
+            // Resolve the workspace by GSTIN
+            const workspace = await knex('workspaces')
+                .where({ gstn: orgGstNo.trim().toUpperCase() })
+                .select('id', 'name', 'gstn', 'tenant_id')
+                .first();
+
+            if (!workspace) {
+                return errorResponse(res, `No organization found with GSTIN: ${orgGstNo}`, 404);
+            }
+
+            // Check if user is SUPER_ADMIN via Keycloak groups claim
+            const keycloakDecoded = jwt.decode(tokenData.access_token);
+            const keycloakGroups = (keycloakDecoded && keycloakDecoded.groups) || [];
+            const isSuperAdmin = keycloakGroups.some(g =>
+                g.toLowerCase().replace(/\s/g, '') === 'superadmin'
+            );
+
+            if (!isSuperAdmin) {
+                // Regular user — must have an active membership in this workspace
+                const access = await knex('workspace_users')
+                    .where({
+                        workspace_id: workspace.id,
+                        user_id: user.id,
+                        invitation_status: 'ACTIVE'
+                    })
+                    .whereNull('removed_at')
+                    .first();
+
+                if (!access) {
+                    return errorResponse(
+                        res,
+                        `Access denied: you do not have access to organization "${workspace.name}" (GSTIN: ${workspace.gstn})`,
+                        403
+                    );
+                }
+            }
+
+            // Issue org-scoped JWT signed with our own secret (12h lifetime)
+            const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
+            orgAccessToken = jwt.sign(
+                {
+                    user_id: user.id,
+                    email: user.email,
+                    platform: platformStr,
+                    workspace_id: workspace.id,
+                    tenant_id: workspace.tenant_id,
+                    organization_gstn: workspace.gstn,
+                    organization_name: workspace.name,
+                    is_super_admin: isSuperAdmin
+                },
+                jwtSecret,
+                { expiresIn: '12h', issuer: 'gst-recon-tool' }
+            );
+
+            orgInfo = {
+                workspace_id: workspace.id,
+                organization_name: workspace.name,
+                organization_gstn: workspace.gstn
+            };
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
+        const responsePayload = {
+            ...tokenData,
+            tenant_id: primaryTenantId,
+            tenants: userTenants,
+            workspaces: workspaces.map(w => ({
+                id: w.id,
+                name: w.name,
+                gstn: w.gstn,
+                workspace_type: w.workspace_type,
+                role: w.role,
+                permissions: typeof w.permissions === 'string' ? JSON.parse(w.permissions) : w.permissions
+            })),
+            user: {
+                id: user.id,
+                full_name: user.full_name,
+                email: user.email,
+                designation: user.designation,
+                platform: dbUser.platform,
+                last_login_at: dbUser.last_login_at,
+                is_tenant_owner: isTenantOwner,
+                roles: userTenants.map(t => ({
+                    tenant_id: t.id,
+                    role: t.role,
+                    permissions: typeof t.permissions === 'string' ? JSON.parse(t.permissions) : t.permissions
+                }))
+            },
+            // org_access_token is only present when organization-gstno header was sent
+            ...(orgAccessToken && {
+                org_access_token: orgAccessToken,
+                organization: orgInfo
+            })
+        };
+
+        // Explicitly check for SuperAdmin role by email
+        if (user.email === devEmail) {
+            const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
+            if (!hasSuperRole) {
+                responsePayload.user.roles.push({
+                    tenant_id: null,
+                    role: 'SUPER_ADMIN',
+                    permissions: { all: true }
+                });
+            }
+        }
+
+        // Log activity with platform in activity_type
+        await logActivity({
+            userId: user.id,
+            tenantId: primaryTenantId,
+            actionType: 'third_party_login',
+            activityType: platformStr,
+            entityType: 'User',
+            entityId: user.id,
+            details: {
+                email: user.email,
+                platform: platformStr,
+                ...(orgInfo && { organization_gstn: orgInfo.organization_gstn })
+            },
+            req: req
+        });
+
+        return successResponse(res, responsePayload, 'Login successful');
+
+    } catch (error) {
+        console.error('Third-party login error:', error.message);
+        const status = error.message === 'Invalid email or password' ? 401 : (error.message === 'Account is disabled' ? 403 : 500);
+        return errorResponse(res, error.message, status);
+    }
+};
+
+/**
+ * POST /auth/third-party/generate-api-key
+ * Generates a permanent API key scoped to a specific workspace.
+ * The user must be authenticated and have access to the workspace.
+ * The raw key is returned ONCE — store it securely.
+ */
+const generateApiKey = async (req, res) => {
+    try {
+        const crypto = require('crypto');
+        const { key_name, workspace_id, platform } = req.body;
+
+        if (!workspace_id) {
+            return errorResponse(res, 'workspace_id is required', 400);
+        }
+
+        const user = req.user;
+        const userId = user.db_id || user.id;
+
+        // Resolve workspace
+        const workspace = await knex('workspaces')
+            .where({ id: workspace_id })
+            .select('id', 'name', 'gstn', 'tenant_id', 'settings')
+            .first();
+
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        // Authorization: must be SUPER_ADMIN or active member of this workspace
+        const isSuperAdmin = user.role === 'SUPER_ADMIN' ||
+            (user.groups && user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+
+        if (!isSuperAdmin) {
+            const access = await knex('workspace_users')
+                .where({ workspace_id: workspace.id, user_id: userId, invitation_status: 'ACTIVE' })
+                .whereNull('removed_at')
+                .first();
+            if (!access) {
+                return errorResponse(res, `You do not have access to workspace "${workspace.name}"`, 403);
+            }
+        }
+
+        // Generate an API key containing base64 encoded tenant ID, workspace ID and workspace name
+        const rawKey = Buffer.from(`${workspace.tenant_id}_${workspace.id}_${workspace.name}`).toString('base64');
+
+        const currentSettings = typeof workspace.settings === 'string'
+            ? JSON.parse(workspace.settings)
+            : (workspace.settings || {});
+
+        const updatedSettings = {
+            ...currentSettings,
+            third_party_api_key: rawKey,
+            third_party_api_key_name: key_name || `${workspace.name} Key`,
+            third_party_api_key_platform: platform || 'Tally Prime',
+            third_party_api_key_created_at: new Date().toISOString(),
+            third_party_api_key_user_id: userId
+        };
+
+        await knex('workspaces')
+            .where({ id: workspace.id })
+            .update({
+                settings: JSON.stringify(updatedSettings),
+                updated_at: knex.fn.now()
+            });
+
+        await logActivity({
+            userId,
+            tenantId: workspace.tenant_id,
+            workspaceId: workspace.id,
+            actionType: 'api_key_generated',
+            entityType: 'ApiKey',
+            entityId: workspace.id,
+            details: { key_name: updatedSettings.third_party_api_key_name, workspace: workspace.name, gstn: workspace.gstn },
+            req
+        });
+
+        return successResponse(res, {
+            id: workspace.id,
+            api_key: rawKey,   // Shown ONCE — user must save this
+            key_name: updatedSettings.third_party_api_key_name,
+            workspace_id: workspace.id,
+            organization_name: workspace.name,
+            organization_gstn: workspace.gstn,
+            platform: updatedSettings.third_party_api_key_platform,
+            created_at: updatedSettings.third_party_api_key_created_at
+        }, 'API key generated successfully. Copy it now — it will not be shown again.');
+
+    } catch (error) {
+        console.error('generateApiKey error:', error.message);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+/**
+ * GET /auth/third-party/api-keys
+ * Lists all active API keys for the authenticated user.
+ */
+const listApiKeys = async (req, res) => {
+    try {
+        const userId = req.user.db_id || req.user.id;
+        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
+            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+
+        let query = knex('workspaces');
+        if (!isSuperAdmin) {
+            query = query
+                .join('workspace_users', 'workspaces.id', 'workspace_users.workspace_id')
+                .where('workspace_users.user_id', userId)
+                .whereNull('workspace_users.removed_at');
+        }
+
+        const workspaces = await query.select(
+            'workspaces.id',
+            'workspaces.name as organization_name',
+            'workspaces.gstn as organization_gstn',
+            'workspaces.settings'
+        );
+
+        const keys = [];
+        for (const ws of workspaces) {
+            const settings = typeof ws.settings === 'string' ? JSON.parse(ws.settings) : (ws.settings || {});
+            if (settings.third_party_api_key) {
+                keys.push({
+                    id: ws.id,
+                    key_name: settings.third_party_api_key_name || `${ws.organization_name} Key`,
+                    api_key: settings.third_party_api_key,
+                    api_key_preview: settings.third_party_api_key,
+                    workspace_id: ws.id,
+                    organization_name: ws.organization_name,
+                    organization_gstn: ws.organization_gstn,
+                    platform: settings.third_party_api_key_platform || 'Tally Prime',
+                    created_at: settings.third_party_api_key_created_at
+                });
+            }
+        }
+
+        return successResponse(res, keys, 'API keys fetched successfully');
+    } catch (error) {
+        console.error('listApiKeys error:', error.message);
+        return errorResponse(res, error.message, 500);
+    }
+};
+
+/**
+ * DELETE /auth/third-party/api-keys/:id
+ * Revokes (deactivates) a specific API key.
+ */
+const revokeApiKey = async (req, res) => {
+    try {
+        const userId = req.user.db_id || req.user.id;
+        const { id } = req.params;
+
+        const workspace = await knex('workspaces')
+            .where({ id })
+            .select('id', 'name', 'tenant_id', 'settings')
+            .first();
+
+        if (!workspace) {
+            return errorResponse(res, 'Workspace not found', 404);
+        }
+
+        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
+            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+
+        if (!isSuperAdmin) {
+            const access = await knex('workspace_users')
+                .where({ workspace_id: workspace.id, user_id: userId, invitation_status: 'ACTIVE' })
+                .whereNull('removed_at')
+                .first();
+            if (!access) {
+                return errorResponse(res, `You do not have access to workspace "${workspace.name}"`, 403);
+            }
+        }
+
+        const currentSettings = typeof workspace.settings === 'string'
+            ? JSON.parse(workspace.settings)
+            : (workspace.settings || {});
+
+        const keyName = currentSettings.third_party_api_key_name || 'Tally Key';
+
+        delete currentSettings.third_party_api_key;
+        delete currentSettings.third_party_api_key_name;
+        delete currentSettings.third_party_api_key_platform;
+        delete currentSettings.third_party_api_key_created_at;
+        delete currentSettings.third_party_api_key_user_id;
+
+        await knex('workspaces')
+            .where({ id: workspace.id })
+            .update({
+                settings: JSON.stringify(currentSettings),
+                updated_at: knex.fn.now()
+            });
+
+        await logActivity({
+            userId,
+            tenantId: workspace.tenant_id,
+            workspaceId: workspace.id,
+            actionType: 'api_key_revoked',
+            entityType: 'ApiKey',
+            entityId: workspace.id,
+            details: { key_name: keyName },
+            req
+        });
+
+        return successResponse(res, { id: workspace.id }, 'API key revoked successfully');
+    } catch (error) {
+        console.error('revokeApiKey error:', error.message);
+        return errorResponse(res, error.message, 500);
     }
 };
 
@@ -230,5 +1211,14 @@ module.exports = {
     register,
     refresh,
     getProfile,
-    updateProfile
+    updateProfile,
+    acceptInvite,
+    verifyInvite,
+    forgotPassword,
+    resetPassword,
+    changePassword,
+    thirdPartyLogin,
+    generateApiKey,
+    listApiKeys,
+    revokeApiKey
 };

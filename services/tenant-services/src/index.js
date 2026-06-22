@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const { connectNats } = require('../../shared/src/nats/client'); // Relative path to shared
 const authRoutes = require('./routes/authRoutes');
 const tenantRoutes = require('./routes/tenantRoutes');
@@ -7,6 +8,7 @@ const tenantRoutes = require('./routes/tenantRoutes');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+app.use(cors());
 app.use(express.json());
 
 // Routes
@@ -23,7 +25,42 @@ const start = async () => {
     try {
         await connectNats();
 
-        // Initialize GSTIN event subscriber
+        // Ensure third_party_users table exists
+        const knex = require('../../shared/src/db/connection');
+        try {
+            await knex.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+            const hasTable = await knex.schema.hasTable('third_party_users');
+            if (!hasTable) {
+                await knex.schema.createTable('third_party_users', (table) => {
+                    table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+                    table.string('email', 255).unique().notNullable();
+                    table.string('platform', 100).notNullable();
+                    table.timestamp('last_login_at').defaultTo(knex.fn.now());
+                    table.timestamps(true, true);
+                });
+                console.log('✅ Created table third_party_users');
+            } else {
+                console.log('✅ Table third_party_users verified');
+            }
+        } catch (dbErr) {
+            console.error('❌ Failed to verify/create third_party_users table:', dbErr.message);
+        }
+
+        try {
+            const hasActivityType = await knex.schema.hasColumn('activity_logs', 'activity_type');
+            if (!hasActivityType) {
+                await knex.schema.table('activity_logs', (table) => {
+                    table.string('activity_type', 100).nullable();
+                });
+                console.log('✅ Added column activity_type to activity_logs table');
+            } else {
+                console.log('✅ Column activity_type in activity_logs verified');
+            }
+        } catch (dbErr) {
+            console.error('❌ Failed to verify/alter activity_logs table:', dbErr.message);
+        }
+        // Checked settings JSONB config on workspaces table
+
         const { setupGstinEventSubscriber } = require('./events/gstinEventHandler');
         setupGstinEventSubscriber();
 

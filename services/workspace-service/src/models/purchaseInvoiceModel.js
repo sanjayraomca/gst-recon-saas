@@ -1,9 +1,9 @@
-const db = require('../../../shared/src/db/connection');
+const knex = require('../../../shared/src/db/connection');
 const crypto = require('crypto');
 
 /**
  * Purchase Invoice Model
- * Matches purchase_invoices table schema exactly
+ * Matches purchase_vouchers table schema exactly
  */
 class PurchaseInvoiceModel {
     /**
@@ -24,28 +24,94 @@ class PurchaseInvoiceModel {
         const { page = 1, page_size = 50 } = pagination;
         const offset = (page - 1) * page_size;
 
-        let query = db('purchase_invoices')
-            .where({ workspace_id: workspaceId });
+        let query = knex('purchase_vouchers as ev')
+            .leftJoin('purchase_items as pi', 'ev.id', 'pi.purchase_id')
+            .where('ev.workspace_id', workspaceId);
 
-        // Apply filters
-        if (gstin_id) query = query.where({ gstin_id });
-        if (supplier_id) query = query.where({ supplier_id });
-        if (invoice_date_from) query = query.where('invoice_date', '>=', invoice_date_from);
-        if (invoice_date_to) query = query.where('invoice_date', '<=', invoice_date_to);
-        if (itc_eligibility_status) query = query.where({ itc_eligibility_status });
-        if (reverse_charge !== undefined) query = query.where({ reverse_charge });
-        if (payment_status) query = query.where({ payment_status });
+        // Apply filters — column names match purchase_vouchers schema exactly
+        if (gstin_id) query = query.where('ev.supplier_gstin', gstin_id);         // gstin_id param → supplier_gstin column
+        if (supplier_id) query = query.where('ev.supplier_id', supplier_id);
+        if (invoice_date_from) query = query.where('ev.supplier_invoice_date', '>=', invoice_date_from);  // invoice_date → supplier_invoice_date
+        if (invoice_date_to) query = query.where('ev.supplier_invoice_date', '<=', invoice_date_to);
+        if (itc_eligibility_status) {
+            // itc_eligible is a boolean column; map string values to boolean
+            const isEligible = itc_eligibility_status === 'eligible' || itc_eligibility_status === 'true' || itc_eligibility_status === true;
+            query = query.where('ev.itc_eligible', isEligible);
+        }
+        if (reverse_charge !== undefined) query = query.where('ev.is_rcm', reverse_charge);  // reverse_charge param → is_rcm column
+        if (payment_status) query = query.where('ev.payment_status', payment_status);
         if (search) {
-            query = query.where('invoice_number', 'like', `%${search}%`);
+            query = query.where('ev.supplier_invoice_no', 'ilike', `%${search}%`);  // invoice_number → supplier_invoice_no
         }
 
         // Get total count
         const countQuery = query.clone();
         const [{ count }] = await countQuery.count('* as count');
 
-        // Get paginated results
+        // Get paginated results — explicit columns only (avoids fetching t_extra_info JSONB + amendment blobs on every row)
         const invoices = await query
-            .orderBy('invoice_date', 'desc')
+            .select(
+                // Core identity
+                'ev.id',
+                'ev.workspace_id',
+                'ev.tenant_id',
+                'ev.import_filing_id',
+                'ev.tax_period_id',
+                // Supplier info
+                'ev.supplier_name',
+                'ev.supplier_gstin',
+                'ev.supplier_id',
+                // Invoice identity
+                'ev.supplier_invoice_no',
+                'ev.supplier_invoice_date',
+                'ev.book_vchr_no',
+                'ev.book_vchr_date',
+                // Classification
+                'ev.voucher_type',
+                'ev.book_type',
+                'ev.source_section',
+                'ev.gstr_category',
+                'ev.platform',
+                'ev.status',
+                'ev.is_deleted',
+                // Financial totals
+                'ev.taxable_total',
+                'ev.net_amount',
+                'ev.total_igst_amount',
+                'ev.total_cgst_amount',
+                'ev.total_sgst_amount',
+                'ev.total_cess_amount',
+                'ev.round_off',
+                'ev.discount',
+                // GST fields
+                'ev.place_of_supply',
+                'ev.is_interstate',
+                'ev.is_rcm',
+                'ev.return_period',
+                'ev.filing_period',
+                // ITC tracking
+                'ev.itc_eligible',
+                'ev.itc_claimed',
+                // Payment
+                'ev.payment_status',
+                'ev.amount_paid',
+                // Audit
+                'ev.created_at',
+                'ev.updated_at',
+                // Line item columns from purchase_items join
+                'pi.id as item_id',
+                'pi.taxable_amount as item_taxable_amount',
+                'pi.tax_per as item_tax_per',
+                'pi.igst_amount as item_igst_amount',
+                'pi.cgst_amount as item_cgst_amount',
+                'pi.sgst_amount as item_sgst_amount',
+                'pi.cess_amount as item_cess_amount',
+                'pi.row_total as item_total_amount_with_tax',
+                'pi.row_total as row_total',
+                'pi.invoice_amount as item_invoice_amount',
+                'pi.description as item_description'
+            )
+            .orderBy('ev.supplier_invoice_date', 'desc')
             .limit(page_size)
             .offset(offset);
 
@@ -64,12 +130,21 @@ class PurchaseInvoiceModel {
      * Get single purchase invoice by ID
      */
     static async getById(workspaceId, invoiceId) {
-        return await db('purchase_invoices')
+        const voucher = await knex('purchase_vouchers')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId
             })
             .first();
+
+        if (!voucher) return null;
+
+        const items = await knex('purchase_items')
+            .where('purchase_id', invoiceId)
+            .orderBy('id', 'asc');
+
+        voucher.items = items;
+        return voucher;
     }
 
     /**
@@ -81,9 +156,9 @@ class PurchaseInvoiceModel {
             .update(JSON.stringify(invoiceData))
             .digest('hex');
 
-        const [invoice] = await db('purchase_invoices')
+        const [invoice] = await knex('purchase_vouchers')
             .insert({
-                id: db.raw('uuid_generate_v4()'),
+                id: knex.raw('uuid_generate_v4()'),
                 workspace_id: workspaceId,
                 gstin_id: invoiceData.gstin_id,
                 supplier_id: invoiceData.supplier_id,
@@ -117,8 +192,8 @@ class PurchaseInvoiceModel {
                 source_system: invoiceData.source_system || 'MANUAL',
                 source_file_id: invoiceData.source_file_id,
                 raw_data_hash: hash,
-                created_at: db.fn.now(),
-                updated_at: db.fn.now()
+                created_at: knex.fn.now(),
+                updated_at: knex.fn.now()
             })
             .returning('*');
 
@@ -145,9 +220,9 @@ class PurchaseInvoiceModel {
             }
         });
 
-        filteredData.updated_at = db.fn.now();
+        filteredData.updated_at = knex.fn.now();
 
-        const [invoice] = await db('purchase_invoices')
+        const [invoice] = await knex('purchase_vouchers')
             .where({
                 id: invoiceId,
                 workspace_id: workspaceId

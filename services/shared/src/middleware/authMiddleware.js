@@ -1,41 +1,67 @@
 const jwt = require('jsonwebtoken');
+const knex = require('../db/connection');
 
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
+    console.log(`verifyToken: Token present=${!!token}`);
 
     if (!token) {
         return res.status(401).json({ error: 'Access token required' });
     }
 
     try {
-        // 1. Try to verify with signed secret if provided (HS256)
-        // 2. Try to verify with Public Key if provided (RS256)
-        // Check if KEYCLOAK_PUBLIC_KEY is actually present and not just an empty string
+        let decoded;
         if (process.env.KEYCLOAK_PUBLIC_KEY && process.env.KEYCLOAK_PUBLIC_KEY.trim() !== '') {
             const publicKey = `-----BEGIN PUBLIC KEY-----\n${process.env.KEYCLOAK_PUBLIC_KEY}\n-----END PUBLIC KEY-----`;
-            const user = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
-            req.user = user;
-            return next();
+            decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+        } else {
+            decoded = jwt.decode(token);
+            if (!decoded) {
+                throw new Error("Invalid token structure");
+            }
+            // Manual Expiry Check
+            if (Date.now() >= decoded.exp * 1000) {
+                console.error(`Token expired: Now=${Date.now()}, Exp=${decoded.exp * 1000}`);
+                throw new Error("Token expired");
+            }
         }
 
-        // 3. Fallback: Decode without full signature verification (Dev Mode for Keycloak)
-        // Since getting the public key from Keycloak dynamically requires another fetch,
-        // we'll trust the token structure if we are in a trusted env.
-        // WARNING: In PROD, we must fetch the certs from JWKS endpoint.
-        const decoded = jwt.decode(token);
+        const sub = decoded.sub || decoded.sid || decoded.id;
+        req.user = {
+            ...decoded,
+            sub: sub,
+            id: sub,
+            email: (decoded.email || decoded.preferred_username || '').toLowerCase()
+        };
 
-        if (!decoded) {
-            throw new Error("Invalid token structure");
+        // Resolve internal DB user ID (UUID) and Tenant ID
+        try {
+            let dbUser = await knex('users').where({ auth_provider_id: sub }).select('id', 'tenant_id').first();
+            
+            if (!dbUser && req.user.email) {
+                // Fallback to email lookup if sub not found (e.g. first login after migration or sync issue)
+                dbUser = await knex('users').where({ email: req.user.email }).select('id', 'tenant_id', 'auth_provider_id').first();
+                
+                if (dbUser && !dbUser.auth_provider_id) {
+                    // "Repair" the record by linking the sub to this email-matched user
+                    await knex('users').where({ id: dbUser.id }).update({ auth_provider_id: sub });
+                    console.log(`[authMiddleware] Linked sub ${sub} to existing user ${req.user.email}`);
+                }
+            }
+
+            if (dbUser) {
+                req.user.db_id = dbUser.id; // Correct internal UUID
+                req.user.tenantId = dbUser.tenant_id; // For activity logging fallback
+                req.user.tenant_id = dbUser.tenant_id; // Normalize key
+            } else {
+                console.warn(`[authMiddleware] User not found in database for sub: ${sub}, email: ${req.user.email}`);
+            }
+        } catch (dbErr) {
+            console.error('[authMiddleware] DB lookup failed:', dbErr.message);
         }
 
-        // Manual Expiry Check
-        if (Date.now() >= decoded.exp * 1000) {
-            console.error(`Token expired: Now=${Date.now()}, Exp=${decoded.exp * 1000}, Diff=${Date.now() - (decoded.exp * 1000)}ms`);
-            throw new Error("Token expired");
-        }
-
-        req.user = decoded;
+        console.log(`verifyToken: Success, sub=${req.user.sub}, email=${req.user.email}, db_id=${req.user.db_id}`);
         next();
     } catch (err) {
         console.error('Token verification failed:', err.message);

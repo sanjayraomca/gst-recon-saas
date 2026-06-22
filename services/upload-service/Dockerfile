@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Copy shared module
 COPY services/shared /app/services/shared
+WORKDIR /app/services/shared
+RUN npm install
 
 # Setup service
 WORKDIR /app/services/upload-service

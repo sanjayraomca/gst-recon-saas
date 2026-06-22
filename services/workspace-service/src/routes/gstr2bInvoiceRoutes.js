@@ -5,9 +5,11 @@ const {
     getAllInvoices,
     getInvoiceById
 } = require('../controllers/gstr2bInvoiceController');
+const { authorizeWorkspace } = require('../middleware/workspaceAuthMiddleware');
 
-// All routes require authentication
+// All routes require authentication and workspace authorization
 router.use(verifyToken);
+router.use(authorizeWorkspace);
 
 // GET /gstr2b-invoices - List all GSTR2B invoices with filters
 router.get('/', getAllInvoices);
