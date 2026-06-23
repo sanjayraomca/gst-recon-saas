@@ -135,7 +135,16 @@ const getRunResults = async (req, res) => {
         if (runId === 'latest') {
             const runType = req.query.run_type || 'PURCHASE_2B';
             const latestRun = await ReconciliationModel.getLatestRun(workspaceId, runType);
-            if (!latestRun) return errorResponse(res, 'No runs found for this workspace', 404);
+            if (!latestRun) {
+                return successResponse(res, [], 'No runs found for this workspace', 200, {
+                    pagination: { total: 0, total_pages: 1 },
+                    summary: {
+                        totals: {},
+                        mismatch_by_status: {},
+                        mismatch_by_priority: {}
+                    }
+                });
+            }
             finalRunId = latestRun.id;
             
             const is2aRun = ['PURCHASE_2A', 'GSTR2A_VS_GSTR2B', 'PURCHASE_2A_VS_2B'].includes(latestRun.run_type);
@@ -200,7 +209,13 @@ const getRunTaxSummary = async (req, res) => {
         if (runId === 'latest') {
             const runType = req.query.run_type || 'PURCHASE_2B';
             const latestRun = await ReconciliationModel.getLatestRun(workspaceId, runType);
-            if (!latestRun) return errorResponse(res, 'No reconciliation runs found for this workspace', 404);
+            if (!latestRun) {
+                return successResponse(res, {
+                    totals: {},
+                    mismatch_by_status: {},
+                    mismatch_by_priority: {}
+                }, 'No reconciliation runs found for this workspace');
+            }
             finalRunId = latestRun.id;
         }
 
