@@ -516,7 +516,7 @@ services:
       target: build-stage
     container_name: gst-frontend
     restart: unless-stopped
-    command: npm run dev -- --host 0.0.0.0 --port 3000
+    command: "npm run dev -- --host :: --port 3000"
     volumes:
       - ../recon_frontend:/app
       - /app/node_modules

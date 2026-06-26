@@ -18,8 +18,13 @@ async function seed() {
         await client.connect();
         console.log('Connected to database gst_recon');
         
-        const workspaceId = '8d84c307-e611-40c7-9d1d-3c04fce101fc';
-        const tenantId = 'beb799a7-adb9-4495-b322-935d847f238d';
+        const tenantRes = await client.query('SELECT id FROM tenants LIMIT 1');
+        const workspaceRes = await client.query('SELECT id FROM workspaces LIMIT 1');
+        if (tenantRes.rows.length === 0 || workspaceRes.rows.length === 0) {
+            throw new Error('No tenant or workspace found in the database. Please run scratch/test_flows.js first!');
+        }
+        const tenantId = tenantRes.rows[0].id;
+        const workspaceId = workspaceRes.rows[0].id;
         const gstn = '24AALFA9789K1ZO';
         const period = '122023'; // Dec 2023
         const fy = '2023-24';
