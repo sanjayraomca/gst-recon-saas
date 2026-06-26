@@ -816,27 +816,15 @@ const getTenantActivities = async (req, res) => {
         }
 
         if (type && type !== 'ALL') {
-            const typeLower = type.toLowerCase().trim();
+            const typeLower = type.toLowerCase();
             if (typeLower === 'notices') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.entity_type)'), ['notice', 'gst_notice']);
+                query = query.whereIn('activity_logs.entity_type', ['NOTICE', 'GST_NOTICE']);
             } else if (typeLower === 'tax liabilities') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.action_type)'), ['liability_due', 'payment_pending']);
+                query = query.whereIn('activity_logs.action_type', ['LIABILITY_DUE', 'PAYMENT_PENDING']);
             } else if (typeLower === 'user actions') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.entity_type)'), ['user', 'auth']);
+                query = query.whereIn('activity_logs.entity_type', ['USER', 'AUTH']);
             } else {
-                let actionTypes = [typeLower];
-                if (typeLower === 'reconciliation_run' || typeLower === 'reconciliation') {
-                    actionTypes = ['reconciliation_run', 'reconciliation'];
-                } else if (typeLower === 'user_login' || typeLower === 'user sign ins' || typeLower === 'login') {
-                    actionTypes = ['user_login', 'login_success', 'login'];
-                } else if (typeLower === 'user_invited' || typeLower === 'user invitations') {
-                    actionTypes = ['user_invited', 'user_invitation'];
-                } else if (typeLower === 'tally_sync_pull' || typeLower === 'tally sync') {
-                    actionTypes = ['tally_sync_pull', 'tally_sync'];
-                } else if (typeLower === 'delete_book_data_row' || typeLower === 'deletions') {
-                    actionTypes = ['delete_book_data_row', 'delete_book_data'];
-                }
-                query = query.whereIn(database.raw('LOWER(activity_logs.action_type)'), actionTypes);
+                query = query.where('activity_logs.action_type', type);
             }
         }
 
