@@ -1251,7 +1251,7 @@ const updateUser = async (req, res) => {
 const updateRolePermissions = async (req, res) => {
     try {
         const { id } = req.params; // tenantId
-        const { matrix } = req.body; // { ROLE: { perm: true, ... }, ... }
+        const { matrix, allowedPermissions } = req.body; // { matrix: { ROLE: { perm: true, ... } }, allowedPermissions: { perm: true, ... } }
 
         if (!matrix) {
             return errorResponse(res, 'Permissions matrix is required', 400);
@@ -1265,6 +1265,9 @@ const updateRolePermissions = async (req, res) => {
 
         const metadata = tenant.metadata || {};
         metadata.role_policies = matrix;
+        if (allowedPermissions) {
+            metadata.allowed_permissions = allowedPermissions;
+        }
 
         await knex('tenants')
             .where({ id })
@@ -1278,13 +1281,18 @@ const updateRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length > 0) {
-            // Perform updates for each role in the matrix
+            // Perform updates for each role in the matrix, intersecting with allowedPermissions
             for (const [role, permissions] of Object.entries(matrix)) {
+                const filteredPermissions = {};
+                for (const [key, val] of Object.entries(permissions)) {
+                    filteredPermissions[key] = val && (allowedPermissions ? (allowedPermissions[key] || false) : true);
+                }
+
                 await knex('workspace_users')
                     .whereIn('workspace_id', workspaceIds)
                     .andWhere({ role: role })
                     .update({
-                        permissions: JSON.stringify(permissions)
+                        permissions: JSON.stringify(filteredPermissions)
                     });
             }
         }
@@ -1303,7 +1311,10 @@ const getRolePermissions = async (req, res) => {
         // 1. Try to get from Tenant Metadata (Source of Truth)
         const tenant = await knex('tenants').where({ id }).select('metadata').first();
         if (tenant && tenant.metadata && tenant.metadata.role_policies) {
-            return successResponse(res, tenant.metadata.role_policies);
+            return successResponse(res, {
+                matrix: tenant.metadata.role_policies,
+                allowedPermissions: tenant.metadata.allowed_permissions || {}
+            });
         }
 
         // 2. Fallback: If not in metadata, try to extract from existing workspace_users
@@ -1311,7 +1322,7 @@ const getRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length === 0) {
-            return successResponse(res, {}, 'No policy found');
+            return successResponse(res, { matrix: {}, allowedPermissions: {} }, 'No policy found');
         }
 
         const records = await knex('workspace_users')
@@ -1321,11 +1332,20 @@ const getRolePermissions = async (req, res) => {
             .distinctOn('role');
 
         const matrix = {};
+        const allowedPermissions = {};
         records.forEach(r => {
-            matrix[r.role] = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
+            const perms = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
+            matrix[r.role] = perms;
+            if (perms) {
+                Object.keys(perms).forEach(k => {
+                    if (perms[k]) {
+                        allowedPermissions[k] = true;
+                    }
+                });
+            }
         });
 
-        return successResponse(res, matrix);
+        return successResponse(res, { matrix, allowedPermissions });
     } catch (error) {
         console.error('Get Role Permissions Error:', error);
         return errorResponse(res, error);
