@@ -10,8 +10,7 @@ RUN npm install
 # Setup Tenant Service
 WORKDIR /app/services/tenant-services
 COPY services/tenant-services/package.json .
-COPY services/tenant-services/.env .
-
+COPY services/tenant-services/.env.docker .env
 # Install dependencies (including local shared link if we used it, but here we likely refer to it by path or just copy code)
 # Since package.json might not refer to shared via file:../shared yet, we might need to adjust.
 # For now, let's assume we copy shared and the code requires it via relative path.
