@@ -262,6 +262,7 @@ services:
     volumes:
       - ./services/tenant-services/src:/app/services/tenant-services/src
       - ./services/shared:/app/services/shared
+      - /app/services/shared/node_modules
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tenant-service.rule=PathPrefix(`/auth`) || PathPrefix(`/tenants`)"
@@ -304,6 +305,7 @@ services:
     volumes:
       - ./services/workspace-service/src:/app/services/workspace-service/src
       - ./services/shared:/app/services/shared
+      - /app/services/shared/node_modules
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.workspace-service.rule=PathPrefix(`/workspaces`) || PathPrefix(`/purchase-invoices`) || PathPrefix(`/gstr2b-invoices`) || PathPrefix(`/reconciliation`) || PathPrefix(`/states`) || PathPrefix(`/suppliers`) || PathPrefix(`/connectors`)"
@@ -381,6 +383,7 @@ services:
       - ./uploads:/app/uploads
       - ./services/upload-service/src:/app/services/upload-service/src
       - ./services/shared:/app/services/shared
+      - /app/services/shared/node_modules
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.upload-service.rule=PathPrefix(`/uploads`) || PathPrefix(`/gst-import`)"
@@ -455,6 +458,7 @@ services:
     volumes:
       - ./services/json-import-service/src:/app/services/json-import-service/src
       - ./services/shared:/app/services/shared
+      - /app/services/shared/node_modules
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.json-import-service.rule=PathPrefix(`/json-import`)"
@@ -496,6 +500,7 @@ services:
     volumes:
       - ./services/notification/src:/app/services/notification/src
       - ./services/shared:/app/services/shared
+      - /app/services/shared/node_modules
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.notification-service.rule=PathPrefix(`/notifications`)"
