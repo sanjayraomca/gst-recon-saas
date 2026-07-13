@@ -118,6 +118,8 @@ services:
       KONG_LOG_LEVEL: info
     volumes:
       - ./services/api-gateway/kong.yml:/usr/local/kong/declarative/kong.yml:ro
+    ports:
+      - "8002:8002"   # published for local/tunnel access (Traefik still the prod entrypoint)
     networks:
       - gst-network
     labels:
