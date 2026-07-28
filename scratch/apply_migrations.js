@@ -1,7 +1,7 @@
 const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: '/home/tanvir/Desktop/gsttool_project/gst-recon-saas/.env' });
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const dbConfig = {
     host: '127.0.0.1',

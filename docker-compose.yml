@@ -43,6 +43,8 @@ services:
       POSTGRES_DB: ${POSTGRES_MAIN_DB}
       POSTGRES_USER: ${POSTGRES_MAIN_USER}
       POSTGRES_PASSWORD: ${POSTGRES_MAIN_PASSWORD}
+    ports:
+      - "5435:5432"
     volumes:
       - postgres_main_data:/var/lib/postgresql/data
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro
@@ -93,6 +95,8 @@ services:
     depends_on:
       postgres-keycloak:
         condition: service_healthy
+    ports:
+      - "8080:8080"
     networks:
       - gst-network
     labels:
@@ -413,53 +417,16 @@ services:
       retries: 5
       start_period: 20s
 
-<<<<<<< HEAD
-  frontend:
+  recon-frontend:
     build:
       context: ../recon_frontend
       dockerfile: Dockerfile
-      target: build-stage
-    container_name: gst-frontend
+    container_name: gst-recon-frontend
     restart: unless-stopped
-    command: npm run dev -- --host 0.0.0.0 --port 3000
-    volumes:
-      - ../recon_frontend:/app
-      - /app/node_modules
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:80"
     networks:
       - gst-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`app.gst.local`)"
-      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # ==================== TOOLS ====================
-  
-  adminer:
-    image: adminer:4
-    container_name: gst-adminer
-    command: php -S 0.0.0.0:8080 -t /var/www/html
-    ports:
-      - "127.0.0.1:8082:8080"
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres-main
-    networks:
-      - gst-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.adminer.rule=Host(`adminer.gst.local`)"
-      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
-
-
-=======
->>>>>>> b5cc39421532fdd47648562aa1c584201af9d9ee
 volumes:
   postgres_main_data:
   postgres_keycloak_data:
