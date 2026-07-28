@@ -728,14 +728,22 @@ const pullPurchaseData = async (req, res) => {
             });
             const httpStatus = apiErr.response?.status;
             let userMsg;
+            const adeskErrorMsg = apiErr.response?.data?.message || apiErr.response?.data?.error;
+            
             if (httpStatus === 404) {
-                userMsg = `Adesk Cloud URL returned 404 Not Found. The ngrok tunnel or API endpoint URL may be stale or incorrect. Please update the Cloud URL in Connector Setup. (URL: ${cleanUrl})`;
+                userMsg = `Connection Failed: Could not find the Adesk system. The Cloud URL might be outdated. Please update it in Connector Setup.`;
             } else if (httpStatus === 401 || httpStatus === 403) {
-                userMsg = `Adesk API rejected the request with ${httpStatus}. Check your API Token in Connector Setup.`;
+                userMsg = `Access Denied: The Adesk system rejected our access. Please double-check your API Token in Connector Setup.`;
+            } else if (httpStatus === 400) {
+                userMsg = adeskErrorMsg 
+                    ? `Data Sync Failed: Adesk reported an issue - "${adeskErrorMsg}". Please check your Workspace details and try again.` 
+                    : `Data Sync Failed: The Adesk system rejected the request. Please verify that your Workspace GSTIN and sync period are correct.`;
             } else if (httpStatus) {
-                userMsg = `Adesk Cloud API returned HTTP ${httpStatus}. Please verify the URL and API Token in Connector Setup.`;
+                userMsg = adeskErrorMsg
+                    ? `Data Sync Error: ${adeskErrorMsg}`
+                    : `Data Sync Error: The Adesk system encountered an unexpected issue. Please try again later.`;
             } else {
-                userMsg = `Cannot connect to Adesk Cloud API. Check if the ngrok tunnel is running. (${apiErr.message})`;
+                userMsg = `Connection Timeout: Cannot reach the Adesk system right now. Please check if your Adesk Connector app is running and connected.`;
             }
             return errorResponse(res, userMsg, 502);
         }

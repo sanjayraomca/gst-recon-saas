@@ -816,27 +816,15 @@ const getTenantActivities = async (req, res) => {
         }
 
         if (type && type !== 'ALL') {
-            const typeLower = type.toLowerCase().trim();
+            const typeLower = type.toLowerCase();
             if (typeLower === 'notices') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.entity_type)'), ['notice', 'gst_notice']);
+                query = query.whereIn('activity_logs.entity_type', ['NOTICE', 'GST_NOTICE']);
             } else if (typeLower === 'tax liabilities') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.action_type)'), ['liability_due', 'payment_pending']);
+                query = query.whereIn('activity_logs.action_type', ['LIABILITY_DUE', 'PAYMENT_PENDING']);
             } else if (typeLower === 'user actions') {
-                query = query.whereIn(database.raw('LOWER(activity_logs.entity_type)'), ['user', 'auth']);
+                query = query.whereIn('activity_logs.entity_type', ['USER', 'AUTH']);
             } else {
-                let actionTypes = [typeLower];
-                if (typeLower === 'reconciliation_run' || typeLower === 'reconciliation') {
-                    actionTypes = ['reconciliation_run', 'reconciliation'];
-                } else if (typeLower === 'user_login' || typeLower === 'user sign ins' || typeLower === 'login') {
-                    actionTypes = ['user_login', 'login_success', 'login'];
-                } else if (typeLower === 'user_invited' || typeLower === 'user invitations') {
-                    actionTypes = ['user_invited', 'user_invitation'];
-                } else if (typeLower === 'tally_sync_pull' || typeLower === 'tally sync') {
-                    actionTypes = ['tally_sync_pull', 'tally_sync'];
-                } else if (typeLower === 'delete_book_data_row' || typeLower === 'deletions') {
-                    actionTypes = ['delete_book_data_row', 'delete_book_data'];
-                }
-                query = query.whereIn(database.raw('LOWER(activity_logs.action_type)'), actionTypes);
+                query = query.where('activity_logs.action_type', type);
             }
         }
 
@@ -1251,7 +1239,7 @@ const updateUser = async (req, res) => {
 const updateRolePermissions = async (req, res) => {
     try {
         const { id } = req.params; // tenantId
-        const { matrix, allowedPermissions } = req.body; // { matrix: { ROLE: { perm: true, ... } }, allowedPermissions: { perm: true, ... } }
+        const { matrix } = req.body; // { ROLE: { perm: true, ... }, ... }
 
         if (!matrix) {
             return errorResponse(res, 'Permissions matrix is required', 400);
@@ -1265,9 +1253,6 @@ const updateRolePermissions = async (req, res) => {
 
         const metadata = tenant.metadata || {};
         metadata.role_policies = matrix;
-        if (allowedPermissions) {
-            metadata.allowed_permissions = allowedPermissions;
-        }
 
         await knex('tenants')
             .where({ id })
@@ -1281,18 +1266,13 @@ const updateRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length > 0) {
-            // Perform updates for each role in the matrix, intersecting with allowedPermissions
+            // Perform updates for each role in the matrix
             for (const [role, permissions] of Object.entries(matrix)) {
-                const filteredPermissions = {};
-                for (const [key, val] of Object.entries(permissions)) {
-                    filteredPermissions[key] = val && (allowedPermissions ? (allowedPermissions[key] || false) : true);
-                }
-
                 await knex('workspace_users')
                     .whereIn('workspace_id', workspaceIds)
                     .andWhere({ role: role })
                     .update({
-                        permissions: JSON.stringify(filteredPermissions)
+                        permissions: JSON.stringify(permissions)
                     });
             }
         }
@@ -1311,10 +1291,7 @@ const getRolePermissions = async (req, res) => {
         // 1. Try to get from Tenant Metadata (Source of Truth)
         const tenant = await knex('tenants').where({ id }).select('metadata').first();
         if (tenant && tenant.metadata && tenant.metadata.role_policies) {
-            return successResponse(res, {
-                matrix: tenant.metadata.role_policies,
-                allowedPermissions: tenant.metadata.allowed_permissions || {}
-            });
+            return successResponse(res, tenant.metadata.role_policies);
         }
 
         // 2. Fallback: If not in metadata, try to extract from existing workspace_users
@@ -1322,7 +1299,7 @@ const getRolePermissions = async (req, res) => {
         const workspaceIds = workspaces.map(w => w.id);
 
         if (workspaceIds.length === 0) {
-            return successResponse(res, { matrix: {}, allowedPermissions: {} }, 'No policy found');
+            return successResponse(res, {}, 'No policy found');
         }
 
         const records = await knex('workspace_users')
@@ -1332,20 +1309,11 @@ const getRolePermissions = async (req, res) => {
             .distinctOn('role');
 
         const matrix = {};
-        const allowedPermissions = {};
         records.forEach(r => {
-            const perms = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
-            matrix[r.role] = perms;
-            if (perms) {
-                Object.keys(perms).forEach(k => {
-                    if (perms[k]) {
-                        allowedPermissions[k] = true;
-                    }
-                });
-            }
+            matrix[r.role] = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
         });
 
-        return successResponse(res, { matrix, allowedPermissions });
+        return successResponse(res, matrix);
     } catch (error) {
         console.error('Get Role Permissions Error:', error);
         return errorResponse(res, error);

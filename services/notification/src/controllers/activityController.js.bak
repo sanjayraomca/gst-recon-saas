@@ -39,28 +39,13 @@ const getActivities = async (req, res) => {
             .orderBy('created_at', 'desc');
 
         if (type && type !== 'ALL') {
-            const typeLower = type.toLowerCase().trim();
-            if (typeLower === 'notices') {
-                query.whereIn(db.raw('LOWER(entity_type)'), ['notice', 'gst_notice']);
-            } else if (typeLower === 'tax liabilities') {
-                query.whereIn(db.raw('LOWER(action_type)'), ['liability_due', 'payment_pending']);
-            } else if (typeLower === 'user actions') {
-                query.whereIn(db.raw('LOWER(entity_type)'), ['user', 'auth']);
-            } else {
-                let actionTypes = [typeLower];
-                if (typeLower === 'reconciliation_run' || typeLower === 'reconciliation') {
-                    actionTypes = ['reconciliation_run', 'reconciliation'];
-                } else if (typeLower === 'user_login' || typeLower === 'user sign ins' || typeLower === 'login') {
-                    actionTypes = ['user_login', 'login_success', 'login'];
-                } else if (typeLower === 'user_invited' || typeLower === 'user invitations') {
-                    actionTypes = ['user_invited', 'user_invitation'];
-                } else if (typeLower === 'tally_sync_pull' || typeLower === 'tally sync') {
-                    actionTypes = ['tally_sync_pull', 'tally_sync'];
-                } else if (typeLower === 'delete_book_data_row' || typeLower === 'deletions') {
-                    actionTypes = ['delete_book_data_row', 'delete_book_data'];
-                }
-                query.whereIn(db.raw('LOWER(action_type)'), actionTypes);
-            }
+            // Handle "Notices", "Tax Liabilities" etc. mapping if needed, or direct match
+            // Assuming frontend sends categories like 'NOTICE', 'LIABILITY', etc.
+            // Or broader filtering like:
+            if (type === 'Notices') query.whereIn('entity_type', ['NOTICE', 'GST_NOTICE']);
+            else if (type === 'Tax Liabilities') query.whereIn('action_type', ['LIABILITY_DUE', 'PAYMENT_PENDING']);
+            else if (type === 'User Actions') query.whereIn('entity_type', ['USER', 'AUTH']);
+            else query.where('action_type', type);
         }
 
         if (search) {

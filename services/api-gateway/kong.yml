@@ -12,6 +12,7 @@ services:
         paths:
           - /tenants
         strip_path: false
+
   - name: workspace-service
     url: http://workspace-service:3002
     routes:
@@ -19,6 +20,7 @@ services:
         paths:
           - /workspaces
           - /purchase-invoices
+          - /sales-invoices
           - /gstr2b-invoices
           - /reconciliation
           - /itc-decisions
@@ -26,7 +28,15 @@ services:
           - /rcm-liabilities
           - /notices
           - /vendor-communications
+          - /states
+          - /connectors
+          - /book-data
+          - /suppliers
+          - /customers
+          - /connector-logs
+          - /workspaces/user-preferences
         strip_path: false
+
   - name: gstin-service
     url: http://gstn-service:3003
     routes:
@@ -34,11 +44,7 @@ services:
         paths:
           - /gstins
         strip_path: false
-      - name: suppliers
-        paths:
-          - /suppliers
-        strip_path: false
-          
+
   - name: upload-service
     url: http://upload-service:3004
     routes:
@@ -47,6 +53,7 @@ services:
           - /uploads
           - /gst-import
         strip_path: false
+
   - name: report-service
     url: http://report-service:3005
     routes:
@@ -59,3 +66,18 @@ services:
           - /analytics
         strip_path: false
 
+  - name: notification-service
+    url: http://notification-service:3006
+    routes:
+      - name: notification-routes
+        paths:
+          - /notifications
+        strip_path: false
+
+  - name: json-import-service
+    url: http://json-import-service:3007
+    routes:
+      - name: json-import-routes
+        paths:
+          - /json-import
+        strip_path: false
