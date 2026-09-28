@@ -90,6 +90,8 @@ services:
       KC_HOSTNAME: ${KEYCLOAK_DOMAIN}
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
+      # Substituted into ${KEYCLOAK_CLIENT_SECRET} in infra/keycloak/gsttool-realm.json on first realm import
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
     volumes:
       - ./infra/keycloak/gsttool-realm.json:/opt/keycloak/data/import/gsttool-realm.json:ro
     depends_on:
@@ -170,6 +172,9 @@ services:
     image: mailhog/mailhog:latest
     container_name: gst-mailhog
     restart: unless-stopped
+    ports:
+      - "8025:8025"   # Web UI
+      - "1025:1025"   # SMTP port
     networks:
       - gst-network
 
@@ -201,6 +206,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - KEYCLOAK_PUBLIC_KEY=${KEYCLOAK_PUBLIC_KEY}
       - FRONTEND_URL=${FRONTEND_URL}
+      - RECAPTCHA_SECRET_KEY=${RECAPTCHA_SECRET_KEY}
+      - RECAPTCHA_DISABLED=${RECAPTCHA_DISABLED:-false}
     command: npm run dev
     volumes:
       - ./services/tenant-services/src:/app/services/tenant-services/src
@@ -236,6 +243,8 @@ services:
       - KEYCLOAK_CLIENT_ID=admin-api
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
       - KEYCLOAK_PUBLIC_KEY=${KEYCLOAK_PUBLIC_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - GSTN_ENCRYPTION_KEY=${GSTN_ENCRYPTION_KEY}
       - NATS_URL=nats://nats:4222
       - PORT=3002
       - EXT_API_URL=http://gsp_api_app:4015
@@ -270,6 +279,7 @@ services:
       - DB_USER=${POSTGRES_MAIN_USER}
       - DB_PASSWORD=${POSTGRES_MAIN_PASSWORD}
       - KEYCLOAK_PUBLIC_KEY=${KEYCLOAK_PUBLIC_KEY}
+      - GSTN_ENCRYPTION_KEY=${GSTN_ENCRYPTION_KEY}
       - NATS_URL=nats://nats:4222
       - PORT=3003
     networks:
@@ -368,6 +378,11 @@ services:
       - KEYCLOAK_PUBLIC_KEY=${KEYCLOAK_PUBLIC_KEY}
       - NATS_URL=nats://nats:4222
       - PORT=3007
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_USE_SSL=false
     command: npm run dev
     volumes:
       - ./services/json-import-service/src:/app/services/json-import-service/src
@@ -425,6 +440,17 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    networks:
+      - gst-network
+
+  adminer:
+    image: adminer:4
+    container_name: gst-adminer
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres-main
     networks:
       - gst-network
 volumes:

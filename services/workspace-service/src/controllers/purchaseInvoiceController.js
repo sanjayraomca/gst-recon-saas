@@ -2,6 +2,8 @@ const PurchaseInvoiceModel = require('../models/purchaseInvoiceModel');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
 const jwt = require('jsonwebtoken');
+const { getRequiredSecret } = require('../../../shared/src/utils/requiredSecrets');
+const { isPlatformSuperAdminById } = require('../../../shared/src/utils/workspaceAccess');
 
 const VALID_GST_STATE_CODES = new Set([
     "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
@@ -335,8 +337,9 @@ const syncThirdPartyPurchases = async (req, res) => {
         } else if (rawOrgToken) {
             // ── Tier 2: Org-scoped JWT ───────────────────────────────────────────
             let orgClaims;
+            // Outside the inner try: a missing secret is a server error (500), not a bad token (401)
+            const jwtSecret = getRequiredSecret('JWT_SECRET');
             try {
-                const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
                 orgClaims = jwt.verify(rawOrgToken, jwtSecret, { issuer: 'gst-recon-tool' });
             } catch (jwtErr) {
                 const errMsg = `Invalid or expired org_access_token: ${jwtErr.message}. Please login again.`;
@@ -383,7 +386,7 @@ const syncThirdPartyPurchases = async (req, res) => {
                 return errorResponse(res, errMsg, 401);
             }
 
-            const isSuperAdmin = user.role === 'SUPER_ADMIN' || (user.groups && user.groups.includes('super-admin'));
+            const isSuperAdmin = await isPlatformSuperAdminById(user.db_id);
             if (!isSuperAdmin) {
                 const access = await knex('workspace_users')
                     .where({ workspace_id: workspace.id, user_id: user.db_id || user.id, invitation_status: 'ACTIVE' })

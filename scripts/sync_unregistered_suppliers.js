@@ -1,21 +1,32 @@
-const knex = require('/home/tanvir/Desktop/gsttool_project/gst-recon-saas/services/shared/node_modules/knex')({
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
+if (!process.env.POSTGRES_MAIN_PASSWORD) {
+    console.error('POSTGRES_MAIN_PASSWORD must be set (see .env.example).');
+    process.exit(1);
+}
+
+const DB_USER = process.env.POSTGRES_MAIN_USER || 'gstadmin';
+const DB_NAME = process.env.POSTGRES_MAIN_DB || 'gst_recon';
+
+const knex = require(path.join(__dirname, '../services/shared/node_modules/knex'))({
     client: 'pg',
     connection: {
         host: 'localhost',
         port: 5435,
-        user: 'gstadmin',
-        password: 'GstAdmin123',
-        database: 'gst_recon'
+        user: DB_USER,
+        password: process.env.POSTGRES_MAIN_PASSWORD,
+        database: DB_NAME
     }
 });
 
 process.env.DB_HOST = 'localhost';
 process.env.DB_PORT = '5435';
-process.env.DB_USER = 'gstadmin';
-process.env.DB_PASSWORD = 'GstAdmin123';
-process.env.DB_NAME = 'gst_recon';
+process.env.DB_USER = DB_USER;
+process.env.DB_PASSWORD = process.env.POSTGRES_MAIN_PASSWORD;
+process.env.DB_NAME = DB_NAME;
 
-const SupplierMasterService = require('/home/tanvir/Desktop/gsttool_project/gst-recon-saas/services/shared/src/services/supplierMasterService');
+const SupplierMasterService = require(path.join(__dirname, '../services/shared/src/services/supplierMasterService'));
 
 async function syncUnregistered() {
     console.log('Starting sync for unregistered suppliers...');

@@ -146,6 +146,17 @@ class KeycloakService {
         }
     }
 
+    async deleteUser(userId) {
+        const adminToken = await this.getAdminToken();
+        const url = `${this.baseUrl}/admin/realms/${this.realm}/users/${userId}`;
+        await axios.delete(url, {
+            headers: {
+                'Authorization': `Bearer ${adminToken}`
+            }
+        });
+        return true;
+    }
+
     async updateUser(userId, userData) {
         try {
             const adminToken = await this.getAdminToken();

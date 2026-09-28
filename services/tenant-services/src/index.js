@@ -8,6 +8,9 @@ const tenantRoutes = require('./routes/tenantRoutes');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Fail fast if the org_access_token signing secret is missing or a known placeholder
+require('../../shared/src/utils/requiredSecrets').assertRequiredSecrets(['JWT_SECRET'], 'tenant-service');
+
 app.use(cors());
 app.use(express.json());
 

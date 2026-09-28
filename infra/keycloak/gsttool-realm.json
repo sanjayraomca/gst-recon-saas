@@ -41,7 +41,7 @@
             "description": "Client for managing users, groups, and fine-grained authorization",
             "enabled": true,
             "clientAuthenticatorType": "client-secret",
-            "secret": "admin-api-secret-change-in-production",
+            "secret": "${KEYCLOAK_CLIENT_SECRET}",
             "redirectUris": [
                 "http://localhost:*",
                 "http://127.0.0.1:*",

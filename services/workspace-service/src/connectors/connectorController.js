@@ -2,6 +2,7 @@ const ConnectorModel = require('./connectorModel');
 const knex = require('../../../shared/src/db/connection');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const { isPlatformSuperAdmin } = require('../../../shared/src/utils/platformAdmin');
 
 /**
  * ConnectorController — API Key Management for Book Data Connectors
@@ -27,12 +28,13 @@ const isAuthorizedForWorkspace = async (userId, workspaceId) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) return false;
 
-    // 1. System Super Admin
-    const superAdminRecord = await knex('workspace_users')
-        .where({ user_id: userId, role: 'SUPER_ADMIN' })
-        .select('id')
-        .first();
-    if (superAdminRecord) return true;
+    // 0. Platform super admin (designated server-side in users.metadata.platform_role)
+    const requestingUser = await knex('users').where({ id: userId }).select('metadata', 'is_active').first();
+    if (isPlatformSuperAdmin(requestingUser)) return true;
+
+    // NOTE: a SUPER_ADMIN row in workspace_users is an organisation-level role (tenant admins can
+    // assign "Super Admin" inside their own org). It must never grant access to other workspaces,
+    // so it is only honoured below for THIS workspace.
 
     // 2. Tenant Admin for this specific workspace (only allowed if superadmin enabled it)
     if (workspaceId && uuidRegex.test(workspaceId)) {
@@ -47,8 +49,9 @@ const isAuthorizedForWorkspace = async (userId, workspaceId) => {
             
             if (settings.allow_tenant_api_keys === true) {
                 const tenantAdminRecord = await knex('workspace_users')
-                    .where({ user_id: userId, workspace_id: workspaceId })
-                    .whereIn('role', ['TENANT_ADMIN', 'Tenant Admin'])
+                    .where({ user_id: userId, workspace_id: workspaceId, invitation_status: 'ACTIVE' })
+                    .whereNull('removed_at')
+                    .whereIn('role', ['TENANT_ADMIN', 'Tenant Admin', 'SUPER_ADMIN'])
                     .select('id')
                     .first();
                 if (tenantAdminRecord) return true;
@@ -62,7 +65,9 @@ const isAuthorizedForWorkspace = async (userId, workspaceId) => {
 // ── Middleware: guard all routes ─────────────────────────────────────────────
 const requireSuperAdmin = async (req, res, next) => {
     const userId = getRequestingUserId(req);
-    const workspaceId = req.query.workspace_id || req.body.workspace_id;
+    // Must be the exact workspace_id the handler uses: GET reads the query, other methods read the body.
+    // (Checking query-then-body let a caller authorise with one workspace and act on another.)
+    const workspaceId = req.method === 'GET' ? req.query.workspace_id : (req.body && req.body.workspace_id);
     if (!await isAuthorizedForWorkspace(userId, workspaceId)) {
         return errorResponse(res, 'Forbidden — only SUPER_ADMIN or Tenant Admin of this organization can manage API keys', 403);
     }

@@ -7,6 +7,9 @@ const knex = require('../../shared/src/db/connection'); // Use shared DB connect
 const app = express();
 const PORT = process.env.PORT || 3002;
 
+// Fail fast if required secrets are missing or known placeholders
+require('../../shared/src/utils/requiredSecrets').assertRequiredSecrets(['JWT_SECRET', 'GSTN_ENCRYPTION_KEY'], 'workspace-service');
+
 app.use(cors());
 app.use(express.json());
 

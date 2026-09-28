@@ -7,12 +7,16 @@ const Minio = require('minio');
 
 class MinioClient {
     constructor() {
+        // No default credentials: they used to fall back to the values committed in .env.example
+        if (!process.env.MINIO_ACCESS_KEY || !process.env.MINIO_SECRET_KEY) {
+            throw new Error('MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set');
+        }
         this.client = new Minio.Client({
             endPoint: process.env.MINIO_ENDPOINT || 'minio',
             port: parseInt(process.env.MINIO_PORT) || 9000,
             useSSL: process.env.MINIO_USE_SSL === 'true',
-            accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-            secretKey: process.env.MINIO_SECRET_KEY || 'MinioAdmin123'
+            accessKey: process.env.MINIO_ACCESS_KEY,
+            secretKey: process.env.MINIO_SECRET_KEY
         });
 
         this.bucketName = process.env.MINIO_BUCKET || 'gst-documents';

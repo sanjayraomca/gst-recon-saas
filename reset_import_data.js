@@ -3,21 +3,26 @@ const { Client: MinioClient } = require('minio');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
+if (!(process.env.DB_PASSWORD || process.env.POSTGRES_MAIN_PASSWORD) || !(process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD)) {
+    console.error('Set POSTGRES_MAIN_PASSWORD and MINIO_ROOT_PASSWORD (or DB_PASSWORD / MINIO_SECRET_KEY) in .env first.');
+    process.exit(1);
+}
+
 const dbConfig = {
     // Override docker hostname with localhost for host execution
     host: (process.env.DB_HOST === 'postgres-main' ? '127.0.0.1' : process.env.DB_HOST) || '127.0.0.1',
     port: process.env.DB_PORT || 5435,
     database: process.env.DB_NAME || 'gst_recon',
     user: process.env.DB_USER || 'gstadmin',
-    password: process.env.DB_PASSWORD || 'GstAdmin123',
+    password: process.env.DB_PASSWORD || process.env.POSTGRES_MAIN_PASSWORD,
 };
 
 const minioClient = new MinioClient({
     endPoint: (process.env.MINIO_ENDPOINT === 'minio' ? '127.0.0.1' : process.env.MINIO_ENDPOINT) || '127.0.0.1',
     port: parseInt(process.env.MINIO_PORT || '9090'),
     useSSL: process.env.MINIO_USE_SSL === 'true',
-    accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-    secretKey: process.env.MINIO_SECRET_KEY || 'MinioAdmin123'
+    accessKey: process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER,
+    secretKey: process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD
 });
 const bucketName = process.env.MINIO_BUCKET_NAME || 'gst-documents';
 

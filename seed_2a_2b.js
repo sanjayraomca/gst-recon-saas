@@ -1,16 +1,22 @@
 const { Client } = require('pg');
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const crypto = require('crypto');
 
 function uuidv7() {
     return crypto.randomUUID();
 }
 
+if (!process.env.POSTGRES_MAIN_PASSWORD) {
+    console.error('POSTGRES_MAIN_PASSWORD must be set (see .env.example).');
+    process.exit(1);
+}
+
 async function seed() {
     const client = new Client({
-        user: 'gstadmin',
+        user: process.env.POSTGRES_MAIN_USER || 'gstadmin',
         host: 'localhost',
-        database: 'gst_recon',
-        password: 'GstAdmin123',
+        database: process.env.POSTGRES_MAIN_DB || 'gst_recon',
+        password: process.env.POSTGRES_MAIN_PASSWORD,
         port: 5435,
     });
 

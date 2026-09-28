@@ -11,6 +11,9 @@ const db = require('../../shared/src/db/connection');
 const app = express();
 const PORT = process.env.PORT || 3003;
 
+// Fail fast if the GSTN password encryption key is missing or a known placeholder
+require('../../shared/src/utils/requiredSecrets').assertRequiredSecrets(['GSTN_ENCRYPTION_KEY'], 'gstn-service');
+
 app.use(cors());
 app.use(express.json());
 

@@ -9,6 +9,8 @@ const { encrypt } = require('../../../shared/src/utils/encryption');
 const keycloakService = require('../services/keycloakService');
 const { publishMessage } = require('../../../shared/src/nats/client');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const { isPlatformSuperAdmin } = require('../../../shared/src/utils/platformAdmin');
+const { isPlatformSuperAdminById } = require('../../../shared/src/utils/workspaceAccess');
 
 const createWorkspace = async (req, res) => {
     const trx = await knex.transaction();
@@ -30,7 +32,39 @@ const createWorkspace = async (req, res) => {
         else if (filing_frequency === 'monthly') filingType = 'm';
 
         // 1. Resolve Tenant Context
-        let targetTenantId = bodyTenantId || (req.user ? req.user.tenant_id : null);
+        //
+        // IMPORTANT: tenant_id in the request body is NOT trusted on its own —
+        // any authenticated user could otherwise create a workspace (and its
+        // GSTIN link) inside an arbitrary other tenant just by naming its ID.
+        // The caller's own tenant (resolved server-side by authMiddleware from
+        // their verified token) is the source of truth; a body tenant_id is only
+        // honoured when it matches that, when the caller owns that tenant, or
+        // when the caller is a platform super admin provisioning on someone
+        // else's behalf.
+        const callerDbId = req.user ? req.user.db_id : null;
+        const callerTenantId = req.user ? req.user.tenant_id : null;
+
+        let targetTenantId = callerTenantId || null;
+
+        if (bodyTenantId && bodyTenantId !== callerTenantId) {
+            const isPlatAdmin = await isPlatformSuperAdminById(callerDbId);
+            let authorizedForBodyTenant = isPlatAdmin;
+
+            if (!authorizedForBodyTenant && callerDbId) {
+                const ownedTenant = await trx('tenants')
+                    .where({ id: bodyTenantId, owner_user_id: callerDbId })
+                    .first();
+                authorizedForBodyTenant = !!ownedTenant;
+            }
+
+            if (!authorizedForBodyTenant) {
+                await trx.rollback();
+                return res.status(403).json({ error: 'You are not authorized to create an organization under this tenant.' });
+            }
+
+            targetTenantId = bodyTenantId;
+        }
+
         let tenantGroupId = null;
 
         // If no explicit tenant ID, try to derive from Keycloak groups
@@ -85,21 +119,15 @@ const createWorkspace = async (req, res) => {
         }
 
         if (!targetTenantId) {
-            const firstTenant = await trx('tenants').first();
-            if (firstTenant) {
-                targetTenantId = firstTenant.id;
-            } else {
-                // Create default if absolutely nothing exists
-                const defaultTenantId = uuidv4();
-                await trx('tenants').insert({
-                    id: defaultTenantId,
-                    tenant_code: 'default_' + Math.floor(Math.random() * 10000),
-                    legal_name: 'Default Organization',
-                    subscription_plan: 'STARTER',
-                    subscription_status: 'ACTIVE'
-                });
-                targetTenantId = defaultTenantId;
-            }
+            // Previously this fell back to "the first tenant row in the whole
+            // database" or silently created a brand-new "Default Organization"
+            // tenant, which meant a user whose tenant context couldn't be
+            // resolved would have their organization created under a
+            // completely unrelated (and unpredictable) tenant. That's a data
+            // integrity/cross-tenant risk, not a convenience — fail clearly
+            // instead so the real problem (an unlinked account) gets fixed.
+            await trx.rollback();
+            return res.status(400).json({ error: 'Could not determine which organization/tenant this workspace belongs to. Please log in again or contact support.' });
         }
 
         // 2. Check GSTIN Master & Tenant Constraints
@@ -335,90 +363,6 @@ const createWorkspace = async (req, res) => {
             }
         }
 
-        // --- DEV SUPER ADMIN LOGIC START ---
-        const devEmail = 'superadmin.dev@gmail.com';
-        let devUser = await trx('users').where('email', devEmail).first();
-        let devKeycloakId = null;
-
-        // 1. Ensure Dev User Exists (Keycloak + DB)
-        try {
-            // Check Keycloak first
-            const kcDevUser = await keycloakService.getUserByEmail(devEmail);
-            if (kcDevUser) {
-                devKeycloakId = kcDevUser.id;
-            } else {
-                // Create in Keycloak
-                devKeycloakId = await keycloakService.createUser({
-                    email: devEmail,
-                    password: 'superadmin@123',
-                    firstName: 'Dev',
-                    lastName: 'SuperAdmin'
-                });
-            }
-
-            if (!devUser && devKeycloakId) {
-                // Create in Local DB
-                const [newDevUser] = await trx('users').insert({
-                    id: uuidv4(),
-                    email: devEmail,
-                    full_name: 'Dev SuperAdmin',
-                    auth_provider_id: devKeycloakId,
-                    auth_provider_type: 'KEYCLOAK',
-                    created_at: new Date(),
-                    updated_at: new Date(),
-                    is_active: true
-                }).returning('*');
-                devUser = newDevUser;
-            } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
-                // Link if missing
-                await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
-            }
-
-        } catch (devErr) {
-            console.warn('Failed to ensure Dev Super Admin exists:', devErr.message);
-        }
-
-        // 2. Link Dev User to Workspace
-        if (devUser) {
-            try {
-                await trx('workspace_users').insert({
-                    id: uuidv4(),
-                    workspace_id: workspaceId,
-                    user_id: devUser.id,
-                    role: 'SUPER_ADMIN', // Internal role
-                    permissions: { can_upload: true, can_reconcile: true, can_override: true, can_export: true, can_invite: true, can_configure: true }, // Full permissions
-                    invitation_status: 'ACTIVE'
-                }).onConflict(['workspace_id', 'user_id']).merge(); // Safety
-
-                // 3. Add to Keycloak 'Super Admin' Subgroup
-                if (tenantGroupId) {
-                    // We need the ID of the 'Super Admin' role subgroup under this Organization
-                    // Hierarchy: Tenant -> Organization (gstin) -> Role (Super Admin)
-                    // We created these in Step 4.
-                    // We can try to fetch it dynamically or assume the structure.
-                    // safely we find it.
-                    try {
-                        // We already have orgSubgroup from step 4 if it ran.
-                        // But scope is local there. Let's refetch or reorganize.
-                        // Re-fetching robustly:
-                        const orgGroup = await keycloakService.getSubgroupByName(tenantGroupId, gstin);
-                        if (orgGroup) {
-                            const superAdminGroup = await keycloakService.getSubgroupByName(orgGroup.id, 'Super Admin');
-                            if (superAdminGroup && devKeycloakId) {
-                                await keycloakService.addUserToGroup(devKeycloakId, superAdminGroup.id);
-                                console.log('Added Dev Super Admin to Keycloak Super Admin group');
-                            }
-                        }
-                    } catch (kcLinkErr) {
-                        console.warn('Failed to link Dev Super Admin to Keycloak group:', kcLinkErr.message);
-                    }
-                }
-
-            } catch (linkErr) {
-                console.warn('Failed to link Dev Super Admin to workspace:', linkErr.message);
-            }
-        }
-        // --- DEV SUPER ADMIN LOGIC END ---
 
         await trx.commit();
 
@@ -530,9 +474,8 @@ const listWorkspaces = async (req, res) => {
 
         let workspaces = [];
         if (effectiveTenantId) {
-            const isSuperAdmin = localUser.email === 'superadmin.dev@gmail.com' ||
-                req.user.role === 'SUPER_ADMIN' ||
-                (req.user.groups && req.user.groups.includes('super-admin'));
+            // Platform super admin is a DB flag; token role/groups claims are not trusted
+            const isSuperAdmin = isPlatformSuperAdmin(localUser);
 
             // Only perform the tenant mismatch check if the user HAS a tenant_id assigned
             // and it's different from the requested one. If they have NO tenant_id (null),

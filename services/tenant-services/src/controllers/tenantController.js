@@ -3,12 +3,24 @@ const keycloakService = require('../services/keycloakService');
 const crypto = require('crypto');
 const User = require('../models/userModel');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const { notPlatformSuperAdminSql } = require('../../../shared/src/utils/platformAdmin');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const { publishMessage } = require('../../../shared/src/nats/client');
 const knex = require('../../../shared/src/db/connection');
+const { isPlatformSuperAdminById } = require('../../../shared/src/utils/workspaceAccess');
+const { canAccessTenant, isTenantAdmin, workspaceBelongsToTenant } = require('../../../shared/src/utils/tenantAccess');
+const { verifyRecaptcha } = require('../../../shared/src/utils/recaptcha');
 
 const createTenant = async (req, res) => {
     try {
+        // Only a platform administrator may create a tenant directly through this
+        // endpoint (it bypasses the normal self-serve /tenants/signup flow, which
+        // creates the tenant AND its owner user together). Without this check any
+        // logged-in user could mint arbitrary tenants.
+        if (!(await isPlatformSuperAdminById(req.user && req.user.db_id))) {
+            return errorResponse(res, 'Only a platform administrator can create a tenant this way.', 403);
+        }
+
         const {
             tenant_code,
             legal_name,
@@ -134,6 +146,14 @@ const createTenant = async (req, res) => {
 const getTenant = async (req, res) => {
     try {
         const { id } = req.params;
+
+        // Any authenticated user could otherwise read ANY tenant's details by
+        // guessing/enumerating :id. 404 (not 403) on denial so a stranger can't
+        // use this endpoint to probe which tenant IDs exist.
+        if (!(await canAccessTenant(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
         const includeWorkspaces = req.query.include_workspaces === 'true';
 
         let tenant;
@@ -155,6 +175,13 @@ const getTenant = async (req, res) => {
 
 const listTenants = async (req, res) => {
     try {
+        // This lists every tenant in the system (with cross-tenant user counts) —
+        // it is the super-admin "all organisations" screen, not something any
+        // logged-in user should be able to call.
+        if (!(await isPlatformSuperAdminById(req.user && req.user.db_id))) {
+            return errorResponse(res, 'Only a platform administrator can list all tenants.', 403);
+        }
+
         const filters = {
             subscription_status: req.query.subscription_status,
             subscription_plan: req.query.subscription_plan,
@@ -210,6 +237,13 @@ const updateTenant = async (req, res) => {
     try {
         const { id } = req.params;
         const updates = req.body;
+
+        // Only this tenant's admin (or a platform admin) may edit it — otherwise
+        // any logged-in user could rename/rebrand or change the subscription of
+        // any other company's tenant record just by knowing its :id.
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'You do not have permission to update this tenant.', 403);
+        }
 
         // Check if tenant exists
         const existing = await Tenant.findById(id);
@@ -267,6 +301,13 @@ const deleteTenant = async (req, res) => {
     try {
         const { id } = req.params;
 
+        // Deactivating a tenant shuts out every one of its users — restrict it the
+        // same way as updateTenant, otherwise any logged-in user could deactivate
+        // a competitor's (or anyone else's) tenant.
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'You do not have permission to deactivate this tenant.', 403);
+        }
+
         // Check if tenant exists
         const existing = await Tenant.findById(id);
         if (!existing) {
@@ -293,7 +334,6 @@ const registerTenant = async (req, res) => {
     try {
         let { email, password, full_name, phone, recaptcha_token } = req.body;
         const User = require('../models/userModel');
-        const axios = require('axios'); // Ensure axios is required
 
         if (!email || !password || !full_name) {
             return errorResponse(res, 'All fields (Email, Password, and Full Name) are required to create your account.', 400);
@@ -302,26 +342,10 @@ const registerTenant = async (req, res) => {
         // Normalize email
         email = email.toLowerCase();
 
-        // Verify reCAPTCHA
-        if (!process.env.RECAPTCHA_SECRET_KEY) {
-            console.warn("RECAPTCHA_SECRET_KEY is missing. Skipping verification.");
-        } else {
-            if (!recaptcha_token) {
-                return errorResponse(res, 'reCAPTCHA token is missing', 400);
-            }
-
-            try {
-                const verificationUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${recaptcha_token}`;
-                const recaptchaResponse = await axios.post(verificationUrl);
-
-                if (!recaptchaResponse.data.success) {
-                    console.error("reCAPTCHA Verification Failed:", recaptchaResponse.data);
-                    return errorResponse(res, 'reCAPTCHA verification failed', 400);
-                }
-            } catch (recaptchaError) {
-                console.error("reCAPTCHA Error:", recaptchaError.message);
-                return errorResponse(res, 'Failed to verify reCAPTCHA', 500);
-            }
+        // Verify reCAPTCHA (server-side; fails closed if not configured — see shared/utils/recaptcha.js)
+        const captcha = await verifyRecaptcha(recaptcha_token, req.ip);
+        if (!captcha.ok) {
+            return errorResponse(res, captcha.message, captcha.status);
         }
 
         // 1. Create User in Keycloak
@@ -492,6 +516,14 @@ const provisionUser = async (req, res) => {
     try {
         let { email, full_name, phone_number, role, organization_ids } = req.body;
         const tenantId = req.params.id; // Corrected from req.params.tenantId to match route
+
+        // Only this tenant's admin (or a platform admin) may invite/provision users
+        // into it — otherwise any logged-in user could invite themselves (or
+        // anyone) into another company's tenant, optionally as "Super Admin" of
+        // one of its workspaces.
+        if (!(await isTenantAdmin(req.user && req.user.db_id, tenantId))) {
+            return errorResponse(res, 'You do not have permission to add users to this tenant.', 403);
+        }
 
         if (!email) {
             return errorResponse(res, 'Email is required', 400);
@@ -715,6 +747,12 @@ const listTenantUsers = async (req, res) => {
         const { id: tenantId } = req.params;
         const { workspaceId } = req.query;
 
+        // Members of this tenant (or a platform admin) only — otherwise any
+        // logged-in user could enumerate every user of any other company.
+        if (!(await canAccessTenant(req.user && req.user.db_id, tenantId))) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
         // 1. Check Tenant
         const tenant = await Tenant.findById(tenantId);
         if (!tenant) {
@@ -746,7 +784,7 @@ const listTenantUsers = async (req, res) => {
                 .join('workspace_users', 'users.id', 'workspace_users.user_id')
                 .join('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
                 .where('workspaces.id', workspaceId)
-                .whereNot('users.email', 'superadmin.dev@gmail.com')
+                .whereRaw(notPlatformSuperAdminSql('users'))
                 .groupBy('users.id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'users.created_at', 'workspace_users.invitation_status');
         } else {
             // 2. ALL-TENANT LIST (Anyone linked to any workspace in this tenant, plus the owner)
@@ -769,7 +807,7 @@ const listTenantUsers = async (req, res) => {
                 )
                 .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
                 .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-                .whereNot('users.email', 'superadmin.dev@gmail.com')
+                .whereRaw(notPlatformSuperAdminSql('users'))
                 .where(function () {
                     this.where('workspaces.tenant_id', tenantId)
                         .orWhere('users.id', tenant.owner_user_id);
@@ -801,13 +839,19 @@ const getTenantActivities = async (req, res) => {
             return res.status(400).json({ error: 'Tenant ID is required' });
         }
 
+        // Members of this tenant (or a platform admin) only — this is an activity
+        // feed of who-did-what, which is sensitive on its own.
+        if (!(await canAccessTenant(req.user && req.user.db_id, tenantId))) {
+            return res.status(404).json({ error: 'Tenant not found' });
+        }
+
         // Fetch activity logs for this tenant with user information
         const database = require('../../../shared/src/db/connection');
         let query = database('activity_logs')
             .leftJoin('users', 'activity_logs.user_id', 'users.id')
             .where('activity_logs.tenant_id', tenantId)
             .where(function () {
-                this.whereNot('users.email', 'superadmin.dev@gmail.com')
+                this.whereRaw(notPlatformSuperAdminSql('users'))
                     .orWhereNull('users.email');
             });
 
@@ -936,6 +980,11 @@ const getTenantStats = async (req, res) => {
     try {
         const { id: tenantId } = req.params;
 
+        // Members of this tenant (or a platform admin) only.
+        if (!(await canAccessTenant(req.user && req.user.db_id, tenantId))) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
         const knex = require('../../../shared/src/db/connection');
 
         // 1. Get Tenant Basic Info
@@ -1023,6 +1072,11 @@ const getTenantStats = async (req, res) => {
 const resendInvite = async (req, res) => {
     try {
         const { id, userId } = req.params;
+
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'You do not have permission to manage invitations for this tenant.', 403);
+        }
+
         const knex = require("../../../shared/src/db/connection");
         const crypto = require("crypto");
         const { publishMessage } = require("../../../shared/src/nats/client");
@@ -1072,6 +1126,20 @@ const updateUserRole = async (req, res) => {
         const knex = require("../../../shared/src/db/connection");
 
         if (!role || !workspace_id) return errorResponse(res, "Role and workspace_id required", 400);
+
+        // Only this tenant's admin (or a platform admin) may change a user's role —
+        // this is exactly the endpoint that would otherwise let any logged-in user
+        // grant themselves (or anyone) "Super Admin" on someone else's organisation.
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, "You do not have permission to change roles in this tenant.", 403);
+        }
+
+        // The workspace being modified must actually belong to :id — otherwise a
+        // real admin of Tenant A could pass a workspace_id from Tenant B and
+        // silently grant a role there instead.
+        if (!(await workspaceBelongsToTenant(workspace_id, id))) {
+            return errorResponse(res, "That workspace does not belong to this tenant.", 400);
+        }
 
         let workspaceRole = "VIEWER";
         switch (role) {
@@ -1142,6 +1210,14 @@ const deleteUserRole = async (req, res) => {
         const knex = require("../../../shared/src/db/connection");
         if (!workspace_id) return errorResponse(res, "workspace_id required", 400);
 
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, "You do not have permission to remove users from this tenant.", 403);
+        }
+
+        if (!(await workspaceBelongsToTenant(workspace_id, id))) {
+            return errorResponse(res, "That workspace does not belong to this tenant.", 400);
+        }
+
         const deleted = await knex("workspace_users")
             .where({ user_id: userId, workspace_id: workspace_id })
             .delete();
@@ -1186,6 +1262,10 @@ const updateUser = async (req, res) => {
         const { full_name, phone_number, role, organization_ids } = req.body;
         const knex = require("../../../shared/src/db/connection");
 
+        if (!(await isTenantAdmin(req.user && req.user.db_id, tenantId))) {
+            return errorResponse(res, "You do not have permission to update users in this tenant.", 403);
+        }
+
         // 1. Update User Profile
         await User.update(userId, {
             full_name,
@@ -1208,6 +1288,16 @@ const updateUser = async (req, res) => {
                 default: workspaceRole = "VIEWER";
             }
 
+            // Restrict the requested organization_ids to workspaces that actually
+            // belong to :tenantId. Without this, a caller could pass a workspace_id
+            // from a different tenant and grant themselves/another user a role
+            // (up to "Super Admin") in that other company's organisation.
+            const validWorkspaces = await knex("workspaces")
+                .whereIn("id", organization_ids)
+                .andWhere({ tenant_id: tenantId })
+                .select("id");
+            const requestedOrgIds = validWorkspaces.map(w => w.id);
+
             // Step A: Get current organization access for this user in this tenant
             const currentOrgs = await knex("workspace_users")
                 .join("workspaces", "workspace_users.workspace_id", "workspaces.id")
@@ -1217,7 +1307,7 @@ const updateUser = async (req, res) => {
             const currentOrgIds = currentOrgs.map(o => o.workspace_id);
 
             // Step B: Organizations to remove
-            const orgsToRemove = currentOrgIds.filter(oid => !organization_ids.includes(oid));
+            const orgsToRemove = currentOrgIds.filter(oid => !requestedOrgIds.includes(oid));
             if (orgsToRemove.length > 0) {
                 await knex("workspace_users")
                     .where({ user_id: userId })
@@ -1226,8 +1316,8 @@ const updateUser = async (req, res) => {
             }
 
             // Step C: Organizations to add or update
-            if (organization_ids.length > 0) {
-                const workspaceUsers = organization_ids.map(orgId => ({
+            if (requestedOrgIds.length > 0) {
+                const workspaceUsers = requestedOrgIds.map(orgId => ({
                     id: crypto.randomUUID(),
                     workspace_id: orgId,
                     user_id: userId,
@@ -1252,6 +1342,10 @@ const updateRolePermissions = async (req, res) => {
     try {
         const { id } = req.params; // tenantId
         const { matrix, allowedPermissions } = req.body; // { matrix: { ROLE: { perm: true, ... } }, allowedPermissions: { perm: true, ... } }
+
+        if (!(await isTenantAdmin(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'You do not have permission to change role permissions for this tenant.', 403);
+        }
 
         if (!matrix) {
             return errorResponse(res, 'Permissions matrix is required', 400);
@@ -1308,6 +1402,10 @@ const getRolePermissions = async (req, res) => {
     try {
         const { id } = req.params; // tenantId
 
+        if (!(await canAccessTenant(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
         // 1. Try to get from Tenant Metadata (Source of Truth)
         const tenant = await knex('tenants').where({ id }).select('metadata').first();
         if (tenant && tenant.metadata && tenant.metadata.role_policies) {
@@ -1355,6 +1453,11 @@ const getRolePermissions = async (req, res) => {
 const listTenantWorkspaces = async (req, res) => {
     try {
         const { id } = req.params;
+
+        if (!(await canAccessTenant(req.user && req.user.db_id, id))) {
+            return errorResponse(res, 'Tenant not found', 404);
+        }
+
         const workspaces = await knex('workspaces')
             .select(
                 'workspaces.*',
@@ -1375,10 +1478,15 @@ const listTenantWorkspaces = async (req, res) => {
 
 const getGlobalStats = async (req, res) => {
     try {
+        // Cross-tenant counts — platform admin only.
+        if (!(await isPlatformSuperAdminById(req.user && req.user.db_id))) {
+            return errorResponse(res, 'Only a platform administrator can view global stats.', 403);
+        }
+
         const totalTenantsResult = await knex('tenants').count('id as count').first();
         const totalWorkspacesResult = await knex('workspaces').count('id as count').first();
         const totalUsersResult = await knex('users')
-            .whereNot('email', 'superadmin.dev@gmail.com')
+            .whereRaw(notPlatformSuperAdminSql('users'))
             .count('id as count')
             .first();
 
@@ -1396,8 +1504,6 @@ const getGlobalStats = async (req, res) => {
 const logUserActivity = async (req, res) => {
     try {
         const {
-            userId,
-            tenantId,
             workspaceId,
             actionType,
             entityType,
@@ -1405,10 +1511,24 @@ const logUserActivity = async (req, res) => {
             details
         } = req.body;
 
+        // userId and tenantId always come from the verified token, never the
+        // request body — otherwise any logged-in user could forge activity log
+        // entries attributed to a different user or write into another tenant's
+        // audit trail just by naming its ID.
+        const callerId = req.user ? (req.user.db_id || req.user.id) : null;
+        const callerTenantId = req.user ? req.user.tenantId : null;
+
+        // workspaceId is only honoured if it actually belongs to the caller's own
+        // tenant (same IDOR class as the tenant-admin endpoints above).
+        let safeWorkspaceId = null;
+        if (workspaceId && callerTenantId && (await workspaceBelongsToTenant(workspaceId, callerTenantId))) {
+            safeWorkspaceId = workspaceId;
+        }
+
         await logActivity({
-            userId: userId || (req.user ? (req.user.db_id || req.user.id) : null),
-            tenantId: tenantId || (req.user ? req.user.tenantId : null),
-            workspaceId: workspaceId || (req.user ? req.user.workspaceId : null),
+            userId: callerId,
+            tenantId: callerTenantId,
+            workspaceId: safeWorkspaceId,
             actionType,
             entityType,
             entityId,
@@ -1425,6 +1545,11 @@ const logUserActivity = async (req, res) => {
 
 const listAllUsers = async (req, res) => {
     try {
+        // Every user in the whole system, across every tenant — platform admin only.
+        if (!(await isPlatformSuperAdminById(req.user && req.user.db_id))) {
+            return errorResponse(res, 'Only a platform administrator can list all users.', 403);
+        }
+
         const knex = require('../../../shared/src/db/connection');
 
         // ALL-SYSTEM LIST (Every user in the database, excluding superadmin)
@@ -1447,7 +1572,7 @@ const listAllUsers = async (req, res) => {
             )
             .leftJoin('workspace_users', 'users.id', 'workspace_users.user_id')
             .leftJoin('workspaces', 'workspace_users.workspace_id', 'workspaces.id')
-            .whereNot('users.email', 'superadmin.dev@gmail.com')
+            .whereRaw(notPlatformSuperAdminSql('users'))
             .groupBy('users.id', 'users.tenant_id', 'users.full_name', 'users.email', 'users.phone', 'users.designation', 'users.is_active', 'users.last_login_at', 'users.created_at');
 
         // Map internal status to 'Active'/ 'Pending' for frontend
@@ -1486,6 +1611,12 @@ module.exports = {
     logUserActivity,
     getAuditLogs: async (req, res) => {
         try {
+            // This queries audit_log system-wide with no tenant filter at all —
+            // platform admin only.
+            if (!(await isPlatformSuperAdminById(req.user && req.user.db_id))) {
+                return errorResponse(res, 'Only a platform administrator can view the system audit log.', 403);
+            }
+
             const { limit = 50, offset = 0, search } = req.query;
             const database = require('../../../shared/src/db/connection');
 
@@ -1494,7 +1625,7 @@ module.exports = {
                     this.on(database.raw('users.id::text'), '=', 'audit_log.modified_by')
                 })
                 .where(function () {
-                    this.whereNot('users.email', 'superadmin.dev@gmail.com')
+                    this.whereRaw(notPlatformSuperAdminSql('users'))
                         .orWhereNull('users.email');
                 })
                 .select(

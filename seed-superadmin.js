@@ -2,19 +2,35 @@ const { Client } = require('pg');
 const fetch = require('cross-fetch');
 require('dotenv').config();
 
+// All credentials come from the environment — nothing is hardcoded.
+// Required: POSTGRES_MAIN_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD
+const requireEnv = (name) => {
+    const value = process.env[name];
+    if (!value || !value.trim()) {
+        console.error(`❌ ${name} must be set (see .env.example).`);
+        process.exit(1);
+    }
+    return value.trim();
+};
+
 const dbConfig = {
-    host: '127.0.0.1',
-    port: 5435, // Host mapped port
+    host: process.env.SEED_DB_HOST || '127.0.0.1',
+    port: parseInt(process.env.SEED_DB_PORT, 10) || 5435, // Host mapped port
     database: process.env.POSTGRES_MAIN_DB || 'gst_recon',
     user: process.env.POSTGRES_MAIN_USER || 'gstadmin',
-    password: process.env.POSTGRES_MAIN_PASSWORD || 'GstAdmin123',
+    password: requireEnv('POSTGRES_MAIN_PASSWORD'),
 };
 
 const superadmin = {
-    email: 'superadmin.dev@gmail.com',
-    password: 'superadmin@123',
-    fullName: 'Dev SuperAdmin'
+    email: requireEnv('SUPERADMIN_EMAIL').toLowerCase(),
+    password: requireEnv('SUPERADMIN_PASSWORD'),
+    fullName: process.env.SUPERADMIN_FULL_NAME || 'Platform Super Admin'
 };
+
+if (superadmin.password.length < 12) {
+    console.error('❌ SUPERADMIN_PASSWORD must be at least 12 characters.');
+    process.exit(1);
+}
 
 async function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -25,7 +41,7 @@ async function getAdminToken() {
     params.append('client_id', 'admin-cli');
     params.append('grant_type', 'password');
     params.append('username', process.env.KEYCLOAK_ADMIN_USER || 'admin');
-    params.append('password', process.env.KEYCLOAK_ADMIN_PASSWORD || 'Admin123');
+    params.append('password', requireEnv('KEYCLOAK_ADMIN_PASSWORD'));
 
     const response = await fetch('http://localhost:8080/realms/master/protocol/openid-connect/token', {
         method: 'POST',
@@ -100,7 +116,7 @@ async function seed() {
                 body: JSON.stringify({
                     username: superadmin.email,
                     email: superadmin.email,
-                    firstName: 'Dev',
+                    firstName: 'Platform',
                     lastName: 'SuperAdmin',
                     enabled: true,
                     emailVerified: true,
@@ -135,8 +151,8 @@ async function seed() {
         if (userCheck.rows.length === 0) {
             const userId = require('crypto').randomUUID();
             await client.query(
-                "INSERT INTO users (id, email, full_name, auth_provider_id, auth_provider_type, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())",
-                [userId, superadmin.email, superadmin.fullName, keycloakId, 'KEYCLOAK', true]
+                "INSERT INTO users (id, email, full_name, auth_provider_id, auth_provider_type, is_active, metadata, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())",
+                [userId, superadmin.email, superadmin.fullName, keycloakId, 'KEYCLOAK', true, JSON.stringify({ platform_role: 'SUPER_ADMIN' })]
             );
             console.log(`✅ Created SuperAdmin in PostgreSQL (ID: ${userId})`);
         } else {
@@ -144,6 +160,12 @@ async function seed() {
             if (keycloakId) {
                 await client.query("UPDATE users SET auth_provider_id = $1 WHERE email = $2", [keycloakId, superadmin.email]);
             }
+            // Grant the platform role server-side (this is what login/listWorkspaces check)
+            await client.query(
+                "UPDATE users SET metadata = COALESCE(metadata, '{}'::jsonb) || '{\"platform_role\":\"SUPER_ADMIN\"}'::jsonb WHERE email = $1",
+                [superadmin.email]
+            );
+            console.log("✅ platform_role=SUPER_ADMIN set in users.metadata");
         }
         
     } catch (err) {

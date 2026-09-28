@@ -46,3 +46,8 @@ temp/
 *.cert
 secrets/
 services/workspace-service/src/queries/
+
+# Env files that must never be committed (contain real credentials)
+**/.env.docker
+.env.example.bak
+.env.production.local

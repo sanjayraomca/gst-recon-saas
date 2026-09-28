@@ -1,5 +1,6 @@
 const knex = require('../../../shared/src/db/connection');
 const { errorResponse } = require('../../../shared/src/utils/responseHandler');
+const { isPlatformSuperAdminById } = require('../../../shared/src/utils/workspaceAccess');
 
 /**
  * Middleware to authorize workspace access.
@@ -50,8 +51,8 @@ const authorizeWorkspace = async (req, res, next) => {
             return errorResponse(res, 'Invalid Workspace ID format', 400);
         }
 
-        // 2. Check for SUPER_ADMIN bypass (optional but common)
-        if (user.role === 'SUPER_ADMIN' || (user.groups && user.groups.includes('super-admin'))) {
+        // 2. Platform super admin bypass — verified in the database, never from token claims
+        if (await isPlatformSuperAdminById(user.db_id)) {
             req.workspace_id = workspaceId;
             return next();
         }

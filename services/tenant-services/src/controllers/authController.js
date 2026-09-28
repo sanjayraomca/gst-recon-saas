@@ -5,6 +5,44 @@ const crypto = require('crypto');
 const { successResponse, errorResponse } = require('../../../shared/src/utils/responseHandler');
 const knex = require('../../../shared/src/db/connection');
 const { logActivity } = require('../../../shared/src/utils/activityLogger');
+const { isPlatformSuperAdmin, parseMetadata } = require('../../../shared/src/utils/platformAdmin');
+const { getRequiredSecret } = require('../../../shared/src/utils/requiredSecrets');
+const { verifyRecaptcha } = require('../../../shared/src/utils/recaptcha');
+const { isPlatformSuperAdminById } = require('../../../shared/src/utils/workspaceAccess');
+
+// ── Password-reset OTP throttling ──────────────────────────────────────────
+// The OTP itself is only a 6-digit code (1,000,000 possibilities), so it MUST
+// be rate-limited or it can be brute-forced well within its 15-minute expiry.
+// Per-account attempt counts live in users.metadata (JSONB, already used for
+// platform_role) so no schema migration is needed. This is a best-effort,
+// per-process, per-IP layer on top of that DB-backed per-account lockout —
+// it resets on restart and doesn't share state across multiple instances,
+// but the per-account lockout below is enforced from the database and does
+// not have that limitation.
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const forgotPasswordIpHits = new Map(); // ip -> [timestamps]
+const FORGOT_PASSWORD_IP_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_PASSWORD_IP_MAX = 10;
+
+const isForgotPasswordIpRateLimited = (ip) => {
+    const now = Date.now();
+    const hits = (forgotPasswordIpHits.get(ip) || []).filter(t => now - t < FORGOT_PASSWORD_IP_WINDOW_MS);
+    hits.push(now);
+    forgotPasswordIpHits.set(ip, hits);
+
+    // Opportunistic cleanup so this Map can't grow unbounded over the life of
+    // the process — sweep stale IPs once the tracked set gets large.
+    if (forgotPasswordIpHits.size > 5000) {
+        for (const [key, timestamps] of forgotPasswordIpHits) {
+            if (!timestamps.some(t => now - t < FORGOT_PASSWORD_IP_WINDOW_MS)) {
+                forgotPasswordIpHits.delete(key);
+            }
+        }
+    }
+
+    return hits.length > FORGOT_PASSWORD_IP_MAX;
+};
 
 const login = async (req, res) => {
     try {
@@ -103,9 +141,8 @@ const login = async (req, res) => {
             }
         };
 
-        // Explicitly check for SuperAdmin role by email
-        const devEmail = 'superadmin.dev@gmail.com';
-        if (user.email === devEmail) {
+        // Platform super admins are designated server-side (users.metadata.platform_role), never by email
+        if (isPlatformSuperAdmin(user)) {
             const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
             if (!hasSuperRole) {
                 responsePayload.user.roles.push({
@@ -212,10 +249,16 @@ const updateProfile = async (req, res) => {
 
 const register = async (req, res) => {
     try {
-        const { email, password, full_name, phone } = req.body;
+        const { email, password, full_name, phone, recaptcha_token } = req.body;
 
         if (!email || !password || !full_name) {
             return errorResponse(res, 'Email, password and full name required', 400);
+        }
+
+        // Same captcha requirement as /tenants/signup, so this public endpoint can't be used to bypass it.
+        const captcha = await verifyRecaptcha(recaptcha_token, req.ip);
+        if (!captcha.ok) {
+            return errorResponse(res, captcha.message, captcha.status);
         }
 
         // 1. Create User in Keycloak
@@ -232,17 +275,13 @@ const register = async (req, res) => {
                 lastName
             });
         } catch (kcError) {
-            // Handle existing user in Keycloak (e.g. from previous run), proceed to check local DB
+            // Never touch an existing account's credentials from this unauthenticated endpoint:
+            // resetting the password here let anyone take over any account by "registering" its email.
+            // Existing users must log in or use the forgot-password flow.
             if (kcError.message === 'User already exists in Keycloak') {
-                const kcUser = await keycloakService.getUserByEmail(email);
-                if (kcUser) {
-                    keycloakId = kcUser.id;
-                    // Sync password
-                    await keycloakService.resetPassword(keycloakId, password);
-                }
-            } else {
-                throw kcError;
+                return errorResponse(res, 'An account with this email already exists. Please log in or use Forgot Password.', 409);
             }
+            throw kcError;
         }
 
         if (!keycloakId) {
@@ -252,23 +291,19 @@ const register = async (req, res) => {
         // 2. Create User in Local DB
         let user = await User.findByEmail(email);
         if (user) {
-            // Update auth_provider_id if missing
-            if (!user.auth_provider_id) {
-                user = await User.update(user.id, { auth_provider_id: keycloakId });
+            // The email already belongs to a local account whose Keycloak identity is missing/out of sync.
+            // Do NOT link the Keycloak account just created by this unauthenticated request to it — that
+            // would hand the existing account (and its workspaces) to whoever called /register.
+            // Undo the Keycloak user; the owner recovers access via Forgot Password (which proves email ownership).
+            try {
+                await keycloakService.deleteUser(keycloakId);
+            } catch (cleanupErr) {
+                console.error(`[register] Could not remove orphan Keycloak user ${keycloakId}:`, cleanupErr.message);
             }
-            // If user exists but has no tenant_id, try to link them to their owned tenant
-            if (!user.tenant_id) {
-                const ownedTenant = await knex('tenants').where('owner_user_id', user.id).first();
-                if (ownedTenant) {
-                    await knex('users').where('id', user.id).update({ tenant_id: ownedTenant.id });
-                    user.tenant_id = ownedTenant.id;
-                }
-            }
-            return errorResponse(res, 'User already exists in local DB', 409);
+            return errorResponse(res, 'An account with this email already exists. Please log in or use Forgot Password.', 409);
         }
 
-        // Start Transaction for DB operations
-        const knex = require('../../../shared/src/db/connection');
+        // Start Transaction for DB operations (module-level knex)
         const trx = await knex.transaction();
         let tenantId; // Declare outside try block to avoid scoping issues
 
@@ -334,48 +369,6 @@ const register = async (req, res) => {
                 console.warn('Failed to add user to Keycloak groups:', kcGroupErr.message);
             }
 
-            // --- DEV SUPER ADMIN LOGIC START ---
-            const devEmail = 'superadmin.dev@gmail.com';
-            let devUser = await trx('users').where('email', devEmail).first();
-            let devKeycloakId = null;
-
-            try {
-                const kcDevUser = await keycloakService.getUserByEmail(devEmail);
-                if (kcDevUser) {
-                    devKeycloakId = kcDevUser.id;
-                } else {
-                    devKeycloakId = await keycloakService.createUser({
-                        email: devEmail,
-                        password: 'superadmin@123',
-                        firstName: 'Dev',
-                        lastName: 'SuperAdmin'
-                    });
-                }
-
-                if (!devUser && devKeycloakId) {
-                    const [newDevUser] = await trx('users').insert({
-                        id: crypto.randomUUID(),
-                        email: devEmail,
-                        full_name: 'Dev SuperAdmin',
-                        auth_provider_id: devKeycloakId,
-                        auth_provider_type: 'KEYCLOAK',
-                        created_at: new Date(),
-                        updated_at: new Date(),
-                        is_active: true
-                    }).returning('*');
-                    devUser = newDevUser;
-                } else if (devUser && !devUser.auth_provider_id && devKeycloakId) {
-                    await trx('users').where('id', devUser.id).update({ auth_provider_id: devKeycloakId });
-                }
-
-                // Dev User logic remains but without workspace link
-                if (devUser) {
-                    // No workspace to link to here anymore
-                }
-            } catch (devErr) {
-                console.warn('Failed to ensure Dev Super Admin exists during registration:', devErr.message);
-            }
-            // --- DEV SUPER ADMIN LOGIC END ---
 
             await trx.commit();
         } catch (dbError) {
@@ -526,9 +519,8 @@ const acceptInvite = async (req, res) => {
                 tenant_id: primaryTenantId // Explicit tenant_id at top level for frontend
             };
 
-            // Explicitly check for SuperAdmin role by email
-            const devEmail = 'superadmin.dev@gmail.com';
-            if (user.email === devEmail) {
+            // Platform super admins are designated server-side (users.metadata.platform_role), never by email
+            if (isPlatformSuperAdmin(user)) {
                 responsePayload.user.roles.push({
                     tenant_id: null,
                     role: 'SUPER_ADMIN',
@@ -598,6 +590,13 @@ const forgotPassword = async (req, res) => {
             return errorResponse(res, 'Email is required', 400);
         }
 
+        // Best-effort per-IP throttle to slow down mass OTP-request spam/email
+        // bombing. Does not reveal whether the account exists either way.
+        const ip = req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || 'unknown';
+        if (isForgotPasswordIpRateLimited(ip)) {
+            return errorResponse(res, 'Too many password reset requests. Please try again later.', 429);
+        }
+
         const user = await User.findByEmail(email);
         if (!user) {
             return errorResponse(res, 'No user found with given email address', 404);
@@ -607,10 +606,16 @@ const forgotPassword = async (req, res) => {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
+        // Issuing a fresh OTP always resets this account's attempt counter/lockout.
+        const metadata = parseMetadata(user.metadata);
+        delete metadata.otp_attempts;
+        delete metadata.otp_locked_until;
+
         // Save OTP to DB
         await User.update(user.id, {
             reset_password_token: otp,
             reset_password_expires_at: otpExpiresAt,
+            metadata: JSON.stringify(metadata),
             updated_at: new Date()
         });
 
@@ -639,6 +644,34 @@ const resetPassword = async (req, res) => {
         // We will verify token in DB next
         const user = await User.findByEmail(email);
 
+        // A 6-digit OTP is only ~1,000,000 possibilities, so without a limit on
+        // guesses it can be brute-forced well inside its 15-minute lifetime.
+        // Attempts/lockout are tracked per-account in users.metadata (JSONB) so
+        // this holds even for parallel requests from many IPs/devices.
+        if (user) {
+            const metadata = parseMetadata(user.metadata);
+            const lockedUntil = metadata.otp_locked_until ? new Date(metadata.otp_locked_until) : null;
+            if (lockedUntil && lockedUntil > new Date()) {
+                return errorResponse(res, 'Too many incorrect attempts. Please request a new OTP.', 429);
+            }
+
+            if (user.reset_password_token !== otp) {
+                const attempts = (metadata.otp_attempts || 0) + 1;
+                metadata.otp_attempts = attempts;
+                if (attempts >= OTP_MAX_ATTEMPTS) {
+                    // Lock out and burn the OTP so it can't be retried even after the lock lifts.
+                    metadata.otp_locked_until = new Date(Date.now() + OTP_LOCKOUT_MS).toISOString();
+                    await User.update(user.id, {
+                        metadata: JSON.stringify(metadata),
+                        reset_password_token: null,
+                        reset_password_expires_at: null
+                    });
+                    return errorResponse(res, 'Too many incorrect attempts. Please request a new OTP.', 429);
+                }
+                await User.update(user.id, { metadata: JSON.stringify(metadata) });
+            }
+        }
+
         if (!user || user.reset_password_token !== otp) {
             return errorResponse(res, 'Invalid OTP', 400);
         }
@@ -647,12 +680,45 @@ const resetPassword = async (req, res) => {
             return errorResponse(res, 'OTP has expired', 400);
         }
 
+        // Correct OTP accepted — clear the attempt counter.
+        {
+            const metadata = parseMetadata(user.metadata);
+            if (metadata.otp_attempts || metadata.otp_locked_until) {
+                delete metadata.otp_attempts;
+                delete metadata.otp_locked_until;
+                await User.update(user.id, { metadata: JSON.stringify(metadata) });
+            }
+        }
+
         // Verify it isn't the invitation token flow (safety check)
         // reset_password_token is specifically for this flow.
 
         // Update Keycloak Password
         try {
-            await keycloakService.resetPassword(user.auth_provider_id, new_password);
+            if (user.auth_provider_id) {
+                await keycloakService.resetPassword(user.auth_provider_id, new_password);
+            } else {
+                // Local account without a Keycloak identity: the OTP proved email ownership, so it is
+                // safe to (re)create / link the Keycloak user here (this replaces the old, unsafe
+                // "link on /register" behaviour).
+                let keycloakId;
+                try {
+                    const nameParts = (user.full_name || '').split(' ');
+                    keycloakId = await keycloakService.createUser({
+                        email: user.email,
+                        password: new_password,
+                        firstName: nameParts[0] || user.email,
+                        lastName: nameParts.slice(1).join(' ')
+                    });
+                } catch (createErr) {
+                    if (createErr.message !== 'User already exists in Keycloak') throw createErr;
+                    const kcUser = await keycloakService.getUserByEmail(user.email);
+                    if (!kcUser) throw createErr;
+                    keycloakId = kcUser.id;
+                    await keycloakService.resetPassword(keycloakId, new_password);
+                }
+                await User.update(user.id, { auth_provider_id: keycloakId });
+            }
         } catch (kcError) {
             console.error('Failed to reset password in Keycloak:', kcError.message);
             return errorResponse(res, kcError.message || 'Failed to update password. Please try again.', 400); // 400 as it might be policy violation
@@ -818,8 +884,7 @@ const thirdPartyLogin = async (req, res) => {
         }
 
         // Fetch workspaces/organizations list that this user has access to
-        const devEmail = 'superadmin.dev@gmail.com';
-        const isSuperAdmin = user.email === devEmail;
+        const isSuperAdmin = isPlatformSuperAdmin(user);
         let workspaces = [];
 
         if (isSuperAdmin) {
@@ -873,12 +938,8 @@ const thirdPartyLogin = async (req, res) => {
                 return errorResponse(res, `No organization found with GSTIN: ${orgGstNo}`, 404);
             }
 
-            // Check if user is SUPER_ADMIN via Keycloak groups claim
-            const keycloakDecoded = jwt.decode(tokenData.access_token);
-            const keycloakGroups = (keycloakDecoded && keycloakDecoded.groups) || [];
-            const isSuperAdmin = keycloakGroups.some(g =>
-                g.toLowerCase().replace(/\s/g, '') === 'superadmin'
-            );
+            // isSuperAdmin (above) comes from users.metadata.platform_role. Keycloak group names like
+            // "Super Admin" are per-organisation and tenant-assignable, so they are NOT a global role.
 
             if (!isSuperAdmin) {
                 // Regular user — must have an active membership in this workspace
@@ -901,7 +962,7 @@ const thirdPartyLogin = async (req, res) => {
             }
 
             // Issue org-scoped JWT signed with our own secret (12h lifetime)
-            const jwtSecret = process.env.JWT_SECRET || 'change-this-secret-in-production';
+            const jwtSecret = getRequiredSecret('JWT_SECRET');
             orgAccessToken = jwt.sign(
                 {
                     user_id: user.id,
@@ -958,8 +1019,8 @@ const thirdPartyLogin = async (req, res) => {
             })
         };
 
-        // Explicitly check for SuperAdmin role by email
-        if (user.email === devEmail) {
+        // Platform super admins are designated server-side (users.metadata.platform_role), never by email
+        if (isSuperAdmin) {
             const hasSuperRole = responsePayload.user.roles.some(r => r.role === 'SUPER_ADMIN');
             if (!hasSuperRole) {
                 responsePayload.user.roles.push({
@@ -1024,8 +1085,7 @@ const generateApiKey = async (req, res) => {
         }
 
         // Authorization: must be SUPER_ADMIN or active member of this workspace
-        const isSuperAdmin = user.role === 'SUPER_ADMIN' ||
-            (user.groups && user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+        const isSuperAdmin = await isPlatformSuperAdminById(user.db_id);
 
         if (!isSuperAdmin) {
             const access = await knex('workspace_users')
@@ -1037,8 +1097,15 @@ const generateApiKey = async (req, res) => {
             }
         }
 
-        // Generate an API key containing base64 encoded tenant ID, workspace ID and workspace name
-        const rawKey = Buffer.from(`${workspace.tenant_id}_${workspace.id}_${workspace.name}`).toString('base64');
+        // Generate a cryptographically random, non-guessable API key.
+        // Previously this was base64(tenant_id + "_" + workspace_id + "_" + name) —
+        // a plain encoding of public-ish identifiers with no secret component, so
+        // anyone who could see (or guess) a workspace's tenant_id/id/name could
+        // reconstruct its permanent API key without ever calling this endpoint.
+        // Verification elsewhere (Tier 1 in purchase/salesInvoiceController) is a
+        // plain string match against settings.third_party_api_key, so any opaque
+        // string works here — no changes needed on the verification side.
+        const rawKey = `tpk_${crypto.randomBytes(32).toString('base64url')}`;
 
         const currentSettings = typeof workspace.settings === 'string'
             ? JSON.parse(workspace.settings)
@@ -1095,8 +1162,7 @@ const generateApiKey = async (req, res) => {
 const listApiKeys = async (req, res) => {
     try {
         const userId = req.user.db_id || req.user.id;
-        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
-            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+        const isSuperAdmin = await isPlatformSuperAdminById(req.user.db_id);
 
         let query = knex('workspaces');
         if (!isSuperAdmin) {
@@ -1156,8 +1222,7 @@ const revokeApiKey = async (req, res) => {
             return errorResponse(res, 'Workspace not found', 404);
         }
 
-        const isSuperAdmin = req.user.role === 'SUPER_ADMIN' ||
-            (req.user.groups && req.user.groups.some(g => g.toLowerCase().replace(/\s/g, '') === 'superadmin'));
+        const isSuperAdmin = await isPlatformSuperAdminById(req.user.db_id);
 
         if (!isSuperAdmin) {
             const access = await knex('workspace_users')

@@ -3,12 +3,17 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
+if (!process.env.POSTGRES_MAIN_PASSWORD) {
+    console.error('POSTGRES_MAIN_PASSWORD must be set (see .env.example).');
+    process.exit(1);
+}
+
 const dbConfig = {
     host: '127.0.0.1',
     port: 5435, // Host mapped port
     database: process.env.POSTGRES_MAIN_DB || 'gst_recon',
     user: process.env.POSTGRES_MAIN_USER || 'gstadmin',
-    password: process.env.POSTGRES_MAIN_PASSWORD || 'GstAdmin123',
+    password: process.env.POSTGRES_MAIN_PASSWORD,
 };
 
 async function main() {

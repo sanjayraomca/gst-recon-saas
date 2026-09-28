@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { getRequiredSecret, getSecretProblem } = require('./requiredSecrets');
 
 // Encryption configuration
 const ALGORITHM = 'aes-256-gcm';
@@ -8,9 +9,9 @@ const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 const ITERATIONS = 100000;
 
-// Get encryption key from environment or generate a secure default
-// IMPORTANT: In production, this MUST be set via environment variable
-const ENCRYPTION_KEY = process.env.GSTN_ENCRYPTION_KEY || 'CHANGE_THIS_IN_PRODUCTION_USE_ENV_VAR_32CHARS_MIN';
+// The master key MUST come from the environment (GSTN_ENCRYPTION_KEY). There is no fallback:
+// a default key would be public (it lives in the source), making every stored GSTN password readable.
+const getEncryptionKey = () => getRequiredSecret('GSTN_ENCRYPTION_KEY');
 
 /**
  * Derives a cryptographic key from the master key using PBKDF2
@@ -36,7 +37,7 @@ function encrypt(text) {
         const iv = crypto.randomBytes(IV_LENGTH);
 
         // Derive key from master key and salt
-        const key = deriveKey(ENCRYPTION_KEY, salt);
+        const key = deriveKey(getEncryptionKey(), salt);
 
         // Create cipher
         const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -78,7 +79,7 @@ function decrypt(encryptedData) {
         const authTag = Buffer.from(parts[3], 'base64');
 
         // Derive the same key using salt
-        const key = deriveKey(ENCRYPTION_KEY, salt);
+        const key = deriveKey(getEncryptionKey(), salt);
 
         // Create decipher
         const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
@@ -100,12 +101,9 @@ function decrypt(encryptedData) {
  * @returns {boolean} - True if key is valid
  */
 function validateEncryptionKey() {
-    if (!ENCRYPTION_KEY || ENCRYPTION_KEY === 'CHANGE_THIS_IN_PRODUCTION_USE_ENV_VAR_32CHARS_MIN') {
-        console.warn('WARNING: Using default encryption key. Set GSTN_ENCRYPTION_KEY environment variable in production!');
-        return false;
-    }
-    if (ENCRYPTION_KEY.length < 32) {
-        console.error('ERROR: Encryption key must be at least 32 characters long');
+    const problem = getSecretProblem('GSTN_ENCRYPTION_KEY');
+    if (problem) {
+        console.error(`ERROR: ${problem}. GSTN passwords cannot be encrypted or decrypted until it is set.`);
         return false;
     }
     return true;
